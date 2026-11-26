@@ -2103,21 +2103,19 @@ void App::buildMore(lv_obj_t *p)
         lv_obj_set_style_bg_color(setVol, C_CYAN, LV_PART_INDICATOR);
         lv_obj_set_style_bg_color(setVol, C_CYAN, LV_PART_KNOB);
         stop(setVol);
+        // saved on every change; heard when it settles: on release of a drag, or at each Left / Right key step
         lv_obj_add_event_cb(
             setVol,
-            [](lv_event_t *) {
+            [](lv_event_t *e) {
+                const lv_event_code_t c = lv_event_get_code(e);
+                if (c != LV_EVENT_VALUE_CHANGED && c != LV_EVENT_RELEASED)
+                    return;
                 const int v = lv_slider_get_value(self->setVol);
                 self->m.setUiPref("vol", v);
-                self->m.playSound(std::max(1, self->m.uiPref("snd", 1)), v); // hear the new level
+                if (c == LV_EVENT_RELEASED || !lv_slider_is_dragged(self->setVol))
+                    self->m.playSound(std::max(1, self->m.uiPref("snd", 1)), v);
             },
-            LV_EVENT_RELEASED, nullptr);
-        lv_obj_add_event_cb(
-            setVol,
-            [](lv_event_t *e) { // keys move it a step at a time: each step plays too
-                if (lv_event_get_key(e) == LV_KEY_LEFT || lv_event_get_key(e) == LV_KEY_RIGHT)
-                    lv_obj_send_event(self->setVol, LV_EVENT_RELEASED, nullptr);
-            },
-            LV_EVENT_KEY, nullptr);
+            LV_EVENT_ALL, nullptr);
     }
 
     static const int16_t TOUT[] = {30, 60, 120, 300, 600, 0};
