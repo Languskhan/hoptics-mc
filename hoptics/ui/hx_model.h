@@ -316,6 +316,8 @@ class Model
     virtual void setBacklight(uint8_t level) = 0; // 0..255
     virtual bool hasKeyboard() const { return true; } // false: the screens show an on-screen keyboard to type
     virtual bool hasKeyLight() const { return false; } // a keyboard backlight (T-Deck)
+    virtual bool hasSound() const { return false; }    // a buzzer or speaker for message sounds
+    virtual void playSound(int tone, int volume) { (void)tone, (void)volume; } // tone 1-3, volume 0-100
     virtual bool sendLog() { return false; } // print the kept log to USB (for a problem report); false: none kept
     virtual void setKeyLight(uint8_t level) { (void)level; } // 0 = off
 };

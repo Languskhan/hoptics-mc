@@ -81,6 +81,8 @@ On the Heltec kits, the user button is Back.
 - **Web page → Device → Offline map tiles**: send a folder of `zoom/x/y.png` tiles (for example from Mobile
   Atlas Creator, from a tile source that allows keeping tiles offline) and check the radio's map shows them
   with Wi-Fi off.
+- **More → Sound**: pick a message sound and set the volume (each change plays it). Have someone send you a
+  message: it should chirp. The T-Deck plays through its speaker; the M9 and the Heltec kits use their buzzer.
 - **More → Screen**: try a wallpaper, the lock screen (it shows when the screen comes back on; a key or a long
   press opens it) and Large chat text.
 - **More**: change the theme, brightness and screen timeout. Restart and check they stay.

@@ -1549,6 +1549,10 @@ void App::onMessage(const Message &msg)
     c.last = m.now() ? m.now() : l.time;
     chatsChanged();
     bool visible = chatOpen && chatKey == msg.conv && awake;
+    // a sound for messages heard on the radio (not the internet feed's copies), as set under More > Sound
+    const int tone = m.uiPref("snd", 1);
+    if (tone > 0 && !msg.viaNet && (msg.conv.dm || m.uiPref("snd_all", 1)))
+        m.playSound(tone, m.uiPref("vol", 60));
     if (visible) {
         appendBubble(l);
         lv_obj_update_layout(chatMsgs);
@@ -2084,6 +2088,38 @@ void App::buildMore(lv_obj_t *p)
         },
         LV_EVENT_VALUE_CHANGED, nullptr);
 
+    if (m.hasSound()) {
+        lv_obj_t *cv = card(p, "SOUND");
+        static const int16_t SND[] = {0, 1, 2, 3}, SALL[] = {0, 1};
+        addSetting(cv, "ui:snd", LV_SYMBOL_BELL " Message sound", "Off\nChirp\nChime\nPing", SND, 4);
+        addSetting(cv, "ui:snd_all", "Play it for", "Direct messages only\nAll messages", SALL, 2,
+                   "Messages from the internet feed stay quiet.");
+        lv_obj_t *vr = fieldRow(cv, LV_SYMBOL_VOLUME_MAX " Volume");
+        setVol = lv_slider_create(vr);
+        lv_obj_set_width(setVol, LV_PCT(100));
+        lv_slider_set_range(setVol, 0, 100);
+        lv_obj_set_style_bg_color(setVol, C_LINE, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(setVol, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(setVol, C_CYAN, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(setVol, C_CYAN, LV_PART_KNOB);
+        stop(setVol);
+        lv_obj_add_event_cb(
+            setVol,
+            [](lv_event_t *) {
+                const int v = lv_slider_get_value(self->setVol);
+                self->m.setUiPref("vol", v);
+                self->m.playSound(std::max(1, self->m.uiPref("snd", 1)), v); // hear the new level
+            },
+            LV_EVENT_RELEASED, nullptr);
+        lv_obj_add_event_cb(
+            setVol,
+            [](lv_event_t *e) { // keys move it a step at a time: each step plays too
+                if (lv_event_get_key(e) == LV_KEY_LEFT || lv_event_get_key(e) == LV_KEY_RIGHT)
+                    lv_obj_send_event(self->setVol, LV_EVENT_RELEASED, nullptr);
+            },
+            LV_EVENT_KEY, nullptr);
+    }
+
     static const int16_t TOUT[] = {30, 60, 120, 300, 600, 0};
     addSetting(cs, "ui:timeout", "Screen off after", "30 seconds\n1 minute\n2 minutes\n5 minutes\n10 minutes\nNever", TOUT, 6);
     addSetting(cs, "ui:lock", LV_SYMBOL_EYE_CLOSE " Lock screen", nullptr, nullptr, 0,
@@ -2225,6 +2261,8 @@ void App::addSetting(lv_obj_t *parent, const char *key, const char *labelText, c
                 self->refreshSettings();
                 return self->toast(warn.empty() ? LV_SYMBOL_OK " Saved: the radio fits that band" : warn.c_str());
             }
+            if (ok && !strcmp(r.key, "ui:snd") && v > 0)
+                self->m.playSound(v, self->m.uiPref("vol", 60)); // hear the one picked
             if (ok && !strcmp(r.key, "ui:wall")) {
                 const lv_image_dsc_t *wp = self->wallpaper();
                 lv_obj_set_style_bg_image_src(self->scr, wp, 0);
@@ -2255,7 +2293,8 @@ bool App::readSetting(const char *key, int32_t &v) const
         return true;
     }
     if (!strncmp(key, "ui:", 3)) {
-        v = m.uiPref(key + 3, !strcmp(key + 3, "timeout") ? 60 : !strcmp(key + 3, "kblight") ? 1 : 0);
+        const char *k = key + 3; // the defaults used where the pref is read
+        v = m.uiPref(k, !strcmp(k, "timeout") ? 60 : (!strcmp(k, "kblight") || !strcmp(k, "snd") || !strcmp(k, "snd_all")) ? 1 : 0);
         return true;
     }
     return m.getSetting(key, v);
@@ -2584,6 +2623,8 @@ void App::refreshSettings(void)
     if (feedUrl)
         lv_textarea_set_text(feedUrl, m.feed().server);
     lv_slider_set_value(setBright, m.uiPref("bright", 200), LV_ANIM_OFF);
+    if (setVol)
+        lv_slider_set_value(setVol, m.uiPref("vol", 60), LV_ANIM_OFF);
     int32_t addMode = 0;
     const bool pick = readSetting("add_mode", addMode) && addMode == 1;
     for (auto &sr : setRows) {

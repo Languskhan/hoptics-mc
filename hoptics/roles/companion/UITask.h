@@ -3,6 +3,7 @@
 // and forwards MeshCore's events (messages, ACKs, every packet heard or sent) to the screens. MIT licence.
 #pragma once
 
+#include "hx_sound.h"
 #include <Arduino.h>
 #include <vector>
 #include <MeshCore.h>
@@ -101,6 +102,8 @@ class UITask : public AbstractUITask, public hx::Model
     void setBacklight(uint8_t level) override;
     bool hasKeyboard() const override { return hxhal::hasKeyboard(); }
     bool hasKeyLight() const override { return hxhal::hasKeyLight(); }
+    bool hasSound() const override { return hxsound::present(); }
+    void playSound(int tone, int volume) override { hxsound::play((uint8_t)tone, (uint8_t)volume); }
     bool sendLog() override;
     void setKeyLight(uint8_t level) override { hxhal::setKeyLight(level); }
 

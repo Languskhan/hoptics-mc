@@ -203,6 +203,7 @@ class Fake : public hx::Model
     void setBacklight(uint8_t) override {}
     bool hasKeyboard() const override { return WD > HT; } // portrait = the Heltec kits: on-screen keyboard
     bool hasKeyLight() const override { return WD > HT; }  // the T-Deck's keyboard light
+    bool hasSound() const override { return true; }        // the More > Sound card
     int keyLightLevel = -1;
     void setKeyLight(uint8_t v) override { keyLightLevel = v; }
     // Wi-Fi: connected, with a few networks around
@@ -407,6 +408,7 @@ struct HarnessAccess {
     static void remotePage(App &a, int p) { a.rmShowPage(p); }
     static void saveChats(App &a) { a.saveChats(); }
     static void lock(App &a) { a.lock(); }
+    static lv_obj_t *volume(App &a) { return a.setVol; }
     static void unlock(App &a) { a.unlock(); }
     static lv_obj_t *feedField(App &a) { return a.feedUrl; }
     static void tapChatInput(App &a) { lv_obj_send_event(a.chatInput, LV_EVENT_CLICKED, nullptr); }
@@ -599,6 +601,9 @@ int main(int argc, char **argv)
     lv_obj_scroll_by(lv_obj_get_child(lv_obj_get_child(lv_screen_active(), 2), hx::App::T_MORE), 0, -200, LV_ANIM_OFF);
     pump(100);
     shot("07b_settings_more");
+    lv_obj_scroll_to_view_recursive(hx::HarnessAccess::volume(app), LV_ANIM_OFF);
+    pump(200);
+    shot("07e_settings_sound");
     {
         lv_obj_t *more = lv_obj_get_child(lv_obj_get_child(lv_screen_active(), 2), hx::App::T_MORE);
         lv_obj_scroll_to_view_recursive(hx::HarnessAccess::cust(app, 0), LV_ANIM_OFF);

@@ -40,7 +40,7 @@ Download the firmware for your board from the [latest release](https://github.co
   messages, install a firmware update (it starts on trial and goes back by itself if it doesn't start
   properly), and send a folder of offline map tiles for the radio's map.
 - **Settings**: radio presets or a custom radio, path hash size, auto-add rules, position and telemetry
-  privacy, Bluetooth PIN, region, screen, time zone, themes, wallpapers, a lock screen and large chat text.
+  privacy, Bluetooth PIN, region, screen, time zone, themes, wallpapers, a lock screen, large chat text, and message sounds with a volume setting.
 
 ## How it's built
 

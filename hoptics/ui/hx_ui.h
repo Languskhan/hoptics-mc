@@ -57,6 +57,7 @@ class App : public Ui
     std::string webSend(uint8_t channel, const char *text); // a channel message from the web page: JSON answer
     std::string bandWarning(const Radio &rd) const;          // empty when the radio fits the chosen country band
     lv_obj_t *bandInfo = nullptr;
+    lv_obj_t *setVol = nullptr; // More > Sound > Volume
 
   private:
     Model &m;
