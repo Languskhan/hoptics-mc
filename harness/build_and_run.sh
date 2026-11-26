@@ -46,3 +46,16 @@ mkdir -p shots/320x240 shots/240x320
 $B/harness_land 320 240 shots/320x240 > /dev/null
 $B/harness_port 240 320 shots/240x320 > /dev/null
 echo done
+# pooled list rows: every reused list must match its freshly built twin, pixel for pixel
+python3 - <<'PY'
+import sys
+bad = []
+for d in ("shots/320x240", "shots/240x320"):
+    for n in ("30_live", "31_nodes", "32_nodes"):
+        a, b = open(f"{d}/{n}_reused.ppm", "rb").read(), open(f"{d}/{n}_fresh.ppm", "rb").read()
+        if a != b:
+            bad.append(f"{d}/{n}")
+if bad:
+    sys.exit("reused list rows differ from a fresh build: " + ", ".join(bad))
+print("pooled rows: ok")
+PY

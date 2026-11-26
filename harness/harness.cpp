@@ -941,6 +941,55 @@ int main(int argc, char **argv)
     pump(100);
     model.setUiPref("theme", 0);
 
+    // pooled list rows: after packets and contact changes, a reused list must look exactly like a freshly built one
+    // (the run script compares each *_reused shot with its *_fresh twin). Glass rainbow, so row edges are checked too.
+    model.setUiPref("theme", 9);
+    app.begin();
+    app.selectTab(hx::App::T_LIVE);
+    pump(300);
+    for (int i = 0; i < 3; i++) { // shifts every row: "mine" edges, types and colours all move
+        hx::Packet k;
+        k.type = i == 1 ? hx::PktType::Text : hx::PktType::Advert, k.direct = i == 2, k.pathLen = i, k.rssi = -90 - i;
+        k.snr4 = 30 - 25 * i, k.time = NOW - 2, k.mine = i == 1, k.len = 40;
+        if (i != 1)
+            snprintf(k.from, sizeof(k.from), "Pool test %d", i);
+        app.onPacket(k);
+        pump(300);
+    }
+    shot("30_live_reused");
+    app.begin();
+    app.selectTab(hx::App::T_LIVE);
+    pump(300);
+    shot("30_live_fresh");
+    app.selectTab(hx::App::T_NODES);
+    pump(300);
+    hx::Contact keep = model.contacts.back();
+    model.contacts.pop_back(); // a row goes
+    strncpy(model.contacts[0].name, "Renamed Node", sizeof(model.contacts[0].name) - 1);
+    model.ver++;
+    pump(300);
+    shot("31_nodes_reused");
+    app.begin();
+    app.selectTab(hx::App::T_LIVE); // the same way in as the reused one, so the rail looks the same
+    pump(300);
+    app.selectTab(hx::App::T_NODES);
+    pump(600);
+    shot("31_nodes_fresh");
+    model.contacts.push_back(keep); // and comes back
+    model.ver++;
+    pump(300);
+    shot("32_nodes_reused");
+    app.begin();
+    app.selectTab(hx::App::T_LIVE); // the same way in as the reused one, so the rail looks the same
+    pump(300);
+    app.selectTab(hx::App::T_NODES);
+    pump(600);
+    shot("32_nodes_fresh");
+    model.setUiPref("theme", 0);
+    app.begin();
+    app.selectTab(hx::App::T_HOME);
+    pump(100);
+
     // a restart: a new App on the same radio finds the chats where they were
     hx::HarnessAccess::saveChats(app);
     printf("chat history: %zu bytes\n", model.files["chats"].size());
