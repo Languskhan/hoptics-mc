@@ -383,14 +383,12 @@ lv_color_t pktColor(PktType t)
         return C_BLUE;
     }
 }
-lv_obj_t *badge(lv_obj_t *parent, const uint8_t *key, const char *name, int32_t size)
+// a node's badge: its key colour and initials. badgeSet() changes an existing one (pooled list rows)
+void badgeSet(lv_obj_t *b, const uint8_t *key, const char *name)
 {
-    lv_obj_t *b = plain(parent);
-    lv_obj_set_size(b, size, size);
-    lv_obj_set_style_radius(b, 8, 0);
     lv_color_t c = keyColor(key);
-    lv_obj_set_style_bg_color(b, c, 0);
-    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    if (!lv_color_eq(lv_obj_get_style_bg_color(b, LV_PART_MAIN), c))
+        lv_obj_set_style_bg_color(b, c, 0);
     // initials: the first letter of the first two words ("Folsom Ridge" -> FR), or two letters of a single word
     char ini[3] = {0};
     int n = 0;
@@ -409,8 +407,18 @@ lv_obj_t *badge(lv_obj_t *parent, const uint8_t *key, const char *name, int32_t 
             }
     if (!ini[0])
         snprintf(ini, sizeof(ini), "%02X", key[0]);
-    lv_obj_t *l = label(b, F14, lv_color_luminance(c) > 140 ? lv_color_hex(0x05090F) : lv_color_white(), ini);
-    lv_obj_center(l);
+    lv_obj_t *l = lv_obj_get_child(b, 0);
+    setText(l, ini);
+    setColor(l, lv_color_luminance(c) > 140 ? lv_color_hex(0x05090F) : lv_color_white());
+}
+lv_obj_t *badge(lv_obj_t *parent, const uint8_t *key, const char *name, int32_t size)
+{
+    lv_obj_t *b = plain(parent);
+    lv_obj_set_size(b, size, size);
+    lv_obj_set_style_radius(b, 8, 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_center(label(b, F14, lv_color_white(), ""));
+    badgeSet(b, key, name);
     return b;
 }
 
@@ -912,6 +920,31 @@ void App::refreshStatus(void)
 }
 
 // ================================================================= live
+namespace
+{
+// Live rows are made once and reused: each refresh only rewrites what changed (rebuilding all 48 rows every
+// 2 s was ~9x the work). The pool empties with the screen (theme change), see buildLive.
+struct LiveRow {
+    lv_obj_t *row, *type, *who, *route, *sig;
+};
+std::vector<LiveRow> liveRows;
+int liveShown = 0;
+// a row's left edge: thick cyan for packets this radio sent, otherwise the theme's own edge
+void liveEdge(lv_obj_t *r, bool mine)
+{
+    if (mine) {
+        lv_obj_set_style_border_side(r, LV_BORDER_SIDE_LEFT, 0);
+        lv_obj_set_style_border_width(r, 3, 0);
+        lv_obj_set_style_border_color(r, C_CYAN, 0);
+    } else {
+        lv_obj_set_style_border_side(r, LV_BORDER_SIDE_FULL, 0);
+        lv_obj_set_style_border_width(r, T_GLASS ? 1 : 0, 0);
+        if (T_GLASS)
+            lv_obj_set_style_border_color(r, edgeColor((int)lv_obj_get_index(r)), 0);
+    }
+}
+} // namespace
+
 void App::buildLive(lv_obj_t *p)
 {
     lv_obj_set_style_pad_row(p, 4, 0);
@@ -920,6 +953,9 @@ void App::buildLive(lv_obj_t *p)
     lv_obj_set_style_text_align(liveEmpty, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_pad_top(liveEmpty, 50, 0);
     liveList = p;
+    liveRows.clear(); // the old rows went with the old screen
+    liveShown = 0;
+    dirtyLive = true;
 }
 
 void App::onPacket(const Packet &pk)
@@ -946,37 +982,56 @@ void App::onPacket(const Packet &pk)
 void App::refreshLive(void)
 {
     dirtyLive = false;
-    // rows are rebuilt from the ring (cheap: at most kLive small rows, only while the tab is open)
     lv_obj_t *keepFocus = lv_group_get_focused(group);
     bool hadFocus = keepFocus && lv_obj_get_parent(keepFocus) == liveList;
-    while (lv_obj_get_child_count(liveList) > 1)
-        lv_obj_delete(lv_obj_get_child(liveList, 1));
-    if (!liveCount) {
+    const int shownBefore = liveShown;
+    if (!liveCount)
         lv_obj_remove_flag(liveEmpty, LV_OBJ_FLAG_HIDDEN);
-        return;
-    }
-    lv_obj_add_flag(liveEmpty, LV_OBJ_FLAG_HIDDEN);
+    else
+        lv_obj_add_flag(liveEmpty, LV_OBJ_FLAG_HIDDEN);
     uint32_t now = m.now();
     char b[64];
+    const int32_t textW = W() - RAIL_W - 2 * PAD;
     for (int i = 0; i < liveCount; i++) {
         const Packet &pk = live[(liveHead + kLive - 1 - i) % kLive];
-        lv_obj_t *r = plain(liveList);
-        lv_obj_set_size(r, LV_PCT(100), 38);
-        lv_obj_set_style_bg_color(r, C_CARD, 0);
-        lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(r, 8, 0);
-        rowEdge(r);
-        if (pk.mine) {
-            lv_obj_set_style_border_side(r, LV_BORDER_SIDE_LEFT, 0);
-            lv_obj_set_style_border_width(r, 3, 0);
-            lv_obj_set_style_border_color(r, C_CYAN, 0);
+        if (i == (int)liveRows.size()) { // a new row, made once
+            LiveRow lr;
+            lr.row = plain(liveList);
+            lv_obj_set_size(lr.row, LV_PCT(100), 38);
+            lv_obj_set_style_bg_color(lr.row, C_CARD, 0);
+            lv_obj_set_style_bg_opa(lr.row, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(lr.row, 8, 0);
+            rowEdge(lr.row);
+            lr.type = pill(lr.row, "", C_BLUE);
+            lv_obj_set_pos(lr.type, 6, 4);
+            lr.who = label(lr.row, F12, C_TEXT);
+            lv_obj_set_pos(lr.who, 58, 3);
+            lv_obj_set_width(lr.who, textW - 58 - 70);
+            oneLine(lr.who);
+            lr.route = label(lr.row, F10, C_MUTED);
+            lv_obj_set_pos(lr.route, 6, 21);
+            lv_obj_set_width(lr.route, textW - 6 - 70);
+            oneLine(lr.route);
+            lr.sig = label(lr.row, F10, C_MUTED);
+            lv_obj_set_style_text_align(lr.sig, LV_TEXT_ALIGN_RIGHT, 0);
+            lv_obj_align(lr.sig, LV_ALIGN_RIGHT_MID, -6, 0);
+            stop(lr.row); // keys scroll through the list
+            lv_obj_set_user_data(lr.row, (void *)(intptr_t)-1); // "mine" not set yet
+            liveRows.push_back(lr);
         }
-        lv_obj_t *t = pill(r, pktTypeName(pk.type), pktColor(pk.type));
-        lv_obj_set_pos(t, 6, 4);
-        lv_obj_t *who = label(r, F12, C_TEXT, pk.from[0] ? pk.from : (pk.mine ? "this radio" : ""));
-        lv_obj_set_pos(who, 58, 3);
-        lv_obj_set_width(who, W() - RAIL_W - 2 * PAD - 58 - 70);
-        oneLine(who);
+        LiveRow &lr = liveRows[i];
+        lv_obj_remove_flag(lr.row, LV_OBJ_FLAG_HIDDEN);
+        intptr_t mine = pk.mine ? 1 : 0;
+        if ((intptr_t)lv_obj_get_user_data(lr.row) != mine) {
+            liveEdge(lr.row, pk.mine);
+            lv_obj_set_user_data(lr.row, (void *)mine);
+        }
+        lv_color_t tc = pktColor(pk.type);
+        setText(lr.type, pktTypeName(pk.type));
+        setColor(lr.type, tc);
+        if (!lv_color_eq(lv_obj_get_style_bg_color(lr.type, LV_PART_MAIN), tc))
+            lv_obj_set_style_bg_color(lr.type, tc, 0);
+        setText(lr.who, pk.from[0] ? pk.from : (pk.mine ? "this radio" : ""));
         // route: F/D, hops, and the path hashes it came through
         size_t n = snprintf(b, sizeof(b), "%s  %u hop%s", pk.direct ? "direct" : "flood", pk.pathLen, pk.pathLen == 1 ? "" : "s");
         int shown = std::min<int>(pk.pathLen, (int)sizeof(pk.path) / std::max<int>(1, pk.hashSize));
@@ -985,24 +1040,35 @@ void App::refreshLive(void)
             for (int k = 0; k < pk.hashSize && n < sizeof(b) - 3; k++)
                 n += snprintf(b + n, sizeof(b) - n, "%02x", pk.path[h * pk.hashSize + k]);
         }
-        lv_obj_t *rt = label(r, F10, C_MUTED, b);
-        lv_obj_set_pos(rt, 6, 21);
-        lv_obj_set_width(rt, W() - RAIL_W - 2 * PAD - 6 - 70);
-        oneLine(rt);
+        setText(lr.route, b);
         if (pk.mine)
             snprintf(b, sizeof(b), "sent\n%s", ago(now, pk.time).c_str());
         else
             snprintf(b, sizeof(b), "%d dBm\n%+.1f dB", pk.rssi, pk.snr4 / 4.0f);
-        lv_obj_t *sg = label(r, F10, pk.mine ? C_MUTED : (pk.snr4 >= 20 ? C_GREEN : pk.snr4 >= -20 ? C_AMBER : C_RED), b);
-        lv_obj_set_style_text_align(sg, LV_TEXT_ALIGN_RIGHT, 0);
-        lv_obj_align(sg, LV_ALIGN_RIGHT_MID, -6, 0);
-        stop(r); // keys scroll through the list
+        setText(lr.sig, b);
+        setColor(lr.sig, pk.mine ? C_MUTED : (pk.snr4 >= 20 ? C_GREEN : pk.snr4 >= -20 ? C_AMBER : C_RED));
     }
-    if (hadFocus && tab == T_LIVE)
-        refocus();
+    for (int i = liveCount; i < (int)liveRows.size(); i++)
+        lv_obj_add_flag(liveRows[i].row, LV_OBJ_FLAG_HIDDEN);
+    liveShown = liveCount;
+    if (hadFocus && tab == T_LIVE && liveShown != shownBefore)
+        refocus(keepFocus); // new rows join the key ring; the focused one stays focused
 }
 
 // ================================================================= nodes (contacts)
+namespace
+{
+// Node rows are made once (up to 120) and reused: an advert used to rebuild the whole list, now only changed text
+// and colours are rewritten. Row i opens rowKeys[i]. The pool empties with the screen (theme change), see buildNodes.
+struct NodeRow {
+    lv_obj_t *row, *badge, *name, *type, *route, *ago;
+};
+std::vector<NodeRow> nodeRows;
+std::vector<std::array<uint8_t, 6>> rowKeys;
+lv_obj_t *nodeEmpty = nullptr;
+int nodesShown = -1;
+} // namespace
+
 void App::buildNodes(lv_obj_t *p)
 {
     lv_obj_set_style_pad_row(p, 4, 0);
@@ -1035,14 +1101,18 @@ void App::buildNodes(lv_obj_t *p)
         stop(b);
         nodeChips[i] = b;
     }
+    // outside the list, so row i is child i (the Glass rainbow colours rows by position)
+    nodeEmpty = label(p, F14, C_MUTED, "No nodes here yet.\nThey appear as their adverts are heard. Tap Home > Advert to announce yourself.");
+    wrap(nodeEmpty);
+    lv_obj_set_style_pad_top(nodeEmpty, 30, 0);
+    lv_obj_set_style_text_align(nodeEmpty, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_add_flag(nodeEmpty, LV_OBJ_FLAG_HIDDEN);
     nodeList = plain(p);
     lv_obj_set_size(nodeList, LV_PCT(100), LV_SIZE_CONTENT);
     column(nodeList, 4);
-}
-
-namespace
-{
-std::vector<std::array<uint8_t, 6>> rowKeys; // node rows -> contact key
+    nodeRows.clear(); // the old rows went with the old screen
+    nodesShown = -1;
+    dirtyContacts = true;
 }
 
 void App::refreshNodes(void)
@@ -1054,11 +1124,8 @@ void App::refreshNodes(void)
             lv_obj_add_state(nodeChips[i], LV_STATE_CHECKED);
         else
             lv_obj_remove_state(nodeChips[i], LV_STATE_CHECKED);
-        lv_obj_t *l = lv_obj_get_child(nodeChips[i], 0);
-        lv_obj_set_style_text_color(l, i == nodeFilter ? C_ON_ACCENT : C_TEXT, 0);
+        setColor(lv_obj_get_child(nodeChips[i], 0), i == nodeFilter ? C_ON_ACCENT : C_TEXT);
     }
-    lv_obj_clean(nodeList);
-    rowKeys.clear();
     std::vector<Contact> list;
     list.reserve(m.contactCount());
     Contact c;
@@ -1073,50 +1140,69 @@ void App::refreshNodes(void)
     });
     if (list.size() > 120)
         list.resize(120); // the newest 120: enough to scroll through, and kind to memory
-    if (list.empty()) {
-        lv_obj_t *l = label(nodeList, F14, C_MUTED, "No nodes here yet.\nThey appear as their adverts are heard. Tap Home > Advert to announce yourself.");
-        wrap(l);
-        lv_obj_set_style_pad_top(l, 30, 0);
-        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
-        return;
-    }
+    if (list.empty())
+        lv_obj_remove_flag(nodeEmpty, LV_OBJ_FLAG_HIDDEN);
+    else
+        lv_obj_add_flag(nodeEmpty, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t *focused = lv_group_get_focused(group);
     uint32_t now = m.now();
-    for (auto &n : list) {
-        lv_obj_t *r = plain(nodeList);
-        lv_obj_set_size(r, LV_PCT(100), 40);
-        lv_obj_set_style_bg_color(r, C_CARD, 0);
-        lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(r, C_CARD2, LV_STATE_PRESSED);
-        lv_obj_set_style_radius(r, 8, 0);
-        rowEdge(r);
-        lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_t *bd = badge(r, n.key, n.name, 28);
-        lv_obj_align(bd, LV_ALIGN_LEFT_MID, 6, 0);
-        lv_obj_t *nm = label(r, F14, C_TEXT, n.name[0] ? n.name : "(no name)");
-        lv_obj_set_pos(nm, 42, 3);
-        lv_obj_set_width(nm, W() - RAIL_W - 2 * PAD - 42 - 46);
-        oneLine(nm);
-        lv_obj_t *tp = pill(r, nodeTypeName(n.type), typeColor(n.type));
-        lv_obj_set_pos(tp, 42, 22);
-        lv_obj_t *rt = label(r, F10, C_MUTED, route(n.pathLen).c_str());
-        lv_obj_align_to(rt, tp, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
-        lv_obj_t *ag = label(r, F12, C_MUTED, ago(now, n.lastHeard ? n.lastHeard : n.lastAdvert).c_str());
-        lv_obj_align(ag, LV_ALIGN_RIGHT_MID, -8, 0);
-        rowKeys.push_back({});
-        memcpy(rowKeys.back().data(), n.key, 6);
-        lv_obj_set_user_data(r, (void *)(intptr_t)(rowKeys.size() - 1));
-        lv_obj_add_event_cb(
-            r,
-            [](lv_event_t *e) {
-                size_t i = (size_t)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_current_target(e));
-                if (i < rowKeys.size())
-                    self->openNode(rowKeys[i].data());
-            },
-            LV_EVENT_CLICKED, nullptr);
-        stop(r);
+    rowKeys.resize(list.size());
+    for (size_t i = 0; i < list.size(); i++) {
+        const Contact &n = list[i];
+        if (i == nodeRows.size()) { // a new row, made once
+            NodeRow nr;
+            nr.row = plain(nodeList);
+            lv_obj_set_size(nr.row, LV_PCT(100), 40);
+            lv_obj_set_style_bg_color(nr.row, C_CARD, 0);
+            lv_obj_set_style_bg_opa(nr.row, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_color(nr.row, C_CARD2, LV_STATE_PRESSED);
+            lv_obj_set_style_radius(nr.row, 8, 0);
+            rowEdge(nr.row);
+            lv_obj_add_flag(nr.row, LV_OBJ_FLAG_CLICKABLE);
+            nr.badge = badge(nr.row, n.key, n.name, 28);
+            lv_obj_align(nr.badge, LV_ALIGN_LEFT_MID, 6, 0);
+            nr.name = label(nr.row, F14, C_TEXT);
+            lv_obj_set_pos(nr.name, 42, 3);
+            lv_obj_set_width(nr.name, W() - RAIL_W - 2 * PAD - 42 - 46);
+            oneLine(nr.name);
+            nr.type = pill(nr.row, "", C_BLUE);
+            lv_obj_set_pos(nr.type, 42, 22);
+            nr.route = label(nr.row, F10, C_MUTED);
+            nr.ago = label(nr.row, F12, C_MUTED);
+            lv_obj_align(nr.ago, LV_ALIGN_RIGHT_MID, -8, 0);
+            lv_obj_set_user_data(nr.row, (void *)(intptr_t)i);
+            lv_obj_add_event_cb(
+                nr.row,
+                [](lv_event_t *e) {
+                    size_t k = (size_t)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_current_target(e));
+                    if (k < rowKeys.size())
+                        self->openNode(rowKeys[k].data());
+                },
+                LV_EVENT_CLICKED, nullptr);
+            stop(nr.row);
+            nodeRows.push_back(nr);
+        }
+        NodeRow &nr = nodeRows[i];
+        memcpy(rowKeys[i].data(), n.key, 6);
+        lv_obj_remove_flag(nr.row, LV_OBJ_FLAG_HIDDEN);
+        badgeSet(nr.badge, n.key, n.name);
+        setText(nr.name, n.name[0] ? n.name : "(no name)");
+        lv_color_t tc = typeColor(n.type);
+        setText(nr.type, nodeTypeName(n.type));
+        setColor(nr.type, tc);
+        if (!lv_color_eq(lv_obj_get_style_bg_color(nr.type, LV_PART_MAIN), tc))
+            lv_obj_set_style_bg_color(nr.type, tc, 0);
+        setText(nr.route, route(n.pathLen).c_str());
+        lv_obj_align_to(nr.route, nr.type, LV_ALIGN_OUT_RIGHT_MID, 6, 0); // follows the pill's width
+        setText(nr.ago, ago(now, n.lastHeard ? n.lastHeard : n.lastAdvert).c_str());
     }
-    if (tab == T_NODES && !topOverlay())
-        refocus();
+    for (size_t i = list.size(); i < nodeRows.size(); i++)
+        lv_obj_add_flag(nodeRows[i].row, LV_OBJ_FLAG_HIDDEN);
+    // the key ring only changes when rows appear or go; keep the focused row where it was
+    if ((int)list.size() != nodesShown && tab == T_NODES && !topOverlay())
+        refocus(focused && lv_obj_get_parent(focused) == nodeList && !lv_obj_has_flag(focused, LV_OBJ_FLAG_HIDDEN) ? focused
+                                                                                                                 : nullptr);
+    nodesShown = (int)list.size();
 }
 
 // node detail
