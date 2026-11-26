@@ -409,6 +409,12 @@ struct HarnessAccess {
     static void saveChats(App &a) { a.saveChats(); }
     static void lock(App &a) { a.lock(); }
     static lv_obj_t *volume(App &a) { return a.setVol; }
+    static void more(App &a, int s) { a.openMore(s); }
+    static int tab(App &a) { return a.tab; }
+    static int sec(App &a) { return a.moreOpen; }
+    static void askApply(App &a) { a.askApply(); }
+    static bool asking(App &a) { return a.askBox && !lv_obj_has_flag(a.askBox, LV_OBJ_FLAG_HIDDEN); }
+    static lv_obj_t *quick(App &a, int i) { return a.quickTile[i]; }
     static void unlock(App &a) { a.unlock(); }
     static lv_obj_t *feedField(App &a) { return a.feedUrl; }
     static void tapChatInput(App &a) { lv_obj_send_event(a.chatInput, LV_EVENT_CLICKED, nullptr); }
@@ -598,14 +604,44 @@ int main(int argc, char **argv)
     app.selectTab(hx::App::T_MORE);
     pump(300);
     shot("07_settings");
-    lv_obj_scroll_by(lv_obj_get_child(lv_obj_get_child(lv_screen_active(), 2), hx::App::T_MORE), 0, -200, LV_ANIM_OFF);
+    hx::HarnessAccess::more(app, hx::App::M_RADIO);
     pump(100);
-    shot("07b_settings_more");
+    shot("07b_settings_radio");
+    // keys: Back returns to the six categories, with the cursor on the one just left
+    app.key(hx::K_BACK);
+    pump(100);
+    if (hx::HarnessAccess::tab(app) != hx::App::T_MORE || hx::HarnessAccess::sec(app) != -1) {
+        printf("FAIL Back from a settings page\n");
+        return 1;
+    }
+    // the Sound quick switch: off, then back to the tone it had
+    {
+        const int before = model.uiPref("snd", 1);
+        lv_obj_send_event(hx::HarnessAccess::quick(app, 3), LV_EVENT_CLICKED, nullptr);
+        const int off = model.uiPref("snd", 1);
+        lv_obj_send_event(hx::HarnessAccess::quick(app, 3), LV_EVENT_CLICKED, nullptr);
+        printf("sound quick switch %d -> %d -> %d\n", before, off, model.uiPref("snd", 1));
+        if (before < 1 || off != 0 || model.uiPref("snd", 1) != before) {
+            printf("FAIL sound quick switch\n");
+            return 1;
+        }
+    }
+    pump(4500); // the toasts go
+    for (int s = 1; s < hx::App::M_COUNT; s++) {
+        hx::HarnessAccess::more(app, s);
+        pump(100);
+        char nm[32];
+        snprintf(nm, sizeof(nm), "07s%d_settings_page", s);
+        shot(nm);
+    }
+    hx::HarnessAccess::more(app, hx::App::M_SCREEN);
+    pump(100);
     lv_obj_scroll_to_view_recursive(hx::HarnessAccess::volume(app), LV_ANIM_OFF);
     pump(200);
     shot("07e_settings_sound");
     {
         lv_obj_t *more = lv_obj_get_child(lv_obj_get_child(lv_screen_active(), 2), hx::App::T_MORE);
+        hx::HarnessAccess::more(app, hx::App::M_RADIO);
         lv_obj_scroll_to_view_recursive(hx::HarnessAccess::cust(app, 0), LV_ANIM_OFF);
         (void)more;
         pump(100);
@@ -632,8 +668,30 @@ int main(int argc, char **argv)
         // back to the US preset via the dropdown list
         lv_dropdown_set_selected(hx::HarnessAccess::preset(app), 0);
         lv_obj_send_event(hx::HarnessAccess::preset(app), LV_EVENT_VALUE_CHANGED, nullptr);
+        pump(100);
+        if (!hx::HarnessAccess::asking(app) || model.radio().freq != 906.875f) {
+            printf("FAIL a preset must ask before it changes the radio\n");
+            return 1;
+        }
+        shot("07f_settings_ask_radio");
+        hx::HarnessAccess::askApply(app);
+        pump(100);
         r = model.radio();
         printf("preset 0 -> %.3f MHz BW %.1f SF%u CR%u\n", r.freq, r.bw, r.sf, r.cr);
+        if (fabsf(r.freq - 910.525f) > 0.001f || r.sf != 7) {
+            printf("FAIL preset apply\n");
+            return 1;
+        }
+        // Cancel leaves the radio alone
+        lv_dropdown_set_selected(hx::HarnessAccess::preset(app), 6);
+        lv_obj_send_event(hx::HarnessAccess::preset(app), LV_EVENT_VALUE_CHANGED, nullptr);
+        app.key(hx::K_BACK);
+        pump(100);
+        if (hx::HarnessAccess::asking(app) || fabsf(model.radio().freq - 910.525f) > 0.001f ||
+            lv_dropdown_get_selected(hx::HarnessAccess::preset(app)) != 0) {
+            printf("FAIL Cancel on the radio question\n");
+            return 1;
+        }
     }
     // emoji in a channel chat
     hx::HarnessAccess::channel(app, 1);
@@ -723,18 +781,22 @@ int main(int argc, char **argv)
     pump(300);
     {
         lv_obj_t *more = lv_obj_get_child(lv_obj_get_child(lv_screen_active(), 2), hx::App::T_MORE);
-        lv_obj_update_layout(more);
-        int32_t total = lv_obj_get_scroll_bottom(more) + lv_obj_get_height(more);
-        printf("settings page height %d\n", (int)total);
-        for (int i = 0; i < 30; i++) {
-            lv_obj_scroll_to_y(more, i * (lv_obj_get_height(more) - 20), LV_ANIM_OFF);
-            pump(50);
-            char nm[32];
-            snprintf(nm, sizeof(nm), "19_settings_%02d", i);
-            shot(nm);
-            if (lv_obj_get_scroll_bottom(more) <= 0)
-                break;
+        for (int s = 0; s < hx::App::M_COUNT; s++) {
+            hx::HarnessAccess::more(app, s);
+            lv_obj_update_layout(more);
+            int32_t total = lv_obj_get_scroll_bottom(more) + lv_obj_get_height(more);
+            printf("settings page %d height %d\n", s, (int)total);
+            for (int i = 0; i < 12; i++) {
+                lv_obj_scroll_to_y(more, i * (lv_obj_get_height(more) - 20), LV_ANIM_OFF);
+                pump(50);
+                char nm[32];
+                snprintf(nm, sizeof(nm), "19_settings_%d_%02d", s, i);
+                shot(nm);
+                if (lv_obj_get_scroll_bottom(more) <= 0)
+                    break;
+            }
         }
+        hx::HarnessAccess::more(app, -1);
     }
     // stat details from the Home tiles, and the keys' cursor on the menu rail
     app.touched();
@@ -886,6 +948,7 @@ int main(int argc, char **argv)
     shot("19c_chat_via_internet");
     app.key(hx::K_BACK);
     app.selectTab(hx::App::T_MORE);
+    hx::HarnessAccess::more(app, hx::App::M_CONNECT);
     pump(200);
     lv_obj_scroll_to_view_recursive(hx::HarnessAccess::feedField(app), LV_ANIM_OFF);
     pump(200);

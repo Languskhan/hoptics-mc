@@ -39,8 +39,12 @@ Download the firmware for your board from the [latest release](https://github.co
   messages and private channels' keys never go to the page. From the page you can also send channel
   messages, install a firmware update (it starts on trial and goes back by itself if it doesn't start
   properly), and send a folder of offline map tiles for the radio's map.
-- **Settings**: radio presets or a custom radio, path hash size, auto-add rules, position and telemetry
-  privacy, Bluetooth PIN, region, screen, time zone, themes, wallpapers, a lock screen, large chat text, and message sounds with a volume setting.
+- **Settings** (the More tab): quick switches for Wi-Fi, Bluetooth, GPS and sound (tap to flip, hold for
+  their page), then six categories, each showing what it's set to: **Radio** (presets or a custom radio, asked
+  before they change anything; path hash size; region), **Messages** (auto-add rules, telemetry privacy),
+  **Connect** (Bluetooth PIN, Wi-Fi, web page, live feed), **Display** (themes, wallpapers, a lock screen, large
+  chat text, message sounds with a volume setting), **Location** (GPS, the street map) and **System** (time zone,
+  restart, device log, about). Back, Left, or More again returns to the six.
 
 ## How it's built
 

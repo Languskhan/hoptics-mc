@@ -1717,7 +1717,162 @@ void App::loadChats(void)
 // ================================================================= more (settings)
 void App::buildMore(lv_obj_t *p)
 {
-    lv_obj_t *cd = card(p, "THIS RADIO");
+    // the hub: four quick switches, then the six categories, two across; each category is a page of cards below it
+    static const char *const NAMES[M_COUNT] = {"Radio", "Messages", "Connect", "Display", "Location", "System"};
+    static const char *const ICONS[M_COUNT] = {LV_SYMBOL_CHARGE, LV_SYMBOL_ENVELOPE, LV_SYMBOL_WIFI, LV_SYMBOL_IMAGE, LV_SYMBOL_GPS,
+                                               LV_SYMBOL_SETTINGS};
+    const lv_color_t HUE[M_COUNT] = {C_AMBER, C_CYAN, C_BLUE, C_VIOLET, C_GREEN, C_MUTED};
+    moreOpen = -1;
+    moreHub = plain(p);
+    lv_obj_set_size(moreHub, LV_PCT(100), LV_SIZE_CONTENT);
+    column(moreHub, PAD);
+    lv_obj_t *qr = plain(moreHub);
+    lv_obj_set_size(qr, LV_PCT(100), LV_SIZE_CONTENT);
+    row(qr, PAD);
+    static const char *const QN[4] = {"Wi-Fi", "Bluetooth", "GPS", "Sound"};
+    static const char *const QI[4] = {LV_SYMBOL_WIFI, LV_SYMBOL_BLUETOOTH, LV_SYMBOL_GPS, LV_SYMBOL_BELL};
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *t = plain(qr);
+        lv_obj_set_height(t, 40);
+        lv_obj_set_flex_grow(t, 1);
+        lv_obj_add_flag(t, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_radius(t, T_RADIUS, 0);
+        lv_obj_set_style_bg_color(t, C_CARD, 0);
+        lv_obj_set_style_bg_opa(t, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(t, C_CYAN, LV_STATE_CHECKED); // on: washed in the accent
+        lv_obj_set_style_bg_opa(t, LV_OPA_30, LV_STATE_CHECKED);
+        lv_obj_set_style_border_width(t, 1, 0);
+        lv_obj_set_style_border_color(t, C_LINE, 0);
+        lv_obj_set_style_border_color(t, C_CYAN, LV_STATE_CHECKED);
+        lv_obj_set_style_bg_opa(t, LV_OPA_50, LV_STATE_PRESSED);
+        lv_obj_t *ic = label(t, F14, C_MUTED, QI[i]);
+        lv_obj_set_style_text_color(ic, C_CYAN, LV_STATE_CHECKED);
+        lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, 4);
+        lv_obj_t *nm = label(t, F10, C_DIM, QN[i]);
+        lv_obj_set_style_text_color(nm, C_TEXT, LV_STATE_CHECKED);
+        lv_obj_align(nm, LV_ALIGN_BOTTOM_MID, 0, -3);
+        lv_obj_add_flag(ic, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_add_flag(nm, LV_OBJ_FLAG_EVENT_BUBBLE);
+        stop(t);
+        lv_obj_set_user_data(t, (void *)(intptr_t)i);
+        auto quick = [](lv_event_t *e) {
+                const int i = (int)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_current_target(e));
+                static const int8_t PAGE[4] = {M_CONNECT, M_CONNECT, M_LOCATION, M_SCREEN};
+                if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED)
+                    return self->openMore(PAGE[i]); // hold: its settings
+                if (lv_obj_has_flag(self->moreHub, LV_OBJ_FLAG_HIDDEN))
+                    return; // the release after a hold
+                if (i == 3) { // sound: off, or back to the tone it had
+                    const int now = self->m.uiPref("snd", 1);
+                    if (now > 0)
+                        self->m.setUiPref("snd_was", now);
+                    const int v = now > 0 ? 0 : std::max(1, self->m.uiPref("snd_was", 1));
+                    self->writeSetting("ui:snd", v);
+                    if (v)
+                        self->m.playSound(v, self->m.uiPref("vol", 60));
+                    self->toast(v ? LV_SYMBOL_BELL " Sound on" : "Sound off");
+                    return self->refreshSettings();
+                }
+                lv_obj_t *sw = self->quickSw[i]; // the page's own switch does the work, so both always agree
+                if (!sw)
+                    return;
+                if (lv_obj_has_state(sw, LV_STATE_CHECKED))
+                    lv_obj_remove_state(sw, LV_STATE_CHECKED);
+                else
+                    lv_obj_add_state(sw, LV_STATE_CHECKED);
+                lv_obj_send_event(sw, LV_EVENT_VALUE_CHANGED, nullptr);
+                if (i == 2)
+                    self->toast(lv_obj_has_state(sw, LV_STATE_CHECKED) ? LV_SYMBOL_GPS " GPS on" : "GPS off");
+                self->refreshMoreHub();
+            };
+        lv_obj_add_event_cb(t, quick, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(t, quick, LV_EVENT_LONG_PRESSED, nullptr);
+        quickTile[i] = t;
+        quickSw[i] = nullptr;
+    }
+    lv_obj_t *grid = plain(moreHub);
+    lv_obj_set_size(grid, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_row(grid, PAD, 0);
+    lv_obj_set_style_pad_column(grid, PAD, 0);
+    const int32_t tw = LAND ? (W() - RAIL_W - 3 * PAD) / 2 : LV_PCT(100); // two across on the wide screens
+    for (int s = 0; s < M_COUNT; s++) {
+        lv_obj_t *t = plain(grid);
+        lv_obj_set_size(t, tw, LV_SIZE_CONTENT);
+        lv_obj_add_flag(t, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(t, C_CARD, 0);
+        lv_obj_set_style_bg_opa(t, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(t, C_CARD2, LV_STATE_PRESSED);
+        lv_obj_set_style_radius(t, T_RADIUS, 0);
+        lv_obj_set_style_pad_all(t, 6, 0);
+        lv_obj_set_style_border_side(t, LV_BORDER_SIDE_LEFT, 0); // each category's own colour down its edge
+        lv_obj_set_style_border_width(t, 3, 0);
+        lv_obj_set_style_border_color(t, HUE[s], 0);
+        column(t, 1);
+        lv_obj_t *hd = plain(t);
+        lv_obj_set_size(hd, LV_PCT(100), LV_SIZE_CONTENT);
+        row(hd, 5);
+        lv_obj_t *ic = label(hd, F14, HUE[s], ICONS[s]);
+        (void)ic;
+        lv_obj_t *nm = label(hd, F14, C_TEXT, NAMES[s]);
+        lv_obj_set_flex_grow(nm, 1);
+        oneLine(nm);
+        label(hd, F10, C_DIM, LV_SYMBOL_RIGHT);
+        for (int k = 0; k < 2; k++) {
+            moreSum[s][k] = label(t, F10, k ? C_DIM : C_MUTED, "");
+            lv_obj_set_width(moreSum[s][k], LV_PCT(100));
+            oneLine(moreSum[s][k]);
+        }
+        stop(t);
+        lv_obj_set_user_data(t, (void *)(intptr_t)s);
+        lv_obj_add_event_cb(
+            t, [](lv_event_t *e) { self->openMore((int)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_current_target(e))); },
+            LV_EVENT_CLICKED, nullptr);
+        moreTile[s] = t;
+    }
+    for (int s = 0; s < M_COUNT; s++) {
+        lv_obj_t *sec = plain(p);
+        lv_obj_set_size(sec, LV_PCT(100), LV_SIZE_CONTENT);
+        column(sec, PAD);
+        lv_obj_add_flag(sec, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_t *bk = button(sec, "", HUE[s], LV_PCT(100), 30); // the page's title, and the way back
+        lv_obj_t *bl = lv_obj_get_child(bk, 0);
+        lv_label_set_text_fmt(bl, LV_SYMBOL_LEFT "   %s", NAMES[s]);
+        lv_obj_align(bl, LV_ALIGN_LEFT_MID, 8, 0);
+        lv_obj_add_event_cb(bk, [](lv_event_t *) { self->openMore(-1); }, LV_EVENT_CLICKED, nullptr);
+        moreSec[s] = sec;
+    }
+
+    // "Apply radio change?": a box over the screen, so a slip of a finger can't move the radio off the mesh
+    askBox = plain(scr);
+    lv_obj_set_size(askBox, W(), H());
+    lv_obj_set_style_bg_color(askBox, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(askBox, LV_OPA_60, 0);
+    lv_obj_add_flag(askBox, LV_OBJ_FLAG_CLICKABLE); // nothing under it takes a tap
+    lv_obj_add_flag(askBox, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t *ab = card(askBox, "APPLY RADIO CHANGE?");
+    lv_obj_set_width(ab, std::min<int32_t>(W() - 24, 300));
+    lv_obj_center(ab);
+    askText = label(ab, F12, C_TEXT, "");
+    wrap(askText);
+    lv_obj_t *abr = plain(ab);
+    lv_obj_set_size(abr, LV_PCT(100), LV_SIZE_CONTENT);
+    row(abr, PAD);
+    lv_obj_t *ac = button(abr, "Cancel", C_MUTED, LV_PCT(48), 30);
+    lv_obj_set_flex_grow(ac, 1);
+    lv_obj_add_event_cb(
+        ac,
+        [](lv_event_t *) {
+            lv_obj_add_flag(self->askBox, LV_OBJ_FLAG_HIDDEN);
+            self->refreshSettings(); // the lists show the radio as it still is
+            self->refocus(self->setPreset);
+        },
+        LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *aa = button(abr, LV_SYMBOL_OK " Apply", C_AMBER, LV_PCT(48), 30);
+    lv_obj_set_flex_grow(aa, 1);
+    lv_obj_add_event_cb(aa, [](lv_event_t *) { self->askApply(); }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t *cd = card(moreSec[M_RADIO], "THIS RADIO");
     lv_obj_t *r = fieldRow(cd, "Name others see");
     setName = lv_textarea_create(r);
     lv_textarea_set_one_line(setName, true);
@@ -1738,7 +1893,7 @@ void App::buildMore(lv_obj_t *p)
         },
         LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_t *cr = card(p, "RADIO");
+    lv_obj_t *cr = card(moreSec[M_RADIO], "RADIO");
     static int16_t BANDV[N_BANDS];
     static std::string bandOpts;
     if (bandOpts.empty())
@@ -1766,9 +1921,7 @@ void App::buildMore(lv_obj_t *p)
             rd.freq = PRESETS[pi].freq, rd.bw = PRESETS[pi].bw, rd.sf = PRESETS[pi].sf, rd.cr = PRESETS[pi].cr;
         }
         rd.txPower = TX_LEVELS[std::min<uint32_t>(lv_dropdown_get_selected(self->setTx), sizeof(TX_LEVELS) - 1)];
-        const std::string warn = self->bandWarning(rd);
-        self->toast(!self->m.setRadio(rd) ? "Couldn't change the radio settings" : warn.empty() ? LV_SYMBOL_OK " Radio settings saved" : warn.c_str());
-        self->refreshHome();
+        self->askRadioChange(rd); // applied only after "Apply"; Cancel puts the lists back
     };
     lv_obj_add_event_cb(setPreset, radioChanged, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_add_event_cb(setTx, radioChanged, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -1804,7 +1957,7 @@ void App::buildMore(lv_obj_t *p)
     addSetting(cr, "cad", LV_SYMBOL_EYE_OPEN " Listen before sending", nullptr, nullptr, 0,
                "Waits for a quiet channel first: fewer collisions on a busy mesh.");
 
-    lv_obj_t *cc = card(p, "CUSTOM RADIO");
+    lv_obj_t *cc = card(moreSec[M_RADIO], "CUSTOM RADIO");
     lv_obj_t *ch = label(cc, F10, C_DIM,
                          "For a local mesh with its own settings. Frequency, bandwidth and SF must match the mesh "
                          "exactly; coding rate can differ. Type the MHz, or use Left / Right to step 25 kHz.");
@@ -1828,7 +1981,7 @@ void App::buildMore(lv_obj_t *p)
     lv_obj_t *ap = button(cc, LV_SYMBOL_OK " Apply custom settings", C_CYAN, LV_PCT(100), 30);
     lv_obj_add_event_cb(ap, [](lv_event_t *) { self->applyCustom(); }, LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_t *cm = card(p, "MESSAGES AND CONTACTS");
+    lv_obj_t *cm = card(moreSec[M_MESSAGES], "MESSAGES AND CONTACTS");
     addSetting(cm, "multi_acks", LV_SYMBOL_OK " Send receipts twice", nullptr, nullptr, 0,
                "Direct messages show as delivered more reliably on a weak or busy mesh, for a little more airtime.");
     static const int16_t ADDM[] = {0, 1, 2};
@@ -1843,7 +1996,7 @@ void App::buildMore(lv_obj_t *p)
     static const int16_t FULL[] = {0, 1};
     addSetting(cm, "add_full", "When the contact list is full", "Keep it as it is\nReplace the oldest (never favourites)", FULL, 2);
 
-    lv_obj_t *cg = card(p, "POSITION");
+    lv_obj_t *cg = card(moreSec[M_LOCATION], "POSITION");
     addSetting(cg, "gps", LV_SYMBOL_GPS " GPS", nullptr, nullptr, 0);
     static const int16_t GPSI[] = {1, 10, 60, 300, 900};
     addSetting(cg, "gps_int", "Update my position", "Every second\nEvery 10 seconds\nEvery minute\nEvery 5 minutes\nEvery 15 minutes", GPSI, 5);
@@ -1856,13 +2009,13 @@ void App::buildMore(lv_obj_t *p)
     addSetting(cg, "adv_loc", LV_SYMBOL_UPLOAD " Share my position in adverts", nullptr, nullptr, 0,
                "Puts you on other people's maps. Off keeps your location to yourself.");
 
-    lv_obj_t *cp = card(p, "PRIVACY: WHO CAN ASK THIS RADIO FOR...");
+    lv_obj_t *cp = card(moreSec[M_MESSAGES], "PRIVACY: WHO CAN ASK THIS RADIO FOR...");
     static const int16_t TEL[] = {0, 1, 2};
     addSetting(cp, "tel_base", "Battery and status", "Nobody\nFavourites only\nAnyone", TEL, 3);
     addSetting(cp, "tel_loc", "My location", "Nobody\nFavourites only\nAnyone", TEL, 3);
     addSetting(cp, "tel_env", "Sensor readings", "Nobody\nFavourites only\nAnyone", TEL, 3);
 
-    lv_obj_t *cb = card(p, "PHONE APP");
+    lv_obj_t *cb = card(moreSec[M_CONNECT], "PHONE APP");
     toggle(cb, LV_SYMBOL_BLUETOOTH " Bluetooth", &setBt);
     lv_obj_add_event_cb(
         setBt,
@@ -1901,7 +2054,7 @@ void App::buildMore(lv_obj_t *p)
         LV_EVENT_CLICKED, nullptr);
 
     if (m.wifiSupported()) {
-        lv_obj_t *cw = card(p, "WI-FI");
+        lv_obj_t *cw = card(moreSec[M_CONNECT], "WI-FI");
         toggle(cw, LV_SYMBOL_WIFI " Wi-Fi", &wfSwitch);
         lv_obj_add_event_cb(
             wfSwitch,
@@ -1963,7 +2116,7 @@ void App::buildMore(lv_obj_t *p)
         wrap(label(cw, F10, C_DIM,
                    "For the street map and the clock. Bluetooth stays on for the phone app. The password is kept on this radio."));
 
-        lv_obj_t *cmp = card(p, "MAP");
+        lv_obj_t *cmp = card(moreSec[M_LOCATION], "MAP");
         toggle(cmp, LV_SYMBOL_IMAGE " Street map", &mapTilesSw);
         lv_obj_add_event_cb(
             mapTilesSw,
@@ -1989,7 +2142,7 @@ void App::buildMore(lv_obj_t *p)
                    "places you've seen still show without Wi-Fi. Map data (c) OpenStreetMap contributors."));
 
         if (m.feedSupported()) {
-            lv_obj_t *cf = card(p, "LIVE FEED");
+            lv_obj_t *cf = card(moreSec[M_CONNECT], "LIVE FEED");
             toggle(cf, LV_SYMBOL_DOWNLOAD " Hear it online", &feedSw);
             lv_obj_add_event_cb(
                 feedSw,
@@ -2023,7 +2176,7 @@ void App::buildMore(lv_obj_t *p)
                        "them. Receive only: sending still goes out over the radio."));
         }
         if (m.webSupported()) {
-            lv_obj_t *cw = card(p, "WEB PAGE");
+            lv_obj_t *cw = card(moreSec[M_CONNECT], "WEB PAGE");
             toggle(cw, LV_SYMBOL_EYE_OPEN " Dashboard on Wi-Fi", &webSw);
             lv_obj_add_event_cb(
                 webSw,
@@ -2057,7 +2210,7 @@ void App::buildMore(lv_obj_t *p)
         }
     }
 
-    lv_obj_t *cs = card(p, "SCREEN");
+    lv_obj_t *cs = card(moreSec[M_SCREEN], "SCREEN");
     r = fieldRow(cs, "Theme");
     setTheme = dropdown(r, "Midnight\nDaylight\nNight red\nAmber\nGlass\nGlass violet\nGlass green\nGlass rose\nGlass gold\nGlass rainbow");
     lv_obj_add_event_cb(
@@ -2069,6 +2222,7 @@ void App::buildMore(lv_obj_t *p)
             self->m.setUiPref("theme", t);
             self->applyTheme(t); // rebuilds every screen
             self->selectTab(T_MORE);
+            self->openMore(M_SCREEN); // back where the theme was picked
         },
         LV_EVENT_VALUE_CHANGED, nullptr);
     r = fieldRow(cs, "Brightness");
@@ -2089,7 +2243,7 @@ void App::buildMore(lv_obj_t *p)
         LV_EVENT_VALUE_CHANGED, nullptr);
 
     if (m.hasSound()) {
-        lv_obj_t *cv = card(p, "SOUND");
+        lv_obj_t *cv = card(moreSec[M_SCREEN], "SOUND");
         static const int16_t SND[] = {0, 1, 2, 3}, SALL[] = {0, 1};
         addSetting(cv, "ui:snd", LV_SYMBOL_BELL " Message sound", "Off\nChirp\nChime\nPing", SND, 4);
         addSetting(cv, "ui:snd_all", "Play it for", "Direct messages only\nAll messages", SALL, 2,
@@ -2157,10 +2311,11 @@ void App::buildMore(lv_obj_t *p)
                 snprintf(b, sizeof(b), "%sUTC%+d%s", i ? "\n" : "", TZ[i].min / 60, TZ[i].where);
             tzOpts += b;
         }
-    addSetting(cs, "tzm", "Time zone (for the clock)", tzOpts.c_str(), TZV, N_TZ,
+    lv_obj_t *ck = card(moreSec[M_SYSTEM], "CLOCK");
+    addSetting(ck, "tzm", "Time zone (for the clock)", tzOpts.c_str(), TZV, N_TZ,
                "Summer time isn't automatic: pick one hour more while it is on (e.g. Pacific summer = UTC-7).");
 
-    lv_obj_t *cz = card(p, "REGION");
+    lv_obj_t *cz = card(moreSec[M_RADIO], "REGION");
     lv_obj_t *zh = label(cz, F10, C_DIM,
                          "Only if your mesh uses regions: adverts and channel messages then flood only within that region. "
                          "Leave it empty otherwise (Sacramento's SMF: leave it empty).");
@@ -2183,7 +2338,7 @@ void App::buildMore(lv_obj_t *p)
         },
         LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_t *cdv = card(p, "DEVICE");
+    lv_obj_t *cdv = card(moreSec[M_SYSTEM], "DEVICE");
     lv_obj_t *rb = button(cdv, LV_SYMBOL_REFRESH " Restart the radio", C_AMBER, LV_PCT(100), 30);
     lv_obj_add_event_cb(
         rb,
@@ -2201,7 +2356,7 @@ void App::buildMore(lv_obj_t *p)
             lv_obj_add_flag(rb, LV_OBJ_FLAG_HIDDEN);
     }
 
-    lv_obj_t *cl = card(p, "DEVICE LOG");
+    lv_obj_t *cl = card(moreSec[M_SYSTEM], "DEVICE LOG");
     lv_obj_t *lb = button(cl, LV_SYMBOL_UPLOAD " Send the log to USB", C_CYAN, LV_PCT(100), 30);
     lv_obj_add_event_cb(
         lb,
@@ -2220,10 +2375,155 @@ void App::buildMore(lv_obj_t *p)
                "sessions, including a crash if there was one. No messages, names, positions, network names or "
                "passwords go in it."));
 
-    lv_obj_t *ca = card(p, "ABOUT");
+    lv_obj_t *ca = card(moreSec[M_SYSTEM], "ABOUT");
     setAbout = label(ca, F12, C_TEXT, "");
     wrap(setAbout);
     stop(ca);
+
+    // the quick switches drive the pages' own switches; one a radio lacks is not shown
+    quickSw[0] = m.wifiSupported() ? wfSwitch : nullptr;
+    quickSw[1] = setBt;
+    for (auto &sr : setRows)
+        if (!strcmp(sr.key, "gps")) {
+            int32_t v;
+            quickSw[2] = readSetting("gps", v) ? sr.ctl : nullptr;
+        }
+    for (int i = 0; i < 4; i++)
+        if (i == 3 ? !m.hasSound() : !quickSw[i])
+            lv_obj_add_flag(quickTile[i], LV_OBJ_FLAG_HIDDEN);
+}
+
+// -1 = the six categories; otherwise that category's page. The page starts at its top, the keys' cursor on its first
+// control; back on the hub the cursor returns to the category just left.
+void App::openMore(int s)
+{
+    const int was = moreOpen;
+    moreOpen = s >= 0 && s < M_COUNT ? s : -1;
+    if (moreOpen < 0)
+        lv_obj_remove_flag(moreHub, LV_OBJ_FLAG_HIDDEN);
+    else
+        lv_obj_add_flag(moreHub, LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < M_COUNT; i++)
+        if (i == moreOpen)
+            lv_obj_remove_flag(moreSec[i], LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_add_flag(moreSec[i], LV_OBJ_FLAG_HIDDEN);
+    if (tab != T_MORE)
+        return;
+    if (moreOpen < 0)
+        refreshMoreHub();
+    lv_obj_update_layout(pages[T_MORE]);
+    lv_obj_scroll_to_y(pages[T_MORE], 0, LV_ANIM_OFF);
+    refocus(moreOpen < 0 && was >= 0 ? moreTile[was] : nullptr);
+}
+
+// what each category is set to, in a line or two, so most of the time there's no need to open it
+void App::refreshMoreHub(void)
+{
+    if (!moreHub)
+        return;
+    char a[64], b[64];
+    int32_t v = 0;
+    // Radio: the preset (or the custom numbers) and the power
+    const Radio r = m.radio();
+    const char *pn = nullptr;
+    for (int i = 0; i < N_PRESETS; i++)
+        if (fabsf(PRESETS[i].freq - r.freq) < 0.002f && fabsf(PRESETS[i].bw - r.bw) < 0.01f && PRESETS[i].sf == r.sf && PRESETS[i].cr == r.cr)
+            pn = PRESETS[i].name;
+    setText(moreSum[M_RADIO][0], pn ? pn : "Custom radio");
+    snprintf(a, sizeof(a), "%.3f MHz \xC2\xB7 SF%u \xC2\xB7 %d dBm", r.freq, (unsigned)r.sf, (int)r.txPower);
+    setText(moreSum[M_RADIO][1], a);
+    // Messages: who gets added, and who may ask where this radio is
+    static const char *const ADD[3] = {"Adds everyone heard", "Adds the types picked", "Adds only by hand"};
+    setText(moreSum[M_MESSAGES][0], readSetting("add_mode", v) && v >= 0 && v < 3 ? ADD[v] : "Contacts");
+    static const char *const WHO[3] = {"nobody", "favourites", "anyone"};
+    if (readSetting("tel_loc", v) && v >= 0 && v < 3)
+        snprintf(b, sizeof(b), "Location asked by %s", WHO[v]);
+    else
+        snprintf(b, sizeof(b), "Privacy");
+    setText(moreSum[M_MESSAGES][1], b);
+    // Connect: the links, then what Wi-Fi is doing
+    const WifiStatus w = m.wifi();
+    const bool wifiOn = m.wifiSupported() && w.state != WifiStatus::OFF;
+    if (m.wifiSupported())
+        snprintf(a, sizeof(a), "Wi-Fi %s \xC2\xB7 Bluetooth %s", wifiOn ? "on" : "off", m.bluetoothEnabled() ? "on" : "off");
+    else
+        snprintf(a, sizeof(a), "Bluetooth %s", m.bluetoothEnabled() ? "on" : "off");
+    setText(moreSum[M_CONNECT][0], a);
+    static const char *const WST[5] = {"Offline", "Joining...", "Online", "Network not found", "Couldn't join"};
+    setText(moreSum[M_CONNECT][1], !m.wifiSupported() ? "Phone app" : w.state < 5 ? WST[w.state] : "");
+    // Screen & sound: the theme, then the sound (or the screen timeout on a radio with no speaker)
+    static const char *const THEME[10] = {"Midnight", "Daylight", "Night red", "Amber", "Glass", "Glass violet", "Glass green", "Glass rose", "Glass gold", "Glass rainbow"};
+    const int th = m.uiPref("theme", 0);
+    snprintf(a, sizeof(a), "%s theme \xC2\xB7 %d%%", THEME[th >= 0 && th < 10 ? th : 0], (m.uiPref("bright", 200) * 100 + 127) / 255);
+    setText(moreSum[M_SCREEN][0], a);
+    if (m.hasSound()) {
+        static const char *const TONE[4] = {"Off", "Chirp", "Chime", "Ping"};
+        const int sn = m.uiPref("snd", 1);
+        if (sn > 0 && sn < 4)
+            snprintf(b, sizeof(b), "Sound: %s \xC2\xB7 %d%%", TONE[sn], m.uiPref("vol", 60));
+        else
+            snprintf(b, sizeof(b), "Sound off");
+    } else {
+        const int to = m.uiPref("timeout", 60);
+        if (to <= 0)
+            snprintf(b, sizeof(b), "Screen stays on");
+        else if (to < 60)
+            snprintf(b, sizeof(b), "Screen off after %ds", to);
+        else
+            snprintf(b, sizeof(b), "Screen off after %d min", to / 60);
+    }
+    setText(moreSum[M_SCREEN][1], b);
+    // Location: GPS, and whether adverts carry the position
+    if (readSetting("gps", v))
+        snprintf(a, sizeof(a), "GPS %s", v ? "on" : "off");
+    else
+        snprintf(a, sizeof(a), "No GPS");
+    setText(moreSum[M_LOCATION][0], a);
+    const bool share = readSetting("adv_loc", v) && v;
+    snprintf(b, sizeof(b), "%s%s", share ? "Shared in adverts" : "Kept to myself", mapTiles() ? " \xC2\xB7 street map" : "");
+    setText(moreSum[M_LOCATION][1], b);
+    // System: the version and how long it has been up
+    const Stats st = m.stats();
+    snprintf(a, sizeof(a), "Hoptics-MC %s", m.firmwareVersion());
+    setText(moreSum[M_SYSTEM][0], a);
+    snprintf(b, sizeof(b), "Up %luh %02lum", (unsigned long)(st.uptimeS / 3600), (unsigned long)(st.uptimeS / 60 % 60));
+    setText(moreSum[M_SYSTEM][1], b);
+    // the quick switches show what they would flip
+    for (int i = 0; i < 4; i++) {
+        bool on = false;
+        if (i == 3)
+            on = m.uiPref("snd", 1) > 0;
+        else if (quickSw[i])
+            on = lv_obj_has_state(quickSw[i], LV_STATE_CHECKED);
+        if (on)
+            lv_obj_add_state(quickTile[i], LV_STATE_CHECKED);
+        else
+            lv_obj_remove_state(quickTile[i], LV_STATE_CHECKED);
+    }
+}
+
+// a preset or power picked: asked first, with the new numbers and any warning about the country's band
+void App::askRadioChange(const Radio &rd)
+{
+    askRadio = rd;
+    const std::string warn = bandWarning(rd);
+    setTextFmt(askText, "%.3f MHz, %g kHz, SF%u, CR 4/%u, %d dBm.\nEveryone on your mesh must use the same settings, or you "
+                        "won't hear each other.%s%s",
+               rd.freq, rd.bw, (unsigned)rd.sf, (unsigned)rd.cr, (int)rd.txPower, warn.empty() ? "" : "\n\n", warn.c_str());
+    lv_obj_remove_flag(askBox, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(askBox);
+    refocus();
+}
+
+void App::askApply(void)
+{
+    lv_obj_add_flag(askBox, LV_OBJ_FLAG_HIDDEN);
+    const std::string warn = bandWarning(askRadio);
+    toast(!m.setRadio(askRadio) ? "Couldn't change the radio settings" : warn.empty() ? LV_SYMBOL_OK " Radio settings saved" : warn.c_str());
+    refreshSettings();
+    refreshHome();
+    refocus(setPreset);
 }
 
 // a keyed setting as a switch (opts == nullptr) or a dropdown; it saves as soon as it changes
@@ -2573,7 +2873,7 @@ void App::refreshSettings(void)
         const int b = m.uiPref("band", 0);
         if (b > 0 && b < N_BANDS)
         {
-            char duty[48] = "";
+            char duty[64] = "";
             if (BANDS[b].duty < 100)
                 snprintf(duty, sizeof(duty), ", transmitting at most %g %% of the time", BANDS[b].duty);
             setTextFmt(bandInfo, "%.3f-%.3f MHz, up to %d dBm%s. The radio warns when a setting is outside it.", BANDS[b].lo,
@@ -2681,6 +2981,7 @@ void App::refreshSettings(void)
     lv_label_set_text(setAbout, b);
     loadingSettings = false;
     refreshWifi();
+    refreshMoreHub();
 }
 
 // ================================================================= navigation, keys, power
@@ -2725,6 +3026,7 @@ void App::selectTab(int t)
         refreshChats();
         break;
     case T_MORE:
+        openMore(-1); // More opens on its six categories
         refreshSettings();
         break;
     }
@@ -2736,6 +3038,8 @@ void App::selectTab(int t)
 
 lv_obj_t *App::topOverlay(void) const
 {
+    if (askBox && !lv_obj_has_flag(askBox, LV_OBJ_FLAG_HIDDEN))
+        return askBox;
     if (chatOpen)
         return chatOv;
     if (rm)
@@ -3689,7 +3993,7 @@ void App::renderStat(void)
     const bool hadRing = focusAt >= 0 && lv_obj_has_state(lv_group_get_focused(group), LV_STATE_FOCUS_KEY);
     lv_obj_clean(statBody);
     statKeys.clear();
-    char b[96], v[32];
+    char b[256], v[40];
     const uint32_t now = m.now();
     const Stats st = m.stats();
     int32_t myLa = 0, myLo = 0;
@@ -4149,6 +4453,10 @@ void App::goBack(void)
         closeNode();
     else if (topOverlay() == statOv)
         closeStat();
+    else if (topOverlay() == askBox)
+        lv_obj_send_event(lv_obj_get_child(lv_obj_get_child(lv_obj_get_child(askBox, 0), 2), 0), LV_EVENT_CLICKED, nullptr); // Cancel
+    else if (tab == T_MORE && moreOpen >= 0)
+        openMore(-1);
     else if (tab != T_HOME)
         selectTab(T_HOME);
 }
@@ -4429,6 +4737,11 @@ void App::key(uint32_t k)
                 goBack();
             return;
         }
+        if (tab == T_MORE && moreOpen >= 0) { // in a settings page: Left goes back to the six, Right stays
+            if (k == K_LEFT)
+                openMore(-1);
+            return;
+        }
         if (LAND && k == K_LEFT) { // landscape: Left steps out of the page onto the menu rail
             keysUsed = true;
             return setRail(true);
@@ -4568,8 +4881,11 @@ void App::loop(uint32_t ms)
         refreshStatus();
         if (tab == T_HOME && !topOverlay())
             refreshHome();
-        if (tab == T_MORE && !topOverlay())
+        if (tab == T_MORE && !topOverlay()) {
             refreshWifi();
+            if (moreOpen < 0)
+                refreshMoreHub(); // the summaries keep up (uptime, Wi-Fi joining)
+        }
         if (tab == T_MAP && !topOverlay()) {
             refreshMapStrip();
             lv_obj_invalidate(mapObj); // ages, fades and new positions

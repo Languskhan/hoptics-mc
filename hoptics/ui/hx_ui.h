@@ -58,6 +58,10 @@ class App : public Ui
     std::string bandWarning(const Radio &rd) const;          // empty when the radio fits the chosen country band
     lv_obj_t *bandInfo = nullptr;
     lv_obj_t *setVol = nullptr; // More > Sound > Volume
+    // More: a hub of six categories, each opening its own page of cards (moreOpen = which one, -1 = the hub)
+    enum MoreSec { M_RADIO, M_MESSAGES, M_CONNECT, M_SCREEN, M_LOCATION, M_SYSTEM, M_COUNT };
+    void openMore(int s);
+    void askApply(void); // the "Apply radio change?" box's Apply
 
   private:
     Model &m;
@@ -158,6 +162,13 @@ class App : public Ui
         lv_obj_t *row = nullptr, *ctl = nullptr;
     };
     std::vector<SetRow> setRows;
+    lv_obj_t *moreHub = nullptr, *moreSec[M_COUNT] = {}, *moreTile[M_COUNT] = {}, *moreSum[M_COUNT][2] = {};
+    int moreOpen = -1;
+    lv_obj_t *quickTile[4] = {}, *quickSw[4] = {}; // Wi-Fi, Bluetooth, GPS, Sound: a tap flips, a hold opens the page
+    void refreshMoreHub(void);
+    lv_obj_t *askBox = nullptr, *askText = nullptr; // "Apply radio change?"
+    Radio askRadio{};
+    void askRadioChange(const Radio &rd);
     lv_obj_t *setScope = nullptr, *setPin = nullptr;
     // Wi-Fi and the street map (Settings)
     lv_obj_t *wfSwitch = nullptr, *wfStatus = nullptr, *wfList = nullptr, *wfSsid = nullptr, *wfPass = nullptr;
@@ -270,7 +281,12 @@ class App : public Ui
 
   public:
     // helpers used by the static event callbacks
-    void navClicked(int t) { selectTab(t); }
+    void navClicked(int t)
+    {
+        if (t == T_MORE && tab == T_MORE && moreOpen >= 0)
+            return openMore(-1); // More again, deep in a category: back to the six
+        selectTab(t);
+    }
     bool kbNeeded(void) const { return !m.hasKeyboard(); }
     void kbShow(lv_obj_t *ta);
     void kbHide(void);
