@@ -1,0 +1,7 @@
+harness/shots/
+harness/*.o
+harness/harness
+build/
+.pio/
+hoptics/ui/hx_boot_bg.h
+hoptics/net/hx_web_files.h

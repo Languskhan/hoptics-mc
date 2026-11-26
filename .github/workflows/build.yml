@@ -1,0 +1,170 @@
+name: Build Hoptics-MC
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write # attach firmware to releases
+
+jobs:
+  # quick checks on a PC, beside the firmware builds: static analysis, the web page's crypto and decoder,
+  # the feed parser under ASan/UBSan, and every screen rendered (the screenshots are kept for review)
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Static analysis (cppcheck)
+        run: |
+          sudo apt-get install -y -qq cppcheck > /dev/null
+          cppcheck --version
+          cppcheck -q --error-exitcode=1 --std=c++17 --enable=warning,performance,portability --inline-suppr \
+            --suppress=missingInclude --suppress=missingIncludeSystem --suppress=unknownMacro \
+            -i hoptics/ui/fonts -DESP32 -DARDUINO_ARCH_ESP32 -j4 hoptics/ # fonts: generated tables
+
+      - name: Web page crypto and packet decoder
+        run: |
+          node harness/web/core_test.js
+          for f in hoptics/web/*.js; do node --check "$f"; done
+
+      - name: Feed parser and WebSocket client (ASan/UBSan)
+        timeout-minutes: 5
+        run: bash harness/feed/run.sh
+
+      - uses: actions/cache@v4
+        with:
+          path: harness/build
+          key: harness-${{ hashFiles('hoptics/config/lv_conf.h', 'harness/build_and_run.sh') }}
+
+      - name: Screens on a PC (every theme), and the web page's JSON
+        run: |
+          pip install -q pillow
+          bash harness/build_and_run.sh
+          for f in harness/shots/web*.json; do python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f"; done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screens
+          path: harness/shots/
+          retention-days: 14
+
+  build:
+    name: ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env: hoptics_tdeck_companion
+            board: lilygo-t-deck-plus
+            role: companion
+            art: _320x240 # landscape panel
+          - env: hoptics_m9_companion
+            board: elecrow-thinknode-m9
+            role: companion
+            art: _320x240
+          - env: hoptics_heltec_v4_companion
+            board: heltec-v4-expansion-kit
+            role: companion
+            art: "" # portrait panel (240x320)
+          - env: hoptics_heltec_v4_r8_companion
+            board: heltec-v4-r8-expansion-kit-v2
+            role: companion
+            art: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch pinned MeshCore and add Hoptics
+        run: |
+          PIN=$(cat MESHCORE_PIN)
+          git init -q mc && cd mc
+          git remote add origin https://github.com/meshcore-dev/MeshCore.git
+          git fetch -q --depth 1 origin "$PIN"
+          git checkout -q FETCH_HEAD
+          git apply --whitespace=nowarn ../patches/meshcore.patch
+          cp -r ../hoptics ./hoptics
+          cp ../platformio.local.ini ./platformio.local.ini
+          echo "MeshCore $PIN + Hoptics $(git -C .. rev-parse --short HEAD)"
+
+      - name: Web page (hoptics/web, gzipped into the firmware)
+        run: python tools/make_web.py --out mc/hoptics/net/hx_web_files.h
+
+      - name: Boot screen art (the three Hoptics pictures, for this panel's orientation)
+        run: |
+          pip install --quiet pillow
+          A="${{ matrix.art }}"
+          python tools/png_to_lvgl.py mc/hoptics/ui/hx_boot_bg.h assets/boot_bg_ridgelines$A.png \
+            assets/boot_bg_constellation$A.png assets/boot_bg_aurora$A.png
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-mc-${{ matrix.env }}-${{ hashFiles('MESHCORE_PIN', 'platformio.local.ini') }}
+          restore-keys: pio-mc-${{ matrix.env }}-
+
+      - name: Build
+        working-directory: mc
+        run: |
+          pip install --quiet platformio
+          pio run -e ${{ matrix.env }}
+          pio run -e ${{ matrix.env }} -t mergebin   # one image for a first install at 0x0 (MeshCore's merge-bin.py)
+
+      - name: Collect
+        run: |
+          VER=$(grep -oE "HOPTICS_VERSION='\"[^\"]+" platformio.local.ini | sed -E "s/.*\"//")
+          OUT=out/hoptics-mc-${{ matrix.board }}-${{ matrix.role }}
+          mkdir -p $OUT
+          B=mc/.pio/build/${{ matrix.env }}
+          cp $B/firmware.bin "$OUT/hoptics-mc-${{ matrix.board }}-${{ matrix.role }}-$VER.update.bin"
+          cp $B/firmware-merged.bin "$OUT/hoptics-mc-${{ matrix.board }}-${{ matrix.role }}-$VER.factory.bin"
+          cp $B/firmware.elf "$OUT/hoptics-mc-${{ matrix.board }}-${{ matrix.role }}-$VER.elf" || true
+          (cd $OUT && sha256sum *.bin > SHA256SUMS.txt)
+          ls -la $OUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hoptics-mc-${{ matrix.board }}-${{ matrix.role }}
+          path: out/*/*
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd out/hoptics-mc-${{ matrix.board }}-${{ matrix.role }}
+          for f in *.bin *.elf; do [ -f "$f" ] && gh release upload "${{ github.event.release.tag_name }}" "$f" --clobber -R "${{ github.repository }}"; done
+          mv SHA256SUMS.txt SHA256SUMS-${{ matrix.board }}-${{ matrix.role }}.txt
+          gh release upload "${{ github.event.release.tag_name }}" SHA256SUMS-${{ matrix.board }}-${{ matrix.role }}.txt --clobber -R "${{ github.repository }}"
+
+  # every main build also lands on the "builds" branch (one commit, replaced each time), so tools and the
+  # website can fetch the latest test firmware over plain git
+  publish-builds:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: builds
+          pattern: hoptics-mc-* # firmware only, not the screenshots
+      - name: Push to the builds branch
+        run: |
+          cd builds
+          git init -q -b builds
+          git config user.name "hoptics-mc build"
+          git config user.email "actions@users.noreply.github.com"
+          echo "${{ github.sha }}" > SOURCE_COMMIT
+          git add -A
+          git commit -qm "Firmware built from ${{ github.sha }}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" builds

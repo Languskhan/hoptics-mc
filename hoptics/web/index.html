@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#070a14">
+<meta name="referrer" content="no-referrer">
+<title>Hoptics-MC</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="login" class="hidden">
+  <canvas id="mesh"></canvas>
+  <div class="lcard">
+    <div class="brand"><div class="dot"></div><div><h1>HOPTICS-MC</h1><small>MeshCore node</small></div></div>
+    <h2>Sign in</h2>
+    <p>Enter the 6-digit PIN shown on the node under More &rarr; Web page.</p>
+    <div class="pin">
+      <input inputmode="numeric" autocomplete="one-time-code" maxlength="1" aria-label="PIN digit 1">
+      <input inputmode="numeric" maxlength="1" aria-label="PIN digit 2">
+      <input inputmode="numeric" maxlength="1" aria-label="PIN digit 3">
+      <input inputmode="numeric" maxlength="1" aria-label="PIN digit 4">
+      <input inputmode="numeric" maxlength="1" aria-label="PIN digit 5">
+      <input inputmode="numeric" maxlength="1" aria-label="PIN digit 6">
+    </div>
+    <button class="btn primary wide" id="loginBtn">Sign in</button>
+    <div class="err" id="loginErr"></div>
+    <div class="hint" id="loginHint">This page comes from the node itself, over your own Wi-Fi. A new PIN can be made on the node at any time; it signs everyone out.</div>
+  </div>
+</div>
+<div id="app" class="hidden">
+  <header>
+    <div class="brand"><div class="dot"></div><div><h1>HOPTICS-MC</h1><small><b id="hdrName"></b> <span id="hdrSub" class="hide-s"></span></small></div></div>
+    <div class="grow"></div>
+    <div class="chips" id="chips"></div>
+    <button class="btn sm" id="themeBtn" title="Day / night" aria-label="Day / night"></button>
+    <button class="btn sm" id="logoutBtn">Sign out</button>
+  </header>
+  <nav id="nav"></nav>
+  <main>
+    <section class="view" id="v-overview"></section>
+    <section class="view" id="v-live"></section>
+    <section class="view" id="v-map"></section>
+    <section class="view" id="v-messages"></section>
+    <section class="view" id="v-los"></section>
+    <section class="view" id="v-nodes"></section>
+    <section class="view" id="v-device"></section>
+  </main>
+  <footer>Hoptics-MC is free and open source. Like it? <a href="https://buymeacoffee.com/Bluffs" target="_blank" rel="noopener noreferrer">Buy me a coffee &#9749;</a> &middot; <a href="https://github.com/Languskhan/hoptics-mc" target="_blank" rel="noopener noreferrer">Project page</a></footer>
+</div>
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
