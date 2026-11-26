@@ -72,6 +72,7 @@ void UITask::begin(DisplayDriver *display, SensorManager *s, NodePrefs *p)
     (void)display;
     mbedtls_platform_set_calloc_free(tlsCalloc, tlsFree);
     hxota::bootCheck(); // a newer build flashed over USB after a web update starts instead
+    hxsound::begin();   // a buzzer pin held low from the start
     if (hxota::trial())
         hxlog::line("update: this build is on trial, kept after a healthy minute");
     prefs = p;

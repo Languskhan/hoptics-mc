@@ -6,6 +6,7 @@
 namespace hxsound
 {
 enum Tone : uint8_t { OFF = 0, CHIRP, CHIME, PING, TONE_COUNT };
+void begin();                        // at start: holds a buzzer pin low (a floating one can draw current)
 bool present();                       // this board can make sounds
 void play(uint8_t tone, uint8_t vol); // vol 0-100; returns at once (a sound already playing is replaced)
 } // namespace hxsound

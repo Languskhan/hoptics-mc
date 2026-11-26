@@ -1,5 +1,6 @@
 // Hoptics-MC message sounds (see hx_sound.h). MIT licence.
 #include "hx_sound.h"
+#include "hx_log.h"
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(HOPTICS_UI)
 #include <Arduino.h>
@@ -61,7 +62,9 @@ void startI2s()
     p.data_out_num = I2S_DOUT;
     p.data_in_num = I2S_PIN_NO_CHANGE;
     p.mck_io_num = I2S_PIN_NO_CHANGE;
-    i2sUp = i2s_driver_install(I2S_NUM_0, &c, 0, nullptr) == ESP_OK && i2s_set_pin(I2S_NUM_0, &p) == ESP_OK;
+    const esp_err_t a = i2s_driver_install(I2S_NUM_0, &c, 0, nullptr), b = a == ESP_OK ? i2s_set_pin(I2S_NUM_0, &p) : a;
+    i2sUp = b == ESP_OK;
+    hxlog::line(i2sUp ? "sound: speaker ready" : "sound: the speaker didn't start (error %d)", (int)b);
 }
 
 // one note as a sine, faded in and out over 3 ms so it doesn't click
@@ -131,6 +134,16 @@ void task(void *)
 }
 } // namespace
 
+void begin()
+{
+#if !defined(HX_SPEAKER)
+    if (BUZZER >= 0) { // as MeshCore's own buzzer code does: low until a sound plays
+        pinMode(BUZZER, OUTPUT);
+        digitalWrite(BUZZER, LOW);
+    }
+#endif
+}
+
 bool present()
 {
 #if defined(HX_SPEAKER)
@@ -162,6 +175,7 @@ void play(uint8_t tone, uint8_t vol)
 
 namespace hxsound
 {
+void begin() {}
 bool present() { return false; }
 void play(uint8_t, uint8_t) {}
 } // namespace hxsound
