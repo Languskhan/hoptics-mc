@@ -30,8 +30,8 @@ After it starts:
 
 1. **More → Radio**: pick your country's radio band, then your mesh's preset (Sacramento / Foothills is listed as
    **SMF**). Your mesh not listed? Ask its people for frequency, bandwidth and SF, and enter them under Custom radio.
-2. **More → Screen**: set your time zone.
-3. **More → Phone app**: pair the MeshCore app with the PIN shown there, if you use it.
+2. **More → System**: set your time zone.
+3. **More → Connect**: pair the MeshCore app with the PIN shown there, if you use it.
 
 ## Updating
 
@@ -66,11 +66,11 @@ On the Heltec kits, the user button is Back.
 - **Nodes → a repeater you run → Manage**: log in with its admin password. Check its status, the nodes it hears,
   read its settings, and send `ver` from the console. Change something harmless, such as the advert interval,
   and change it back.
-- **More → Wi-Fi**: find your network and connect. Then look at the map: the streets fill in as you move around.
-- **More → Live feed** (needs Wi-Fi): turn it on and watch the map draw routes across the region. Messages on
+- **More → Connect → Wi-Fi**: find your network and connect. Then look at the map: the streets fill in as you move around.
+- **More → Connect → Live feed** (needs Wi-Fi): turn it on and watch the map draw routes across the region. Messages on
   your channels that only the observers heard show "via internet". Send on a channel and the bubble says how
   many observers heard it.
-- **More → Web page** (needs Wi-Fi): turn it on, open the address it shows on a phone or computer on the same
+- **More → Connect → Web page** (needs Wi-Fi): turn it on, open the address it shows on a phone or computer on the same
   Wi-Fi, and sign in with the PIN. Try each tab, the line-of-sight tool between your radio and a repeater, and
   "Download the device log". Press **New PIN** on the radio and check the browser has to sign in again.
 - **Web page → Messages**: send on a channel from the browser. It goes out from the radio and shows in the
@@ -81,11 +81,14 @@ On the Heltec kits, the user button is Back.
 - **Web page → Device → Offline map tiles**: send a folder of `zoom/x/y.png` tiles (for example from Mobile
   Atlas Creator, from a tile source that allows keeping tiles offline) and check the radio's map shows them
   with Wi-Fi off.
-- **More → Sound**: pick a message sound and set the volume (each change plays it). Have someone send you a
+- **More → Display → Sound**: pick a message sound and set the volume (each change plays it). Have someone send you a
   message: it should chirp. The T-Deck plays through its speaker; the M9 and the Heltec kits use their buzzer.
-- **More → Screen**: try a wallpaper, the lock screen (it shows when the screen comes back on; a key or a long
+- **More → Display**: try a wallpaper, the lock screen (it shows when the screen comes back on; a key or a long
   press opens it) and Large chat text.
-- **More**: change the theme, brightness and screen timeout. Restart and check they stay.
+- **More → Display**: change the theme, brightness and screen timeout. Restart and check they stay.
+- **More**: the quick switches (tap flips, hold opens the page), the summaries on the six categories, and a
+  preset change asking **Apply radio change?** (Cancel leaves the radio as it was). Back, Left or More again
+  returns to the six.
 - Leave it running overnight on USB.
 
 ## Reporting a problem
@@ -94,7 +97,7 @@ Say which board, what you did, and what happened. A photo of the screen helps. T
 
 1. Plug the radio into a computer and open the install page in Chrome or Edge.
 2. Press **Connect**, pick the radio, then **Logs & Console**.
-3. On the radio, **More → Device log → Send the log to USB**. (Or press **Reset device** on the page: the radio
+3. On the radio, **More → System → Device log → Send the log to USB**. (Or press **Reset device** on the page: the radio
    prints the last session's log each time it starts.)
 4. Press **Download logs** and send the file.
 
