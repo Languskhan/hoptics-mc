@@ -21,6 +21,11 @@
 #include <target.h>
 #include <algorithm>
 
+// The screen runs in Arduino's loop task. Its 8 KB default ran out in LVGL's layout and focus chains when the
+// More tab opened (stack canary, loopTask); 16 KB is the usual fix (arduino-esp32's SET_LOOP_TASK_STACK_SIZE).
+// The status line reports what is left, so a creeping need shows before it crashes.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+
 #ifndef HOPTICS_VERSION
 #define HOPTICS_VERSION "0.1.0"
 #endif
@@ -174,9 +179,10 @@ void UITask::loop()
             snprintf(gps, sizeof(gps), ", gps %s", d);
         }
         // every 10 s on USB; every 5 minutes into the kept log too
-        (beats++ % 30 ? hxlog::usb : hxlog::line)("%s, up %lus, heap %u, psram %u, batt %u mV, cpu %u MHz%s%s",
+        (beats++ % 30 ? hxlog::usb : hxlog::line)("%s, up %lus, heap %u, psram %u, stack left %u, batt %u mV, cpu %u MHz%s%s",
                                                  ready ? "ui running" : "ui NOT started (display)", (unsigned long)(millis() / 1000),
-                                                 (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram(), (unsigned)getBattMilliVolts(),
+                                                 (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram(),
+                                                 (unsigned)uxTaskGetStackHighWaterMark(nullptr), (unsigned)getBattMilliVolts(),
                                                  (unsigned)getCpuFrequencyMhz(), busy, gps);
         load.prev = micros(); // writing the line out isn't a slow pass
     }
