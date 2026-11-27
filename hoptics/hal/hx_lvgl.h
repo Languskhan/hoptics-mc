@@ -8,7 +8,7 @@ namespace hxhal
 {
 // creates the LVGL display on top of an initialised LovyanGFX device (landscape or portrait as rotated); once
 lv_display_t *lvglAttach(lgfx::LGFX_Device &tft);
-void lvglUseDma(void);       // before lvglAttach: the panel has its own SPI host with DMA (nothing else on that bus)
+void lvglUseDma(void);       // before lvglAttach: the panel's SPI host takes DMA (no radio on it; a card waits for the frame's end)
 // the start-up screen on it (hx_bootscreen.cpp), or the same screen saying why start-up stopped
 void showBoot(lgfx::LGFX_Device &tft, const char *board);
 void showBootError(lgfx::LGFX_Device &tft, const char *board, const char *what, const char *todo);
