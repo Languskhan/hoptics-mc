@@ -106,6 +106,7 @@ class UITask : public AbstractUITask, public hx::Model
     bool hasSound() const override { return hxsound::present(); }
     void playSound(int tone, int volume) override { hxsound::play((uint8_t)tone, (uint8_t)volume); }
     bool sendLog() override;
+    bool saveReport() override;
     void setKeyLight(uint8_t level) override { hxhal::setKeyLight(level); }
 
     // packet log hooks (patched MeshCore, see patches/meshcore.patch)
@@ -162,6 +163,11 @@ class UITask : public AbstractUITask, public hx::Model
     bool webOn = false, mdnsUp = false;
     char webPin[8] = "", webHost[24] = "";
     void webTick(void);
+    // the microSD card (hoptics/hal/hx_sd): a backup of the settings, channels and contacts for the web page (also
+    // saved to /hoptics/backup on the card), and a backup brought back. Both answer as JSON
+    void webBackup(std::string &out);
+    void webRestore(const char *data, size_t len, uint8_t parts, std::string &out);
+    void cardName(char *out, size_t n, const char *folder, const char *ext) const; // a dated file name on the card
 public:
     void writeSaves(void); // the files waiting to be written (saveData), now
 private:

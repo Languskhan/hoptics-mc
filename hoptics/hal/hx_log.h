@@ -1,7 +1,9 @@
 // Hoptics-MC log keeper. Every "hoptics:" line goes to USB as before and into a log kept on the radio, so a tester can
 // send what happened even when nobody was watching: the radio keeps this session and the two before it, prints the
 // last one at each start, reports a crash it finds (task, address, backtrace) and prints all of it on request
-// (Settings, Device log). No messages, names, positions, network names or passwords go in. MIT licence.
+// (Settings, Device log). With a microSD card in, the same lines also go to /hoptics/logs on the card (hoptics.log, then
+// hoptics.1.log to .3.log, 256 KB each), and a problem report can be saved there. No messages, names, positions,
+// network names, addresses or passwords go in. MIT licence.
 #pragma once
 #include <string>
 #include <stdint.h>
@@ -14,4 +16,6 @@ void tick(void);  // main loop: the first call turns over the kept logs and repo
 void save(void);  // write what is new to flash now (before a restart)
 void dump(void);  // print the kept logs to USB
 void text(std::string &out); // the same, as text (the web page's "Download the device log")
+// main loop: the kept logs as one file on the card, /hoptics/logs/<name> (a problem report). False: no card
+bool saveReport(const char *name);
 } // namespace hxlog

@@ -322,6 +322,7 @@ class Model
     virtual bool hasSound() const { return false; }    // a buzzer or speaker for message sounds
     virtual void playSound(int tone, int volume) { (void)tone, (void)volume; } // tone 1-3, volume 0-100
     virtual bool sendLog() { return false; } // print the kept log to USB (for a problem report); false: none kept
+    virtual bool saveReport() { return false; } // the same as a file on the microSD card; false: no card
     virtual void setKeyLight(uint8_t level) { (void)level; } // 0 = off
 };
 
