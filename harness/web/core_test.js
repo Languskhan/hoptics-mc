@@ -4,10 +4,10 @@
 const fs = require("fs"), path = require("path"), vm = require("vm"), crypto = require("crypto"), assert = require("assert");
 
 // core.js is a browser script: give it the few globals it touches at load time
-const ctx = { window: { addEventListener() {} }, document: {}, getComputedStyle: () => ({ getPropertyValue: () => "" }), TextDecoder, Uint8Array, Uint32Array, DataView, Math };
+const ctx = { window: { addEventListener() {} }, document: {}, getComputedStyle: () => ({ getPropertyValue: () => "" }), TextDecoder, TextEncoder, Uint8Array, Uint32Array, DataView, Math };
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(path.join(__dirname, "../../hoptics/web/core.js"), "utf8") + "\n;this.T = { SHA, AES, decodePacket, decryptGroup, channelKeys, hex, unhex };", ctx);
-const { SHA, AES, decodePacket, decryptGroup, channelKeys, hex, unhex } = ctx.T;
+vm.runInContext(fs.readFileSync(path.join(__dirname, "../../hoptics/web/core.js"), "utf8") + "\n;this.T = { SHA, AES, decodePacket, decryptGroup, channelKeys, hex, unhex, cardPath, fmtSize };", ctx);
+const { SHA, AES, decodePacket, decryptGroup, channelKeys, hex, unhex, cardPath, fmtSize } = ctx.T;
 const u8 = (b) => new Uint8Array(b);
 const sha = (b) => u8(crypto.createHash("sha256").update(b).digest());
 let n = 0;
@@ -81,5 +81,13 @@ ok(decodePacket(u8([(5 << 2) | 1, 0x05, 1, 2])) === null, "path longer than the 
 ok(decodePacket(u8([(9 << 2) | 0, 1, 2, 3])) === null, "cut inside the transport codes");
 for (let i = 0; i < 2000; i++) decodePacket(u8(crypto.randomBytes(1 + (i % 120))));
 n++;
+
+// the Files tab's paths on the card (the node checks them again, harness/parse) and sizes
+ok(cardPath.join("/", "maps") === "/maps" && cardPath.join("/maps", "osm") === "/maps/osm", "join a name to a folder");
+ok(cardPath.up("/maps/osm") === "/maps" && cardPath.up("/maps") === "/" && cardPath.up("/") === "/", "up a folder");
+for (const good of ["notes.txt", "Café map", ".hidden", "a".repeat(255), "é".repeat(127)]) ok(cardPath.okName(good), "a good name: " + good.slice(0, 12));
+for (const bad of ["", ".", "..", "a.", "a ", "a/b", "a\\b", "c:", "a*", "a?", 'a"', "a<", "a>", "a|", "a\n", "a\x7f", "a".repeat(256), "é".repeat(128), null, 5])
+  ok(!cardPath.okName(bad), "a refused name: " + String(bad).slice(0, 12));
+ok(fmtSize(0) === "0 B" && fmtSize(1536) === "1.5 KB" && fmtSize(20480) === "20 KB" && fmtSize(3 * 1048576) === "3.0 MB" && fmtSize(31154688 * 1024) === "29.7 GB", "sizes");
 
 console.log("core.js: " + n + " checks passed");

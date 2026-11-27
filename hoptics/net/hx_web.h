@@ -3,7 +3,8 @@
 //
 // The page's data comes from the main loop, which owns it: a request waits (up to a second) while the main loop
 // builds the answer on its next pass (take() / answer()). Everything else (files, sign-in) is answered by the server's
-// own task. MIT licence.
+// own task. The microSD card's files (Files) are read and written through the main loop too, a piece at a time
+// (hx_sd.h). MIT licence.
 #pragma once
 #include <stdint.h>
 #include <string>
@@ -11,13 +12,19 @@
 namespace hxweb
 {
 struct Query {
-    enum Kind : uint8_t { NONE, STATE, LOG, SEND, JOIN } kind = NONE;
+    enum Kind : uint8_t { NONE, STATE, LOG, SEND, JOIN, BACKUP, RESTORE } kind = NONE;
     uint8_t channel = 0; // SEND: the channel and the text (UTF-8); JOIN: text is the #channel's name
     char text[168] = "";
     uint32_t contacts = 0; // the contacts version the page has (0: none): the list only comes again when it changed
     uint32_t packets = 0;  // the last packet number the page has
     uint32_t msgs = 0;     // the last message number
     uint32_t hist = 0;     // the end time of the history the page has
+    // RESTORE: a backup file (NUL-terminated, in PSRAM), and which parts of it to bring back. The main loop owns it
+    // once taken and frees it (free()) when done
+    char *data = nullptr;
+    size_t len = 0;
+    enum Part : uint8_t { CONTACTS = 1, CHANNELS = 2, SETTINGS = 4 };
+    uint8_t parts = 0;
 };
 
 bool start(uint16_t port); // true once serving (again a no-op)

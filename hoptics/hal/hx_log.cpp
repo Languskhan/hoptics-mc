@@ -1,8 +1,10 @@
 // Hoptics-MC log keeper (see hx_log.h). Lines collect in a ring in PSRAM; once a minute what is new is appended to
 // /hx_log on SPIFFS (a file past 64 KB is rewritten with the newest 24 KB). At the first loop after a start, /hx_log
-// becomes /hx_log.1 and /hx_log.1 becomes /hx_log.2. MIT licence.
+// becomes /hx_log.1 and /hx_log.1 becomes /hx_log.2. With a card in, the main loop (which owns the card's bus, see
+// hx_sd.h) also appends what is new to /hoptics/logs/hoptics.log once a minute, rolling it over at 256 KB. MIT licence.
 #if defined(HOPTICS_UI) && defined(ESP32)
 #include "hx_log.h"
+#include "hx_sd.h"
 #include <Arduino.h>
 #include <SPIFFS.h>
 #include <esp_core_dump.h>
@@ -24,6 +26,14 @@ size_t wr = 0, savedWr = 0; // bytes ever written to the ring, and how many of t
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 bool started = false;
 uint32_t lastSave = 0;
+// the card's copy: how much of the ring is on it, when it was last written, and the main loop's task
+constexpr size_t CARD_FILE_MAX = 256 * 1024;
+const char *const CARD_LOGS[] = {"/hoptics/logs/hoptics.log", "/hoptics/logs/hoptics.1.log", "/hoptics/logs/hoptics.2.log",
+                                 "/hoptics/logs/hoptics.3.log"};
+size_t cardWr = 0;
+uint32_t cardAt = 0;
+TaskHandle_t mainTask = nullptr;
+char *cardBuf = nullptr;
 
 void keep(const char *s, size_t n)
 {
@@ -98,6 +108,28 @@ void crashReport(void)
     }
     esp_core_dump_image_erase();
 }
+
+// what is new in the ring, appended to the card's log (main loop only). The oldest of the four files goes when the
+// current one would pass 256 KB
+void cardSave(void)
+{
+    if (!hxsd::mounted() || !ring)
+        return;
+    cardAt = millis();
+    if (!cardBuf && !(cardBuf = (char *)heap_caps_malloc(RING, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)))
+        return;
+    size_t upTo;
+    const size_t have = snapshot(cardBuf, RING, upTo);
+    const size_t fresh = std::min(upTo - cardWr, have);
+    if (!fresh)
+        return;
+    const int64_t size = hxsd::fileSize(CARD_LOGS[0]);
+    if (size > 0 && (size_t)size + fresh > CARD_FILE_MAX)
+        for (int i = 3; i > 0; i--)
+            hxsd::renameFile(CARD_LOGS[i - 1], CARD_LOGS[i]); // replaces the oldest
+    if (hxsd::writeFile(CARD_LOGS[0], cardBuf + have - fresh, fresh, true))
+        cardWr = upTo;
+}
 } // namespace
 
 void line(const char *fmt, ...)
@@ -125,8 +157,10 @@ void save(void)
     xSemaphoreTake(saveLock, portMAX_DELAY);
     lastSave = millis();
     char *buf = (char *)heap_caps_malloc(RING, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!buf)
+    if (!buf) {
+        xSemaphoreGive(saveLock);
         return;
+    }
     size_t upTo;
     const size_t have = snapshot(buf, RING, upTo);
     const size_t fresh = std::min(upTo - savedWr, have);
@@ -147,36 +181,41 @@ void save(void)
     }
     free(buf);
     xSemaphoreGive(saveLock);
+    if (xTaskGetCurrentTaskHandle() == mainTask)
+        cardSave(); // the main loop (before a restart, or for the web page): the card's copy too
 }
 
 void tick(void)
 {
-    if (!started) {
-        started = true;
-        // this start's log is new; keep the last two sessions
-        if (SPIFFS.exists(LAST)) {
-            if (SPIFFS.exists(BEFORE))
-                SPIFFS.remove(BEFORE);
-            SPIFFS.rename(LAST, BEFORE);
-        }
-        if (SPIFFS.exists(CUR))
-            SPIFFS.rename(CUR, LAST);
-        printFile(LAST, "the last session");
-        crashReport();
-        saveLock = xSemaphoreCreateMutex();
-        save();
-        // from now on the log goes to flash once a minute from its own task: a flash write can take a second or two,
-        // and the main loop shouldn't stall for it
-        xTaskCreatePinnedToCore(
-            [](void *) {
-                for (;;) {
-                    vTaskDelay(pdMS_TO_TICKS(60000));
-                    save();
-                }
-            },
-            "hoptics-log", 4096, nullptr, 1, nullptr, tskNO_AFFINITY);
+    if (started) { // the card's copy once a minute (the first time at once)
+        if (hxsd::mounted() && (!cardAt || millis() - cardAt >= 60000))
+            cardSave();
         return;
     }
+    started = true;
+    mainTask = xTaskGetCurrentTaskHandle();
+    // this start's log is new; keep the last two sessions
+    if (SPIFFS.exists(LAST)) {
+        if (SPIFFS.exists(BEFORE))
+            SPIFFS.remove(BEFORE);
+        SPIFFS.rename(LAST, BEFORE);
+    }
+    if (SPIFFS.exists(CUR))
+        SPIFFS.rename(CUR, LAST);
+    printFile(LAST, "the last session");
+    crashReport();
+    saveLock = xSemaphoreCreateMutex();
+    save();
+    // from now on the log goes to flash once a minute from its own task: a flash write can take a second or two,
+    // and the main loop shouldn't stall for it
+    xTaskCreatePinnedToCore(
+        [](void *) {
+            for (;;) {
+                vTaskDelay(pdMS_TO_TICKS(60000));
+                save();
+            }
+        },
+        "hoptics-log", 4096, nullptr, 1, nullptr, tskNO_AFFINITY);
 }
 
 void dump(void)
@@ -209,6 +248,17 @@ void text(std::string &out)
         out += f[1];
         out += " =====\n";
     }
+}
+
+bool saveReport(const char *name)
+{
+    if (!hxsd::mounted())
+        return false;
+    std::string t;
+    text(t);
+    char path[64];
+    snprintf(path, sizeof(path), "/hoptics/logs/%s", name);
+    return hxsd::writeFile(path, t.data(), t.size());
 }
 } // namespace hxlog
 #endif

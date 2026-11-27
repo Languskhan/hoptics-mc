@@ -37,14 +37,39 @@ const API = DEMO ? DEMO.api : {
     return r.ok ? { ok: true, i: j.i } : { ok: false, error: j.error || "No answer (" + r.status + ")" };
   },
   async clearTiles() { const r = await fetch("/api/tiles/clear", { method: "POST", headers: { "X-Hoptics": "1" } }); return r.ok; },
-  update(file, progress) { // XHR: fetch has no upload progress
+  // the microSD card
+  async files(path, from) {
+    const r = await fetch(`/api/files?path=${encodeURIComponent(path)}&from=${from || 0}`, { cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    return r.ok ? j : { error: j.error || "No answer (" + r.status + ")" };
+  },
+  fileUrl(path) { return "/api/files/get?path=" + encodeURIComponent(path); },
+  put(path, file, replace, progress) { return this.upload("/api/files/put?path=" + encodeURIComponent(path) + (replace ? "&replace=1" : ""), file, progress); },
+  async fileOp(op, path) { // "mkdir" or "delete"
+    const r = await fetch(`/api/files/${op}?path=${encodeURIComponent(path)}`, { method: "POST", headers: { "X-Hoptics": "1" } });
+    const j = await r.json().catch(() => ({}));
+    return r.ok ? { ok: true } : { ok: false, error: j.error || "No answer (" + r.status + ")" };
+  },
+  async backup() {
+    const r = await fetch("/api/backup", { method: "POST", headers: { "X-Hoptics": "1" } });
+    const j = await r.json().catch(() => ({}));
+    return r.ok && j.backup ? j : { error: j.error || "No answer (" + r.status + ")" };
+  },
+  async restore(blob, parts) {
+    const q = ["contacts", "channels", "settings"].map((k) => k + "=" + (parts[k] ? 1 : 0)).join("&");
+    const r = await fetch("/api/restore?" + q, { method: "POST", headers: { "Content-Type": "application/json", "X-Hoptics": "1" }, body: blob });
+    const j = await r.json().catch(() => ({}));
+    return r.ok ? j : { error: j.error || "No answer (" + r.status + ")" };
+  },
+  update(file, progress) { return this.upload("/api/update", file, progress); },
+  upload(url, file, progress) { // XHR: fetch has no upload progress
     return new Promise((done) => {
       const x = new XMLHttpRequest();
-      x.open("POST", "/api/update");
+      x.open("POST", url);
       x.setRequestHeader("Content-Type", "application/octet-stream");
       x.setRequestHeader("X-Hoptics", "1");
       x.upload.onprogress = (e) => e.lengthComputable && progress(e.loaded / e.total);
-      x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (e) { } done(x.status === 200 ? { ok: true } : { ok: false, error: j.error || "No answer (" + x.status + ")" }); };
+      x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (e) { } done(x.status === 200 ? { ok: true } : { ok: false, status: x.status, error: j.error || "No answer (" + x.status + ")" }); };
       x.onerror = () => done({ ok: false, error: "The connection dropped" });
       x.send(file);
     });
@@ -307,8 +332,9 @@ const ICON = {
   los: "M3 20 9 9l4 6 3-4 5 9zM16 4l5 3",
   nodes: "M12 3a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM5 15a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm14 0a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM12 9v3m0 0-5 4m5-4 5 4",
   device: "M7 3h10v18H7zM10 18h4",
+  files: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
 };
-const VIEWS = [["overview", "Overview"], ["live", "Live"], ["map", "Map"], ["messages", "Messages"], ["los", "Line of sight"], ["nodes", "Nodes"], ["device", "Device"]];
+const VIEWS = [["overview", "Overview"], ["live", "Live"], ["map", "Map"], ["messages", "Messages"], ["los", "Line of sight"], ["nodes", "Nodes"], ["device", "Device"], ["files", "Files"]];
 function svgIcon(d) {
   const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none"); s.setAttribute("stroke", "currentColor"); s.setAttribute("stroke-width", "1.8"); s.setAttribute("stroke-linecap", "round"); s.setAttribute("stroke-linejoin", "round");
@@ -943,7 +969,7 @@ V.device = {
     const sw = el("div"); sw.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;margin-top:12px";
     this.feedBtn = el("button", "btn sm"); this.feedBtn.onclick = () => { store("feed", Feed.want() ? "0" : "1"); if (Feed.want()) Feed.start(S.snap.feed && S.snap.feed.url); else Feed.stop(); this.render(); UI.chips(); };
     const logBtn = el("button", "btn sm", "Download the device log"); logBtn.onclick = async () => {
-      try { const t = await API.log(); const a = el("a"); a.href = URL.createObjectURL(new Blob([t], { type: "text/plain" })); a.download = "hoptics-mc-log-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + ".txt"; a.click(); toast("Log downloaded. It holds no messages, names or positions."); } catch (e) { toast("Couldn't get the log: " + e.message); }
+      try { const t = await API.log(); const a = el("a"); a.href = URL.createObjectURL(new Blob([t], { type: "text/plain" })); a.download = "hoptics-mc-log-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + ".txt"; a.click(); toast("Log downloaded" + (me().sd ? " (a copy is on the card too)" : "") + ". It holds no messages, names or positions."); } catch (e) { toast("Couldn't get the log: " + e.message); }
     };
     sw.append(this.feedBtn, logBtn); net.append(sw);
     const fw = card("Firmware update", "c6", el("span", "dim", "over Wi-Fi, on trial"));
@@ -975,7 +1001,7 @@ V.device = {
     row.append(pick, go); fw.append(note, row, bar, this.fwMsg);
     const tl = card("Offline map tiles", "c6", el("span", "dim", "for the node's own map"));
     this.tlInfo = tl.appendChild(el("div", "kvlist"));
-    const tnote = el("p", "muted", "Add a folder of tiles laid out as zoom/x/y.png (for example from Mobile Atlas Creator) and the node's map shows them without internet. Use a tile source that allows keeping tiles offline: OpenStreetMap's own servers don't allow bulk downloads.");
+    const tnote = el("p", "muted", "Add a folder of tiles laid out as zoom/x/y.png (for example from Mobile Atlas Creator) and the node's map shows them without internet; with a microSD card in they go on the card. A card can also carry a ready-made map pack, read as it is: maps/<style>/zoom/x/y.png or map/zoom/x/y.png (Meshtastic), or tiles/zoom/x/y.png (MeshCore). Use a tile source that allows keeping tiles offline: OpenStreetMap's own servers don't allow bulk downloads.");
     tnote.style.cssText = "margin:10px 0;font-size:12.5px";
     const trow = el("div"); trow.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center";
     const dir = el("input"); dir.type = "file"; dir.webkitdirectory = true; dir.multiple = true; dir.style.cssText = "flex:1;min-width:0;font-size:12.5px;color:var(--muted)";
@@ -1010,7 +1036,52 @@ V.device = {
       toast(DEMO ? "Not in the demo" : (await API.clearTiles()) ? "Saved tiles cleared" : "Couldn't clear them");
     };
     trow.append(dir, send, clear); tl.append(tnote, trow, tbar, this.tlMsg);
-    grid.append(id, radio, sys, bat, mem, load, net, fw, tl);
+    const bk = card("Backup", "c6", el("span", "dim", "settings, channels and contacts"));
+    const bnote = el("p", "muted", "A backup holds the node's name, position and radio settings, its channels with their keys, and its contacts. It never holds the node's own private key. Keep it private: with it, anyone can read your private channels. With a card in, each backup is also kept on the card (hoptics/backup).");
+    bnote.style.cssText = "margin:10px 0;font-size:12.5px";
+    const brow = el("div"); brow.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center";
+    const make = el("button", "btn sm", "Back up now");
+    this.bkMsg = el("p", "muted"); this.bkMsg.style.cssText = "margin:8px 0 0;font-size:12.5px";
+    make.onclick = async () => {
+      if (DEMO) { toast("Not in the demo"); return; }
+      make.disabled = true;
+      const r = await API.backup();
+      make.disabled = false;
+      if (r.error) { this.bkMsg.textContent = "No backup: " + r.error; return; }
+      const a = el("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(r.backup, null, 1)], { type: "application/json" }));
+      a.download = "hoptics-mc-backup-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + ".json"; a.click();
+      this.bkMsg.textContent = "Backup downloaded" + (r.file ? " and saved on the card as " + r.file : "") + ": " + (r.backup.contacts || []).length + " contacts, " + (r.backup.channels || []).length + " channels.";
+      this.bkList = null; this.render();
+    };
+    brow.append(make);
+    // restore: a file from this computer, or one of the backups on the card
+    const rrow = el("div"); rrow.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px";
+    const from = el("input"); from.type = "file"; from.accept = ".json,application/json"; from.style.cssText = "flex:1;min-width:0;font-size:12.5px;color:var(--muted)";
+    this.bkSel = el("select", "search"); this.bkSel.style.display = "none";
+    const parts = { contacts: true, channels: true, settings: false }, boxes = el("div"); boxes.style.cssText = "display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12.5px";
+    for (const [k, t] of [["contacts", "Contacts"], ["channels", "Channels"], ["settings", "Settings (name, position and radio)"]]) {
+      const l = el("label", "muted"), b = el("input"); b.type = "checkbox"; b.checked = parts[k]; b.onchange = () => { parts[k] = b.checked; }; l.append(b, " " + t); boxes.append(l);
+    }
+    const restore = el("button", "btn sm", "Restore"); let rArmed = false;
+    restore.onclick = async () => {
+      if (DEMO) { toast("Not in the demo"); return; }
+      const sel = this.bkSel.value, f = from.files[0];
+      if (!f && !sel) { this.bkMsg.textContent = "Choose a backup first."; return; }
+      if (!rArmed) { rArmed = true; restore.textContent = "Tap again to restore"; setTimeout(() => { rArmed = false; restore.textContent = "Restore"; }, 4000); return; }
+      rArmed = false; restore.textContent = "Restore"; restore.disabled = true;
+      let blob = f;
+      if (!blob) { const r = await fetch(API.fileUrl(sel), { cache: "no-store" }).catch(() => null); blob = r && r.ok ? await r.blob() : null; }
+      const r = blob ? await API.restore(blob, parts) : { error: "Couldn't read that backup from the card" };
+      restore.disabled = false;
+      if (r.error) { this.bkMsg.textContent = "Not restored: " + r.error; return; }
+      const c = r.contacts, ch = r.channels;
+      this.bkMsg.textContent = "Restored: " + c.added + " contacts added (" + c.had + " already there" + (c.full ? ", " + c.full + " didn't fit" : "") + "), " +
+        ch.added + " channels added (" + ch.had + " already there" + (ch.full ? ", " + ch.full + " didn't fit" : "") + ")" +
+        (r.settings ? (r.radio ? ", settings and radio." : ", settings (the radio settings in it weren't valid, so the radio is unchanged).") : ".");
+    };
+    rrow.append(from, this.bkSel, restore);
+    bk.append(bnote, brow, rrow, boxes, this.bkMsg);
+    grid.append(id, radio, sys, bat, mem, load, net, fw, tl, bk);
     v.append(grid);
   },
   render() {
@@ -1042,7 +1113,109 @@ V.device = {
     this.net.append(this.feedBtn.parentNode);
     kv(this.fwInfo, [["Running", (n.fw || "-") + (n.built ? ", built " + n.built : "")], ["App slot", n.slot],
       ["State", n.trial === undefined ? "" : n.trial ? "on trial: kept after a healthy minute" : "kept"]]);
-    kv(this.tlInfo, [["Saved on the node", n.tiles === undefined ? "" : n.tiles + " tiles, " + n.tilesKB + " KB of " + n.tilesCapKB + " KB"]]);
+    kv(this.tlInfo, [[n.tilesCard ? "Saved on the card" : "Saved on the node", n.tiles === undefined ? "" : n.tiles + " tiles, " + fmtSize(n.tilesKB * 1024) + " of " + fmtSize(n.tilesCapKB * 1024)]]);
+    // the backups on the card, to restore one without downloading it first
+    if (n.sd && !this.bkList && !DEMO) {
+      this.bkList = "loading";
+      API.files("/hoptics/backup").then((j) => {
+        const list = (j.items || []).filter((x) => !x.d && /\.json$/i.test(x.n)).sort((a, b) => b.n.localeCompare(a.n));
+        this.bkList = list; this.bkSel.replaceChildren(el("option", "", "(or a backup on the card)"));
+        this.bkSel.firstChild.value = "";
+        for (const x of list) { const o = el("option", "", x.n); o.value = "/hoptics/backup/" + x.n; this.bkSel.append(o); }
+        this.bkSel.style.display = list.length ? "" : "none";
+      });
+    }
+  },
+};
+
+// the node's microSD card: a folder at a time; download, upload, new folder, delete (a file, or an empty folder)
+V.files = {
+  path: "/", loaded: false, seq: 0,
+  build() {
+    const v = $("v-files"), c = card("Files on the card", "c12", (this.space = el("span", "dim")));
+    this.none = el("p", "empty", "There is no microSD card in the node (or it isn't FAT32). Put one in with the node switched off.");
+    this.box = el("div");
+    const tb = el("div", "toolbar");
+    const up = el("button", "btn sm", "Up"); up.onclick = () => this.open(cardPath.up(this.path));
+    this.crumb = el("b", "mono");
+    const name = el("input", "search"); name.placeholder = "New folder name"; name.maxLength = 120;
+    const mk = el("button", "btn sm", "Make folder");
+    mk.onclick = async () => {
+      const n = name.value.trim();
+      if (!cardPath.okName(n)) { toast("A folder name can't have / \\ : * ? \" < > | or end in a dot or a space"); return; }
+      const r = await API.fileOp("mkdir", cardPath.join(this.path, n));
+      if (r.ok) { name.value = ""; this.open(this.path); } else toast("Not made: " + r.error);
+    };
+    tb.append(up, this.crumb, el("span", "grow"), name, mk);
+    const ub = el("div", "toolbar");
+    const pick = el("input"); pick.type = "file"; pick.multiple = true; pick.style.cssText = "flex:1;min-width:0;font-size:12.5px;color:var(--muted)";
+    const rl = el("label", "muted"), rep = el("input"); rep.type = "checkbox"; rl.style.fontSize = "12.5px"; rl.append(rep, " Replace files with the same name");
+    const send = el("button", "btn sm", "Upload here"); send.disabled = true;
+    pick.onchange = () => { send.disabled = !pick.files.length; };
+    const bar = el("div", "meter"), bi = el("i"); bar.append(bi); bar.style.display = "none"; bi.style.setProperty("--c", css("--cyan"));
+    this.msg = el("p", "muted"); this.msg.style.cssText = "margin:8px 0;font-size:12.5px";
+    send.onclick = async () => {
+      if (DEMO) { toast("Not in the demo"); return; }
+      const files = [...pick.files], dir = this.path; let ok = 0, err = "";
+      send.disabled = pick.disabled = true; bar.style.display = ""; Poll.hold = Date.now() + 3600000; // the upload has the node's attention
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        if (!cardPath.okName(f.name)) { err = f.name + ": a name the card can't hold"; continue; }
+        const r = await API.put(cardPath.join(dir, f.name), f, rep.checked, (p) => { bi.style.width = Math.round(p * 100) + "%"; this.msg.textContent = "Sending " + f.name + " (" + (i + 1) + " of " + files.length + "), " + Math.round(p * 100) + "%"; });
+        if (r.ok) ok++; else err = f.name + ": " + r.error;
+      }
+      Poll.hold = 0; bar.style.display = "none"; pick.value = ""; pick.disabled = false;
+      this.msg.textContent = ok + " of " + files.length + " uploaded" + (err ? ". Last problem: " + err : ".");
+      this.open(this.path);
+    };
+    ub.append(pick, rl, send);
+    const sc = el("div", "scroll"); sc.style.maxHeight = "calc(100vh - 330px)";
+    const t = el("table", "tbl"), th = el("thead"), hr = el("tr");
+    for (const h of ["Name", "Size", "Changed", ""]) hr.append(el("th", "", h));
+    th.append(hr); this.tb = el("tbody"); t.append(th, this.tb); sc.append(t);
+    this.box.append(tb, ub, bar, this.msg, sc);
+    c.append(this.none, this.box); v.append(c);
+  },
+  async open(path) {
+    const seq = ++this.seq, items = [];
+    let j = null;
+    for (let from = 0; from < 2000; from = j.next) { // 200 per answer
+      j = await API.files(path, from);
+      if (seq !== this.seq) return; // another folder was opened meanwhile
+      if (j.error) { toast(j.error); if (path !== "/") this.open("/"); return; }
+      items.push(...j.items);
+      if (!j.more) break;
+    }
+    this.path = j.path; this.loaded = true; this.crumb.textContent = this.path;
+    if (j.more) this.msg.textContent = "Showing the first " + items.length + " entries of this folder.";
+    items.sort((a, b) => (b.d - a.d) || a.n.localeCompare(b.n));
+    this.tb.replaceChildren();
+    for (const it of items) {
+      const tr = el("tr"), p = cardPath.join(this.path, it.n), act = el("td");
+      const name = el("td", it.d ? "" : "mono", (it.d ? "\u{1F4C1} " : "") + it.n);
+      if (it.d) tr.onclick = () => this.open(p);
+      else {
+        const dl = el("a", "btn sm", "Download"); dl.style.textDecoration = "none"; dl.href = API.fileUrl(p); dl.download = it.n; dl.onclick = (e) => e.stopPropagation(); act.append(dl, " ");
+      }
+      const del = el("button", "btn sm", "Delete"); let armed = false;
+      del.onclick = async (e) => {
+        e.stopPropagation();
+        if (!armed) { armed = true; del.textContent = "Tap again to delete"; setTimeout(() => { armed = false; del.textContent = "Delete"; }, 4000); return; }
+        const r = await API.fileOp("delete", p);
+        if (r.ok) this.open(this.path); else toast("Not deleted: " + r.error);
+      };
+      act.append(del);
+      tr.append(name, el("td", "muted", it.d ? "folder" : fmtSize(it.s)), el("td", "muted", it.t), act);
+      this.tb.append(tr);
+    }
+    if (!items.length) { const tr = el("tr"), td = el("td", "empty", "This folder is empty"); td.colSpan = 4; tr.append(td); this.tb.append(tr); }
+  },
+  render() {
+    const sd = me().sd;
+    this.none.style.display = sd ? "none" : ""; this.box.style.display = sd ? "" : "none";
+    this.space.textContent = sd ? fmtSize(sd.freeKB * 1024) + " free of " + fmtSize(sd.totalKB * 1024) : "";
+    if (sd && !this.loaded) { this.loaded = true; this.open(this.path); }
+    if (!sd) this.loaded = false;
   },
 };
 

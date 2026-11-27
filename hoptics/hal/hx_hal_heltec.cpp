@@ -103,7 +103,7 @@ bool panelInit(void)
         return false;
     }
     tft.setRotation(0); // portrait
-    lvglUseDma();       // the screen has this SPI host to itself: strips go out by DMA while the next is drawn
+    lvglUseDma();       // no radio on this host: strips go out by DMA while the next is drawn (R8's card waits for a frame's end)
     panelUp = true;
     hxlog::line("display up");
     return true;

@@ -11,7 +11,7 @@ namespace
 {
 lgfx::LGFX_Device *gTft = nullptr;
 lv_display_t *gDisp = nullptr;
-bool gDma = false;      // the panel has its own SPI host with DMA: send one strip while the next is drawn
+bool gDma = false;      // the panel's SPI host takes DMA: send one strip while the next is drawn
 bool gWriting = false;  // a frame's SPI transaction is open (DMA boards keep it open from the first strip to the last)
 uint32_t gFrames = 0;   // finished redraws, for the status line
 uint32_t gRefrUs = 0, gRenderUs = 0, gRefrAt = 0, gRenderAt = 0; // time in LVGL's refresh (layout + drawing) and drawing
@@ -62,6 +62,7 @@ void *strip(size_t bytes)
 
 void lvglUseDma(void) { gDma = true; }
 uint32_t framesDrawn(void) { return gFrames; }
+bool frameOpen(void) { return gWriting; }
 void refreshTimes(uint32_t &refrUs, uint32_t &drawUs)
 {
     refrUs = gRefrUs;

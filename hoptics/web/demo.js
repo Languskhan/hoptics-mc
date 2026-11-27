@@ -96,7 +96,8 @@
     return {
       v: 1, now, up: 3 * 86400 + 7 * 3600 + (now - t0),
       node: { name: "Demo T-Deck", key: hex(myKey).slice(0, 12), fw: "Hoptics-MC 0.2.0-beta", board: "LilyGO T-Deck Plus", lat: mePos.lat, lon: mePos.lon, posSrc: "gps",
-        batt: { mv: hist.batt[287], pct: 78 }, cpu: 240, heap: 148200, heapTotal: 327680, psram: 7690000, psramTotal: 8388608, rssi: -61, gps: { on: true, sats: 9, fix: true } },
+        batt: { mv: hist.batt[287], pct: 78 }, cpu: 240, heap: 148200, heapTotal: 327680, psram: 7690000, psramTotal: 8388608, rssi: -61, gps: { on: true, sats: 9, fix: true },
+        sd: { totalKB: 31154688, freeKB: 30412800 }, tiles: 412, tilesKB: 13184, tilesCapKB: 1048576, tilesCard: true },
       radio: { freq: 910.525, bw: 62.5, sf: 7, cr: 5, tx: 22 },
       stats: { rx, tx, flood: Math.round(rx * 0.8), direct: Math.round(rx * 0.2), dups: Math.round(rx * 0.6), airTxS: 214 + Math.floor((now - t0) / 40), noise: -113, lastRssi: rf.length ? rf[rf.length - 1].rssi : -95, lastSnr: rf.length ? rf[rf.length - 1].snr : 4 },
       load: { loop: 9800, longest: 18, ui: 1, lvgl: 6, draw: 4, feed: 0 },
@@ -124,6 +125,18 @@
         return JSON.parse(JSON.stringify(snapshot()));
       },
       async logout() { this.ok = false; },
+      async files(path) { // a made-up card
+        const t = "2026-11-27 14:02", tree = { "/": [{ n: "hoptics", d: true }, { n: "maps", d: true }, { n: "notes.txt", d: false, s: 1834 }],
+          "/hoptics": [{ n: "backup", d: true }, { n: "logs", d: true }, { n: "tiles", d: true }], "/hoptics/logs": [{ n: "hoptics.log", d: false, s: 88123 }],
+          "/maps": [{ n: "osm", d: true }] };
+        if (!tree[path] && !/^\/(hoptics\/(backup|tiles)|maps\/osm)$/.test(path)) return { error: "That folder isn't on the card" };
+        return { path, totalKB: 31154688, freeKB: 30412800, more: false, next: 0, items: (tree[path] || []).map((x) => Object.assign({ s: 0, t }, x)) };
+      },
+      fileUrl() { return "data:text/plain,demo"; },
+      async put() { return { ok: false, error: "Not in the demo" }; },
+      async fileOp() { return { ok: false, error: "Not in the demo" }; },
+      async backup() { return { error: "Not in the demo" }; },
+      async restore() { return { error: "Not in the demo" }; },
       async log() {
         return ["===== Hoptics-MC log: this session =====", "[0] hoptics: starting (reset: power on)", "[1] hoptics: display init (LilyGO T-Deck Plus)", "[2] hoptics: start 8/8 running (3412 ms)",
           "[3] hoptics: wifi connected, -61 dBm, heap 150112", "[4] hoptics: web page on, port 80", "[300] hoptics: ui running, up 300s, heap 148200, psram 7690000, batt 4120 mV, cpu 240 MHz, loop 9800/s, longest 18 ms"].join("\n");

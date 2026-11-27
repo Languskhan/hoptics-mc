@@ -12,8 +12,9 @@ permissions:
   contents: write # attach firmware to releases
 
 jobs:
-  # quick checks on a PC, beside the firmware builds: static analysis, the web page's crypto and decoder,
-  # the feed parser under ASan/UBSan, and every screen rendered (the screenshots are kept for review)
+  # quick checks on a PC, beside the firmware builds: static analysis, the web page's crypto and decoder, the web
+  # server's path and JSON checks and the feed parser under ASan/UBSan, and every screen rendered (the screenshots
+  # are kept for review)
   checks:
     runs-on: ubuntu-latest
     steps:
@@ -31,6 +32,9 @@ jobs:
         run: |
           node harness/web/core_test.js
           for f in hoptics/web/*.js; do node --check "$f"; done
+
+      - name: Card paths, %-escapes and JSON for the web server (ASan/UBSan)
+        run: bash harness/parse/run.sh
 
       - name: Feed parser and WebSocket client (ASan/UBSan)
         timeout-minutes: 5

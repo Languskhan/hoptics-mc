@@ -13,6 +13,11 @@
  * server's Cache-Control says) and re-check expired ones with a conditional request; show
  * "(c) OpenStreetMap" on the map. https://operations.osmfoundation.org/policies/tiles/
  *
+ * With a microSD card in (hx_sd.h), saved tiles go to the card instead of flash (up to 1 GB, always leaving 64 MB of
+ * the card free), and ready-made map packs on the card are drawn first: Meshtastic's layout /maps/<style>/z/x/y.png
+ * (the first style folder) or /map/z/x/y.png, and MeshCore's /tiles/z/x/y.png, tried in that order. A pack tile that
+ * isn't a 256 px PNG gives way to a saved or downloaded one. Packs are only read, never written or re-checked.
+ *
  * The engine never touches LVGL objects: the UI shows the buffer as an image and polls takeDirty().
  * Apart from a thin platform layer it is plain C++, so the PC harness runs the same code. MIT licence.
  */
@@ -82,8 +87,10 @@ struct MapStatus {
     uint8_t pending = 0; // ...still to download
     Problem problem = NONE;
     bool storageFull = false; // the last tile could not be saved (still shown)
+    bool onCard = false;      // saved tiles are on the microSD card
     uint32_t savedTiles = 0;
     uint32_t savedKB = 0;
+    uint32_t capKB = 0; // the most saved tiles may take
 };
 
 class TileMap
@@ -161,7 +168,7 @@ class TileMap
 
     // flash cache
     void loadIndex(void);
-    void flushIndex(void); // the saved-tile list to /hmap.idx, when it changed
+    void flushIndex(bool now = false); // the saved-tile list to its file, when it changed (the card's: once a minute)
     bool readSaved(uint8_t z, uint32_t x, uint32_t y, Blob &png, uint32_t &fetched, uint32_t &maxAge, char *etag);
     bool save(uint8_t z, uint32_t x, uint32_t y, const uint8_t *png, size_t len, uint32_t maxAge, const char *etag);
     struct Import {
@@ -210,6 +217,7 @@ class TileMap
     std::vector<Tile> tiles; // tiles of cur
     std::vector<Saved> saved;
     bool indexLoaded = false, indexDirty = false;
+    uint32_t indexAt = 0; // when the list was last written
     uint32_t savedBytes = 0;
     uint32_t dirMade = 0; // bit per zoom level whose directory exists
     uint32_t backoffUntil = 0, backoffMs = 0;

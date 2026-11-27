@@ -5,6 +5,8 @@
 #include "hx_feed.h"
 #include "hx_web.h"
 #include "hx_ota.h"
+#include "hx_parse.h"
+#include "hx_sd.h"
 #include "map/hx_tiles.h"
 #include "hx_hal.h"
 #include <Preferences.h>
@@ -85,6 +87,7 @@ void UITask::begin(DisplayDriver *display, SensorManager *s, NodePrefs *p)
     openNvs();
     if (!hxhal::begin())
         return; // no panel: the radio still works as a companion for the apps
+    hxsd::begin(); // the card, if one is in (its bus is the screen's, now started); before the map can look for it
     app = new hx::App(*this);
     app->begin();
     ready = true;
@@ -129,6 +132,7 @@ void UITask::loop()
     load.passes++;
     // a status line every 10 s on the USB serial port, for hardware reports (the screen may be what's broken)
     hxlog::tick();
+    hxsd::tick(); // card work another task is waiting for (the map, the web page)
     static bool kept = false;
     if (!kept && millis() > 60000) { // a healthy minute: a build on trial keeps itself
         kept = true;
@@ -222,9 +226,19 @@ void UITask::loop()
     hxweb::Query wq;
     if (hxweb::take(wq)) { // a browser is waiting for data: build it on this pass
         std::string body;
-        if (wq.kind == hxweb::Query::LOG)
+        if (wq.kind == hxweb::Query::LOG) {
             hxlog::text(body);
-        else if (wq.kind == hxweb::Query::SEND)
+            if (hxsd::mounted()) { // a copy on the card, as the device's own "save report" does
+                char path[64];
+                cardName(path, sizeof(path), "/hoptics/logs/report-", ".txt");
+                hxsd::writeFile(path, body.data(), body.size());
+            }
+        } else if (wq.kind == hxweb::Query::BACKUP)
+            webBackup(body);
+        else if (wq.kind == hxweb::Query::RESTORE) {
+            webRestore(wq.data, wq.len, wq.parts, body);
+            free(wq.data); // ours once taken (hx_web.h)
+        } else if (wq.kind == hxweb::Query::SEND)
             body = app->webSend(wq.channel, wq.text);
         else if (wq.kind == hxweb::Query::JOIN)
             body = app->webJoin(wq.text);
@@ -1625,6 +1639,271 @@ bool UITask::sendLog()
     return true;
 }
 
+bool UITask::saveReport()
+{
+    if (!hxsd::mounted())
+        return false;
+    char name[48];
+    cardName(name, sizeof(name), "report-", ".txt");
+    return hxlog::saveReport(name);
+}
+
+// "<folder>2026-11-27-140205<ext>" by the node's clock (UTC), or "<folder>up<seconds><ext>" while it isn't set
+void UITask::cardName(char *out, size_t n, const char *folder, const char *ext) const
+{
+    const time_t t = (time_t)now();
+    struct tm tm;
+    if (t > 1704067200 && gmtime_r(&t, &tm))
+        snprintf(out, n, "%s%04d-%02d-%02d-%02d%02d%02d%s", folder, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min,
+                 tm.tm_sec, ext);
+    else
+        snprintf(out, n, "%sup%lu%s", folder, (unsigned long)(millis() / 1000), ext);
+}
+
+// ------------------------------------------------------------------ backup and restore (the web page; hx_web.cpp)
+// A backup is JSON: the node's settings (name, position, radio and how it adds contacts and shares telemetry), its
+// channels with their keys (a channel can't be joined again without its key), and its contacts' public keys, names,
+// types and favourites. Never the node's own private key or the Bluetooth PIN. One channel or contact per line.
+namespace
+{
+void hexTo(std::string &o, const uint8_t *b, size_t n)
+{
+    static const char *H = "0123456789abcdef";
+    o += '"';
+    for (size_t i = 0; i < n; i++) {
+        o += H[b[i] >> 4];
+        o += H[b[i] & 15];
+    }
+    o += '"';
+}
+} // namespace
+
+void UITask::webBackup(std::string &out)
+{
+    std::string b;
+    char t[400];
+    snprintf(t, sizeof(t), "{\"hoptics_backup\":1,\"fw\":\"%s\",\"made\":%lu,\"board\":", HOPTICS_VERSION, (unsigned long)now());
+    b += t;
+    hxparse::jsonString(b, hxhal::boardName());
+    b += ",\n\"settings\":{\"name\":";
+    hxparse::jsonString(b, prefs->node_name);
+    snprintf(t, sizeof(t),
+             ",\"lat\":%.6f,\"lon\":%.6f,\"freq\":%.4f,\"bw\":%g,\"sf\":%u,\"cr\":%u,\"tx\":%d,\"adv_loc\":%u,\"man_add\":%u,"
+             "\"auto_add\":%u,\"auto_max\":%u,\"multi_ack\":%u,\"tel_base\":%u,\"tel_loc\":%u,\"tel_env\":%u},",
+             sensors ? sensors->node_lat : prefs->node_lat, sensors ? sensors->node_lon : prefs->node_lon, (double)prefs->freq,
+             (double)prefs->bw, prefs->sf, prefs->cr, (int)prefs->tx_power_dbm, prefs->advert_loc_policy, prefs->manual_add_contacts,
+             prefs->autoadd_config, prefs->autoadd_max_hops, prefs->multi_acks, prefs->telemetry_mode_base, prefs->telemetry_mode_loc,
+             prefs->telemetry_mode_env);
+    b += t;
+    b += "\n\"channels\":[";
+    int nCh = 0, nCt = 0;
+    for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+        ChannelDetails d;
+        if (!the_mesh.getChannel(i, d) || !d.name[0])
+            continue;
+        static const uint8_t zero[16] = {};
+        snprintf(t, sizeof(t), "%s\n{\"i\":%d,\"name\":", nCh++ ? "," : "", i);
+        b += t;
+        hxparse::jsonString(b, d.name);
+        b += ",\"key\":";
+        hexTo(b, d.channel.secret, memcmp(d.channel.secret + 16, zero, 16) ? 32 : 16); // a 128-bit key, or 256
+        b += '}';
+    }
+    b += "],\n\"contacts\":[";
+    ContactInfo c;
+    for (int i = MAX_ANON_CONTACTS; the_mesh.getContactByIdx(i, c); i++) {
+        if (c.type == ADV_TYPE_NONE)
+            continue;
+        b += nCt++ ? ",\n{\"key\":" : "\n{\"key\":";
+        hexTo(b, c.id.pub_key, PUB_KEY_SIZE);
+        b += ",\"name\":";
+        hxparse::jsonString(b, c.name);
+        snprintf(t, sizeof(t), ",\"type\":%u,\"flags\":%u,\"lat\":%ld,\"lon\":%ld,\"heard\":%lu,\"mod\":%lu}", c.type, c.flags,
+                 (long)c.gps_lat, (long)c.gps_lon, (unsigned long)c.last_advert_timestamp, (unsigned long)c.lastmod);
+        b += t;
+    }
+    b += "]}\n";
+    // on the card too, when there is one
+    char path[64] = "";
+    if (hxsd::mounted()) {
+        cardName(path, sizeof(path), "/hoptics/backup/", ".json");
+        if (!hxsd::writeFile(path, b.data(), b.size()))
+            path[0] = 0;
+    }
+    hxlog::line("backup made: %d channels, %d contacts%s", nCh, nCt, path[0] ? ", saved on the card" : "");
+    out = "{\"ok\":true,\"file\":";
+    if (path[0])
+        hxparse::jsonString(out, path);
+    else
+        out += "null";
+    out += ",\"backup\":";
+    out += b;
+    out += '}';
+}
+
+void UITask::webRestore(const char *data, size_t len, uint8_t parts, std::string &out)
+{
+    const char *p = data, *end = data + len;
+    hxparse::Value settings, channels, contacts;
+    bool ours = false;
+    if (!hxparse::object(p, end, [&](const hxparse::Value &k, const hxparse::Value &v) {
+            if (hxparse::is(k, "hoptics_backup"))
+                ours = hxparse::number(v, 0) == 1;
+            else if (hxparse::is(k, "settings") && v.kind == 'o')
+                settings = v;
+            else if (hxparse::is(k, "channels") && v.kind == 'a')
+                channels = v;
+            else if (hxparse::is(k, "contacts") && v.kind == 'a')
+                contacts = v;
+        }) ||
+        !ours) {
+        out = "{\"error\":\"That isn't a Hoptics backup\"}";
+        return;
+    }
+    int ctAdded = 0, ctHad = 0, ctFull = 0, chAdded = 0, chHad = 0, chFull = 0;
+    bool setOk = false;
+    if ((parts & hxweb::Query::CONTACTS) && contacts.p) { // contacts the node doesn't have yet are added; known ones stay as they are
+        const char *q = contacts.p;
+        hxparse::array(q, contacts.p + contacts.n, [&](const hxparse::Value &e) {
+            if (e.kind != 'o')
+                return;
+            ContactInfo c{}; // zeroed (its key class has a constructor, so not by memset)
+            bool key = false;
+            const char *r = e.p;
+            hxparse::object(r, e.p + e.n, [&](const hxparse::Value &k, const hxparse::Value &v) {
+                if (hxparse::is(k, "key"))
+                    key = hxparse::hex(v, c.id.pub_key, PUB_KEY_SIZE);
+                else if (hxparse::is(k, "name"))
+                    hxparse::text(v, c.name, sizeof(c.name));
+                else if (hxparse::is(k, "type"))
+                    c.type = (uint8_t)hxparse::number(v, 0);
+                else if (hxparse::is(k, "flags"))
+                    c.flags = (uint8_t)hxparse::number(v, 0);
+                else if (hxparse::is(k, "lat"))
+                    c.gps_lat = (int32_t)hxparse::number(v, 0);
+                else if (hxparse::is(k, "lon"))
+                    c.gps_lon = (int32_t)hxparse::number(v, 0);
+                else if (hxparse::is(k, "heard"))
+                    c.last_advert_timestamp = (uint32_t)hxparse::number(v, 0);
+                else if (hxparse::is(k, "mod"))
+                    c.lastmod = (uint32_t)hxparse::number(v, 0);
+            });
+            if (!key || c.type < ADV_TYPE_CHAT || c.type > ADV_TYPE_SENSOR)
+                return;
+            if (the_mesh.lookupContactByPubKey(c.id.pub_key, PUB_KEY_SIZE)) {
+                ctHad++;
+                return;
+            }
+            c.out_path_len = OUT_PATH_UNKNOWN; // the route is found again (paths change)
+            the_mesh.addContact(c) ? ctAdded++ : ctFull++;
+        });
+        if (ctAdded) {
+            the_mesh.saveContacts();
+            contactsVer++;
+            app->onContactsChanged();
+        }
+    }
+    if ((parts & hxweb::Query::CHANNELS) && channels.p) { // a channel the node has already (same key) stays as it is
+        const char *q = channels.p;
+        hxparse::array(q, channels.p + channels.n, [&](const hxparse::Value &e) {
+            if (e.kind != 'o')
+                return;
+            ChannelDetails d;
+            memset(&d, 0, sizeof(d));
+            int want = -1;
+            bool key = false;
+            const char *r = e.p;
+            hxparse::object(r, e.p + e.n, [&](const hxparse::Value &k, const hxparse::Value &v) {
+                if (hxparse::is(k, "i"))
+                    want = (int)hxparse::number(v, -1);
+                else if (hxparse::is(k, "name"))
+                    hxparse::text(v, d.name, sizeof(d.name));
+                else if (hxparse::is(k, "key"))
+                    key = hxparse::hex(v, d.channel.secret, 16) || hxparse::hex(v, d.channel.secret, 32);
+            });
+            if (!key || !d.name[0])
+                return;
+            int slot = -1;
+            for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+                ChannelDetails c;
+                const bool used = the_mesh.getChannel(i, c) && c.name[0];
+                if (used && !memcmp(c.channel.secret, d.channel.secret, sizeof(d.channel.secret))) {
+                    chHad++;
+                    return;
+                }
+                if (!used && (slot < 0 || i == want))
+                    slot = i; // its old place if that is free, else the first free one
+            }
+            if (slot < 0 || !the_mesh.setChannel(slot, d))
+                chFull++;
+            else
+                chAdded++;
+        });
+        if (chAdded)
+            the_mesh.saveChannels();
+    }
+    if ((parts & hxweb::Query::SETTINGS) && settings.p) {
+        char name[32] = "";
+        hx::Radio rad;
+        rad.freq = prefs->freq, rad.bw = prefs->bw, rad.sf = prefs->sf, rad.cr = prefs->cr, rad.txPower = prefs->tx_power_dbm;
+        double lat = 999, lon = 999;
+        const char *q = settings.p;
+        hxparse::object(q, settings.p + settings.n, [&](const hxparse::Value &k, const hxparse::Value &v) {
+            const double n = hxparse::number(v, -1);
+            const uint8_t u = n >= 0 && n <= 255 ? (uint8_t)n : 0;
+            if (hxparse::is(k, "name"))
+                hxparse::text(v, name, sizeof(name));
+            else if (hxparse::is(k, "lat"))
+                lat = hxparse::number(v, 999);
+            else if (hxparse::is(k, "lon"))
+                lon = hxparse::number(v, 999);
+            else if (hxparse::is(k, "freq"))
+                rad.freq = (float)n;
+            else if (hxparse::is(k, "bw"))
+                rad.bw = (float)n;
+            else if (hxparse::is(k, "sf"))
+                rad.sf = u;
+            else if (hxparse::is(k, "cr"))
+                rad.cr = u;
+            else if (hxparse::is(k, "tx"))
+                rad.txPower = (int8_t)hxparse::number(v, prefs->tx_power_dbm);
+            else if (hxparse::is(k, "adv_loc"))
+                prefs->advert_loc_policy = u ? ADVERT_LOC_SHARE : ADVERT_LOC_NONE;
+            else if (hxparse::is(k, "man_add"))
+                prefs->manual_add_contacts = u;
+            else if (hxparse::is(k, "auto_add"))
+                prefs->autoadd_config = u;
+            else if (hxparse::is(k, "auto_max"))
+                prefs->autoadd_max_hops = std::min<uint8_t>(u, 64);
+            else if (hxparse::is(k, "multi_ack"))
+                prefs->multi_acks = u;
+            else if (hxparse::is(k, "tel_base"))
+                prefs->telemetry_mode_base = std::min<uint8_t>(u, TELEM_MODE_ALLOW_ALL);
+            else if (hxparse::is(k, "tel_loc"))
+                prefs->telemetry_mode_loc = std::min<uint8_t>(u, TELEM_MODE_ALLOW_ALL);
+            else if (hxparse::is(k, "tel_env"))
+                prefs->telemetry_mode_env = std::min<uint8_t>(u, TELEM_MODE_ALLOW_ALL);
+        });
+        if (lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 && sensors) {
+            sensors->node_lat = lat;
+            sensors->node_lon = lon;
+        }
+        if (name[0])
+            setNodeName(name);
+        setOk = setRadio(rad); // checked as on the screen; saves the rest of the settings too
+        if (!setOk)
+            the_mesh.savePrefs();
+    }
+    hxlog::line("restore: %d contacts and %d channels added%s", ctAdded, chAdded,
+                (parts & hxweb::Query::SETTINGS) ? (setOk ? ", settings" : ", settings without the radio") : "");
+    char b[260];
+    snprintf(b, sizeof(b),
+             "{\"ok\":true,\"contacts\":{\"added\":%d,\"had\":%d,\"full\":%d},\"channels\":{\"added\":%d,\"had\":%d,\"full\":%d},"
+             "\"settings\":%s,\"radio\":%s}",
+             ctAdded, ctHad, ctFull, chAdded, chHad, chFull, (parts & hxweb::Query::SETTINGS) ? "true" : "false", setOk ? "true" : "false");
+    out = b;
+}
+
 // ------------------------------------------------------------------ the web page
 void UITask::webTick(void)
 {
@@ -1709,7 +1988,7 @@ int UITask::joinHashChannel(const char *name)
     if (freeSlot < 0 || !the_mesh.setChannel(freeSlot, d))
         return -1;
     the_mesh.saveChannels();
-    hxlog::line("joined channel %s", n);
+    hxlog::line("joined a #channel"); // no names in the log
     return freeSlot;
 }
 
@@ -1799,8 +2078,14 @@ void UITask::webExtras(std::string &o, uint32_t histHave) const
              hxota::slot(), hxota::trial() ? "true" : "false");
     o += b;
     const hoptics::MapStatus ms = hoptics::TileMap::get().status();
-    snprintf(b, sizeof(b), ",\"tiles\":%u,\"tilesKB\":%u,\"tilesCapKB\":%u", (unsigned)ms.savedTiles, (unsigned)ms.savedKB, (unsigned)HOPTICS_MAP_CACHE_KB);
+    snprintf(b, sizeof(b), ",\"tiles\":%u,\"tilesKB\":%u,\"tilesCapKB\":%u,\"tilesCard\":%s", (unsigned)ms.savedTiles, (unsigned)ms.savedKB,
+             (unsigned)ms.capKB, ms.onCard ? "true" : "false");
     o += b;
+    if (hxsd::mounted()) { // the microSD card: its size and free space (for Files and the tile pack check)
+        snprintf(b, sizeof(b), ",\"sd\":{\"totalKB\":%lu,\"freeKB\":%lu}", (unsigned long)(hxsd::totalBytes() >> 10),
+                 (unsigned long)(hxsd::freeBytes() >> 10));
+        o += b;
+    }
     if (sats >= 0) {
         snprintf(b, sizeof(b), ",\"gps\":{\"on\":%s,\"fix\":%s,\"sats\":%d}", gpsOn ? "true" : "false", fix ? "true" : "false", sats);
         o += b;

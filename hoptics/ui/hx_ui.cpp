@@ -2739,6 +2739,8 @@ void App::buildMore(lv_obj_t *p)
             lv_refr_now(nullptr);
             if (!self->m.sendLog())
                 self->toast("This radio keeps no log");
+            else if (self->m.saveReport())
+                self->toast(LV_SYMBOL_OK " Log sent, and saved on the card (hoptics/logs)");
             else
                 self->toast(LV_SYMBOL_OK " Log sent: now press Download logs on the install page");
         },
@@ -2746,8 +2748,9 @@ void App::buildMore(lv_obj_t *p)
     wrap(label(cl, F10, C_DIM,
                "Something went wrong? Plug the radio into a computer, open the Hoptics install page, Connect, then Logs & "
                "Console. Press this button, then Download logs, and send the file. The radio keeps its last three "
-               "sessions, including a crash if there was one. No messages, names, positions, network names or "
-               "passwords go in it."));
+               "sessions, including a crash if there was one. With a microSD card in, the button also saves the log "
+               "on the card, and the card keeps a running log too (hoptics/logs). No messages, names, positions, "
+               "network names or passwords go in it."));
 
     lv_obj_t *ca = card(moreSec[M_SYSTEM], "ABOUT");
     setAbout = label(ca, F12, C_TEXT, "");
@@ -3236,7 +3239,8 @@ void App::refreshWifi(void)
     }
     if (mapSaved) {
         const hoptics::MapStatus st = hoptics::TileMap::get().status();
-        snprintf(b, sizeof(b), "Saved on this radio: %u tiles, %u KB", (unsigned)st.savedTiles, (unsigned)st.savedKB);
+        snprintf(b, sizeof(b), "Saved on %s: %u tiles, %u KB", st.onCard ? "the card" : "this radio", (unsigned)st.savedTiles,
+                 (unsigned)st.savedKB);
         setText(mapSaved, b);
     }
 }

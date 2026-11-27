@@ -36,6 +36,16 @@ function bearing(a, b) {
   return (Math.atan2(y, x) / r + 360) % 360;
 }
 const compass = (deg) => ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][Math.round(deg / 22.5) % 16];
+function fmtSize(n) {
+  return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB" : n < 1073741824 ? (n / 1048576).toFixed(1) + " MB" : (n / 1073741824).toFixed(1) + " GB";
+}
+// paths on the node's microSD card, as the page builds them (the node checks every one again: hx_parse.cpp)
+const cardPath = {
+  join: (dir, name) => (dir === "/" ? "" : dir) + "/" + name,
+  up: (p) => { const i = p.lastIndexOf("/"); return i <= 0 ? "/" : p.slice(0, i); },
+  // a name the card takes as it is: no slashes, control characters or :*?"<>|\, not ending in a dot or a space, 255 bytes at most
+  okName: (n) => typeof n === "string" && n.length > 0 && new TextEncoder().encode(n).length <= 255 && !/[\x00-\x1f\x7f\\/:*?"<>|]/.test(n) && !/[. ]$/.test(n),
+};
 
 // a node's colour from its key, the same idea as the device: stable, spread around the wheel
 function keyColor(key) {

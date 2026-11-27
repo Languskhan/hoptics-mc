@@ -16,8 +16,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hx_map_roots.h"
+#include "hx_sd.h"
 #include <HTTPClient.h>
+#include <SD.h>
 #include <SPIFFS.h>
+#include <ff.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #else
@@ -117,6 +120,12 @@ int32_t floorDiv(int32_t a, int32_t b)
     return (a % b != 0 && ((a < 0) != (b < 0))) ? q - 1 : q;
 }
 
+// where saved tiles are kept, and the card's map packs (defined with the storage code below, per platform)
+bool onCard(void);
+uint64_t capBytes(void);
+void findPacks(void);
+bool packTile(uint8_t z, uint32_t x, uint32_t y, Blob &out);
+
 uint64_t tileKey(uint8_t z, uint32_t x, uint32_t y)
 {
     return ((uint64_t)z << 56) | ((uint64_t)x << 28) | y;
@@ -125,7 +134,10 @@ uint64_t tileKey(uint8_t z, uint32_t x, uint32_t y)
 void tilePath(char *out, size_t n, uint8_t z, uint32_t x, uint32_t y)
 {
 #if defined(ARDUINO_ARCH_ESP32)
-    snprintf(out, n, "%s/%u/%u_%u.hmt", kRoot, (unsigned)z, (unsigned)x, (unsigned)y);
+    if (hxsd::mounted()) // the card has folders: one per column, so no folder gets long (FAT looks names up in order)
+        snprintf(out, n, "/hoptics/tiles/%u/%u/%u.hmt", (unsigned)z, (unsigned)x, (unsigned)y);
+    else // SPIFFS has no folders: every file is listed from the root by its whole path
+        snprintf(out, n, "%s/%u/%u_%u.hmt", kRoot, (unsigned)z, (unsigned)x, (unsigned)y);
 #else
     snprintf(out, n, "%s/%u/%u_%u.hmt", hostRoot.c_str(), (unsigned)z, (unsigned)x, (unsigned)y);
 #endif
@@ -344,6 +356,8 @@ MapStatus TileMap::status(void)
     }
     s.enabled = enabled.load();
     s.online = online();
+    s.onCard = onCard();
+    s.capKB = (uint32_t)(capBytes() / 1024);
     if (s.online && s.problem == MapStatus::OFFLINE)
         s.problem = MapStatus::NONE; // Wi-Fi came up; the worker retries shortly
     return s;
@@ -385,6 +399,7 @@ void TileMap::startWorker(void)
 
 void TileMap::workerLoop(void)
 {
+    findPacks();
     loadIndex();
     publishStatus();
     uint32_t done = gen.load() - 1;
@@ -492,6 +507,7 @@ TileMap::ImportResult TileMap::importTile(uint8_t z, uint32_t x, uint32_t y, con
 // scarce once Wi-Fi is on). False when a new view came in meanwhile: it carries on.
 bool TileMap::retire(uint32_t g)
 {
+    flushIndex(true);
 #if defined(ARDUINO_ARCH_ESP32)
     if (tls)
         tls->stop();
@@ -543,8 +559,18 @@ void TileMap::renderView(uint32_t g)
         if (gen.load() != g)
             return;
         if (t.inWorld) {
-            uint32_t fetched = 0, maxAge = 0;
             png.reset();
+            if (packTile(cur.z, t.x, t.y, png)) {
+                if (drawPng(png.data, png.len, t, cur, g)) {
+                    t.shown = true;
+                    dirty = true;
+                    continue;
+                }
+                if (gen.load() != g)
+                    return;
+                png.reset(); // not a usable PNG: a saved or downloaded tile instead
+            }
+            uint32_t fetched = 0, maxAge = 0;
             if (readSaved(cur.z, t.x, t.y, png, fetched, maxAge, t.etag)) {
                 if (drawPng(png.data, png.len, t, cur, g)) {
                     t.shown = true;
@@ -555,7 +581,7 @@ void TileMap::renderView(uint32_t g)
                 }
                 if (gen.load() != g)
                     return;
-                ILOG_WARN("Hoptics map: saved tile %u/%u/%u unreadable, dropped", cur.z, t.x, t.y);
+                ILOG_WARN("Hoptics map: a saved zoom %u tile was unreadable, dropped", cur.z); // no x/y: they say where you are
                 forget(cur.z, t.x, t.y);
             }
             t.gone = std::find(notFound.begin(), notFound.end(), tileKey(cur.z, t.x, t.y)) != notFound.end();
@@ -586,8 +612,7 @@ void TileMap::downloadMissing(uint32_t g)
         uint32_t t0 = nowMs();
         int code = fetch(cur.z, t.x, t.y, nullptr, png, etag, maxAge);
         if (code == 200) {
-            ILOG_INFO("Hoptics map: tile %u/%u/%u downloaded (%u B, %u ms)", cur.z, t.x, t.y, (unsigned)png.len,
-                      (unsigned)(nowMs() - t0));
+            ILOG_INFO("Hoptics map: zoom %u tile downloaded (%u B, %u ms)", cur.z, (unsigned)png.len, (unsigned)(nowMs() - t0));
             backoffMs = 0;
             setProblem(MapStatus::NONE);
             bool ok = drawPng(png.data, png.len, t, cur, g);
@@ -597,12 +622,12 @@ void TileMap::downloadMissing(uint32_t g)
                 t.shown = true;
                 dirty = true;
             } else if (gen.load() == g) {
-                ILOG_WARN("Hoptics map: tile %u/%u/%u is not a 256 px PNG", cur.z, t.x, t.y);
+                ILOG_WARN("Hoptics map: a zoom %u tile is not a 256 px PNG", cur.z);
                 t.gone = true;
             }
             publishStatus();
         } else if (code == 404 || (code >= 400 && code < 500 && code != 403 && code != 429)) {
-            ILOG_WARN("Hoptics map: tile %u/%u/%u answered %d", cur.z, t.x, t.y, code);
+            ILOG_WARN("Hoptics map: a zoom %u tile answered %d", cur.z, code);
             if (notFound.size() >= 64)
                 notFound.erase(notFound.begin());
             notFound.push_back(tileKey(cur.z, t.x, t.y));
@@ -634,7 +659,7 @@ void TileMap::revalidate(uint32_t g)
             touchSaved(cur.z, t.x, t.y, maxAge, etag[0] ? etag : t.etag);
             t.stale = false;
         } else if (code == 200) {
-            ILOG_INFO("Hoptics map: tile %u/%u/%u changed, updated", cur.z, t.x, t.y);
+            ILOG_INFO("Hoptics map: a zoom %u tile changed, updated", cur.z);
             if (drawPng(png.data, png.len, t, cur, g)) {
                 save(cur.z, t.x, t.y, png.data, png.len, maxAge, etag);
                 dirty = true;
@@ -746,20 +771,128 @@ void TileMap::publishStatus(void)
     stat.savedKB = savedBytes / 1024;
 }
 
-// ------------------------------------------------------------------ flash cache
+// ------------------------------------------------------------------ saved tiles: flash, or the card
 #if defined(ARDUINO_ARCH_ESP32)
+// With a card in, saved tiles live on the card (/hoptics/tiles/<z>/<x>/<y>.hmt) and the ones on flash wait there,
+// unused, until the card is out again. The card is on the main loop's SPI bus (hx_sd.h): each piece of card work below
+// is handed to the main loop with io(), one file operation at a time, and the worker waits for it. Flash work is done
+// here, as before.
 namespace
 {
-size_t fsFree(void)
+constexpr uint64_t kCardCap = 1024ull << 20, kCardReserve = 64ull << 20;
+constexpr size_t kPiece = 256; // index records per card job (3 KB)
+std::vector<std::string> packRoots; // the map packs found on the card, in the order they are tried
+
+bool onCard(void) { return hxsd::mounted(); }
+fs::FS &store(void) { return onCard() ? (fs::FS &)SD : (fs::FS &)SPIFFS; }
+template <class F> bool io(F &&f)
 {
+    if (!onCard()) {
+        f();
+        return true;
+    }
+    return hxsd::run(f);
+}
+uint32_t block(void) { return onCard() ? std::max<uint32_t>(hxsd::clusterBytes(), 512) : kBlock; }
+uint64_t capBytes(void) { return onCard() ? kCardCap : HOPTICS_MAP_CACHE_KB * 1024ull; }
+uint64_t reserveBytes(void) { return onCard() ? kCardReserve : HOPTICS_MAP_FS_RESERVE_KB * 1024ull; }
+// free space, given `freed` bytes deleted during this call (the card's count is refreshed by the main loop later)
+uint64_t storeFree(uint64_t freed)
+{
+    if (onCard())
+        return hxsd::freeBytes() + freed;
     size_t total = SPIFFS.totalBytes(), used = SPIFFS.usedBytes();
     return total > used ? total - used : 0;
+}
+const char *indexPath(void) { return onCard() ? "/hoptics/tiles/index.bin" : "/hmap.idx"; }
+
+// one folder on the card through FatFS: each entry's name, whether it is a folder, and its size, in one job
+template <class F> bool listCard(const char *path, F &&each)
+{
+    return hxsd::run([&] {
+        char p[64];
+        hxsd::fatPath(p, sizeof(p), path);
+        FF_DIR d;
+        FILINFO fi;
+        if (f_opendir(&d, p) != FR_OK)
+            return;
+        while (f_readdir(&d, &fi) == FR_OK && fi.fname[0])
+            each((const char *)fi.fname, (fi.fattrib & AM_DIR) != 0, (uint32_t)fi.fsize);
+        f_closedir(&d);
+    });
+}
+
+// the map packs on the card: looked for each time the worker starts, so a pack copied in from the web page shows
+void findPacks(void)
+{
+    packRoots.clear();
+    if (!onCard())
+        return;
+    std::string style;
+    listCard("/maps", [&](const char *name, bool dir, uint32_t) {
+        if (dir && style.empty() && name[0] != '.')
+            style = std::string("/maps/") + name;
+    });
+    if (!style.empty())
+        packRoots.push_back(style);
+    hxsd::run([&] {
+        FILINFO fi;
+        for (const char *r : {"/map", "/tiles"}) {
+            char p[16];
+            hxsd::fatPath(p, sizeof(p), r);
+            if (f_stat(p, &fi) == FR_OK && (fi.fattrib & AM_DIR))
+                packRoots.push_back(r);
+        }
+    });
+}
+
+// a tile from a map pack, as it is on the card (any size the engine takes)
+bool packTile(uint8_t z, uint32_t x, uint32_t y, Blob &out)
+{
+    if (packRoots.empty())
+        return false;
+    bool found = false;
+    hxsd::run([&] {
+        static FIL *f = (FIL *)bigAlloc(sizeof(FIL)); // ~4 KB (PSRAM); the main loop's, one job at a time
+        if (!f)
+            return;
+        for (const std::string &r : packRoots) {
+            char path[96];
+            snprintf(path, sizeof(path), "%s/%u/%u/%u.png", r.c_str(), (unsigned)z, (unsigned)x, (unsigned)y);
+            char p[100];
+            hxsd::fatPath(p, sizeof(p), path);
+            if (f_open(f, p, FA_READ) != FR_OK)
+                continue;
+            const FSIZE_t size = f_size(f);
+            UINT got = 0;
+            found = size >= 64 && size <= kMaxTileBytes && out.reserve(size) && f_read(f, out.data, (UINT)size, &got) == FR_OK &&
+                    got == size;
+            f_close(f);
+            if (found) {
+                out.len = size;
+                return;
+            }
+        }
+    });
+    return found;
+}
+
+// the folders above a tile's file on the card
+void makeTileDirs(const char *path)
+{
+    char p[48];
+    snprintf(p, sizeof(p), "%s", path);
+    for (char *s = strchr(p + 1, '/'); s; s = strchr(s + 1, '/')) {
+        *s = 0;
+        SD.mkdir(p); // false when it is there already
+        *s = '/';
+    }
 }
 } // namespace
 
 // The list of saved tiles is kept in one small file: listing SPIFFS's root walks the whole 3.4 MB partition, and while
-// flash is read nothing else runs from it, so the screen froze for 6 s the first time the map opened
-constexpr const char *kIndexPath = "/hmap.idx";
+// flash is read nothing else runs from it, so the screen froze for 6 s the first time the map opened. It is read and
+// written in pieces, so the card's main loop is never held for long
 struct IndexRec {
     uint8_t z;
     uint32_t x, y, bytes;
@@ -770,52 +903,120 @@ void TileMap::loadIndex(void)
     if (indexLoaded)
         return;
     indexLoaded = true;
-    File ix = SPIFFS.open(kIndexPath, "r");
-    if (ix && ix.size() % sizeof(IndexRec) == 0) {
-        IndexRec r;
-        while (ix.read(reinterpret_cast<uint8_t *>(&r), sizeof(r)) == sizeof(r))
-            if (r.z <= 31) {
-                saved.push_back({r.z, r.x, r.y, r.bytes});
-                savedBytes += r.bytes;
+    std::vector<IndexRec> recs(kPiece);
+    const char *ix = indexPath();
+    bool have = false, bad = false;
+    for (size_t at = 0;; at += kPiece) {
+        size_t got = 0;
+        if (!io([&] {
+                File f = store().open(ix, "r");
+                if (!f)
+                    return;
+                have = true;
+                bad = f.size() % sizeof(IndexRec) != 0;
+                if (!bad && f.seek(at * sizeof(IndexRec)))
+                    got = f.read(reinterpret_cast<uint8_t *>(recs.data()), kPiece * sizeof(IndexRec)) / sizeof(IndexRec);
+                f.close();
+            }))
+            bad = true;
+        for (size_t i = 0; i < got; i++)
+            if (recs[i].z <= 31) {
+                saved.push_back({recs[i].z, recs[i].x, recs[i].y, recs[i].bytes});
+                savedBytes += recs[i].bytes;
             }
-        ix.close();
-        ILOG_INFO("Hoptics map: %u saved tiles, %u KB", (unsigned)saved.size(), (unsigned)(savedBytes / 1024));
+        if (bad || got < kPiece)
+            break;
+    }
+    if (have && !bad) {
+        ILOG_INFO("Hoptics map: %u saved tiles, %u KB%s", (unsigned)saved.size(), (unsigned)(savedBytes / 1024), onCard() ? " on the card" : "");
         return;
     }
-    if (ix)
-        ix.close();
-    // no list yet (the first start of this version): the slow walk, once, then the list is written.
-    // SPIFFS has no folders: every file is listed from the root by its whole path, "/hmap/<z>/<x>_<y>.hmt"
-    File root = SPIFFS.open("/");
-    if (!root)
-        return;
-    for (File f = root.openNextFile(); f; f = root.openNextFile()) {
-        const char *p = strstr(f.path(), "hmap/");
-        unsigned z, x, y;
-        if (!p || sscanf(p, "hmap/%u/%u_%u.hmt", &z, &x, &y) != 3 || z > 31)
-            continue;
-        uint32_t bytes = ((uint32_t)f.size() + kBlock - 1) / kBlock * kBlock;
-        saved.push_back({(uint8_t)z, x, y, bytes});
-        savedBytes += bytes;
+    saved.clear();
+    savedBytes = 0;
+    // no list yet (the first start of this version, or a new card): the slow walk, once, then the list is written
+    const uint32_t blk = block();
+    if (onCard()) { // /hoptics/tiles/<z>/<x>/<y>.hmt: one job per folder
+        std::vector<unsigned> zs, xs;
+        listCard("/hoptics/tiles", [&](const char *n, bool dir, uint32_t) {
+            if (dir && atoi(n) <= 31)
+                zs.push_back((unsigned)atoi(n));
+        });
+        for (unsigned z : zs) {
+            char zp[32];
+            snprintf(zp, sizeof(zp), "/hoptics/tiles/%u", z);
+            xs.clear();
+            listCard(zp, [&](const char *n, bool dir, uint32_t) {
+                if (dir)
+                    xs.push_back((unsigned)strtoul(n, nullptr, 10));
+            });
+            for (unsigned x : xs) {
+                char xp[48];
+                snprintf(xp, sizeof(xp), "%s/%u", zp, x);
+                listCard(xp, [&](const char *n, bool dir, uint32_t size) {
+                    unsigned y;
+                    char ext[8];
+                    if (!dir && sscanf(n, "%u.%7s", &y, ext) == 2 && !strcmp(ext, "hmt")) {
+                        const uint32_t bytes = (size + blk - 1) / blk * blk;
+                        saved.push_back({(uint8_t)z, x, y, bytes});
+                        savedBytes += bytes;
+                    }
+                });
+            }
+        }
+    } else { // SPIFFS has no folders: every file is listed from the root by its whole path, "/hmap/<z>/<x>_<y>.hmt"
+        File root = SPIFFS.open("/");
+        if (!root)
+            return;
+        for (File f = root.openNextFile(); f; f = root.openNextFile()) {
+            const char *p = strstr(f.path(), "hmap/");
+            unsigned z, x, y;
+            if (!p || sscanf(p, "hmap/%u/%u_%u.hmt", &z, &x, &y) != 3 || z > 31)
+                continue;
+            uint32_t bytes = ((uint32_t)f.size() + blk - 1) / blk * blk;
+            saved.push_back({(uint8_t)z, x, y, bytes});
+            savedBytes += bytes;
+        }
     }
     indexDirty = true;
-    flushIndex();
-    ILOG_INFO("Hoptics map: %u saved tiles, %u KB (listed once)", (unsigned)saved.size(), (unsigned)(savedBytes / 1024));
+    flushIndex(true);
+    ILOG_INFO("Hoptics map: %u saved tiles, %u KB%s (listed once)", (unsigned)saved.size(), (unsigned)(savedBytes / 1024),
+              onCard() ? " on the card" : "");
 }
 
-void TileMap::flushIndex(void)
+void TileMap::flushIndex(bool now)
 {
-    if (!indexDirty)
+    if (!indexDirty || (onCard() && !now && nowMs() - indexAt < 60000)) // the card's: at most once a minute, and at rest
         return;
     indexDirty = false;
-    File ix = SPIFFS.open(kIndexPath, "w");
-    if (!ix)
-        return;
-    for (const Saved &sv : saved) {
-        const IndexRec r{sv.z, sv.x, sv.y, sv.bytes};
-        ix.write(reinterpret_cast<const uint8_t *>(&r), sizeof(r));
+    indexAt = nowMs();
+    const char *ix = indexPath();
+    char tmp[40];
+    snprintf(tmp, sizeof(tmp), "%s.new", ix);
+    std::vector<IndexRec> recs(kPiece);
+    bool ok = true;
+    for (size_t at = 0; ok && (at == 0 || at < saved.size()); at += kPiece) { // a new file, swapped in at the end
+        const size_t n = std::min(kPiece, saved.size() - at);
+        for (size_t i = 0; i < n; i++)
+            recs[i] = {saved[at + i].z, saved[at + i].x, saved[at + i].y, saved[at + i].bytes};
+        ok = io([&] {
+                 if (at == 0 && onCard())
+                     makeTileDirs("/hoptics/tiles/x");
+                 File f = store().open(tmp, at ? FILE_APPEND : FILE_WRITE);
+                 ok = f && f.write(reinterpret_cast<const uint8_t *>(recs.data()), n * sizeof(IndexRec)) == n * sizeof(IndexRec);
+                 if (f)
+                     f.close();
+             }) && ok;
     }
-    ix.close();
+    io([&] {
+        if (ok) {
+            store().remove(ix);
+            ok = store().rename(tmp, ix);
+        }
+        if (!ok)
+            store().remove(tmp);
+    });
+    if (!ok)
+        indexDirty = true; // again next time
 }
 
 bool TileMap::readSaved(uint8_t z, uint32_t x, uint32_t y, Blob &out, uint32_t &fetched, uint32_t &maxAge, char *etag)
@@ -825,18 +1026,25 @@ bool TileMap::readSaved(uint8_t z, uint32_t x, uint32_t y, Blob &out, uint32_t &
         return false;
     char path[48];
     tilePath(path, sizeof(path), z, x, y);
-    File f = SPIFFS.open(path, "r");
-    if (!f) {
+    bool found = false, ok = false;
+    SavedHeader h;
+    if (!io([&] {
+            File f = store().open(path, "r");
+            if (!f)
+                return;
+            found = true;
+            ok = f.read(reinterpret_cast<uint8_t *>(&h), sizeof(h)) == sizeof(h) && memcmp(h.magic, kMagic, 4) == 0 &&
+                 h.pngLen + sizeof(h) == f.size() && h.pngLen <= kMaxTileBytes && out.reserve(h.pngLen) &&
+                 f.read(out.data, h.pngLen) == h.pngLen;
+            f.close();
+        }))
+        return false; // the card was busy: still listed
+    if (!found) {
         savedBytes -= it->bytes; // listed, but its file is gone
         saved.erase(it);
         indexDirty = true;
         return false;
     }
-    SavedHeader h;
-    bool ok = f.read(reinterpret_cast<uint8_t *>(&h), sizeof(h)) == sizeof(h) && memcmp(h.magic, kMagic, 4) == 0 &&
-              h.pngLen + sizeof(h) == f.size() && h.pngLen <= kMaxTileBytes && out.reserve(h.pngLen) &&
-              f.read(out.data, h.pngLen) == h.pngLen;
-    f.close();
     if (!ok)
         return false;
     out.len = h.pngLen;
@@ -849,7 +1057,7 @@ bool TileMap::readSaved(uint8_t z, uint32_t x, uint32_t y, Blob &out, uint32_t &
 
 bool TileMap::save(uint8_t z, uint32_t x, uint32_t y, const uint8_t *pngData, size_t pngLen, uint32_t maxAge, const char *etag)
 {
-    const uint32_t bytes = ((uint32_t)(pngLen + sizeof(SavedHeader)) + kBlock - 1) / kBlock * kBlock;
+    const uint32_t blk = block(), bytes = ((uint32_t)(pngLen + sizeof(SavedHeader)) + blk - 1) / blk * blk;
     forget(z, x, y); // replacing an old copy
     if (!makeRoom(bytes)) {
         std::lock_guard<std::mutex> lk(statLock);
@@ -865,12 +1073,20 @@ bool TileMap::save(uint8_t z, uint32_t x, uint32_t y, const uint8_t *pngData, si
         strcpy(h.etag, etag);
     char path[48];
     tilePath(path, sizeof(path), z, x, y);
-    File f = SPIFFS.open(path, "w");
-    bool ok = f && f.write(reinterpret_cast<const uint8_t *>(&h), sizeof(h)) == sizeof(h) && f.write(pngData, pngLen) == pngLen;
-    if (f)
-        f.close();
+    bool ok = false;
+    io([&] {
+        File f = store().open(path, "w");
+        if (!f && onCard()) { // its folders, the first time
+            makeTileDirs(path);
+            f = store().open(path, "w");
+        }
+        ok = f && f.write(reinterpret_cast<const uint8_t *>(&h), sizeof(h)) == sizeof(h) && f.write(pngData, pngLen) == pngLen;
+        if (f)
+            f.close();
+        if (!ok)
+            store().remove(path);
+    });
     if (!ok) {
-        SPIFFS.remove(path);
         std::lock_guard<std::mutex> lk(statLock);
         stat.storageFull = true;
         return false;
@@ -887,20 +1103,22 @@ void TileMap::touchSaved(uint8_t z, uint32_t x, uint32_t y, uint32_t maxAge, con
 {
     char path[48];
     tilePath(path, sizeof(path), z, x, y);
-    File f = SPIFFS.open(path, "r+");
-    if (!f)
-        return;
-    SavedHeader h;
-    if (f.read(reinterpret_cast<uint8_t *>(&h), sizeof(h)) == sizeof(h) && memcmp(h.magic, kMagic, 4) == 0) {
-        h.fetched = wallClock();
-        if (maxAge)
-            h.maxAge = maxAge;
-        if (etag && strlen(etag) < sizeof(h.etag))
-            strcpy(h.etag, etag);
-        f.seek(0);
-        f.write(reinterpret_cast<const uint8_t *>(&h), sizeof(h));
-    }
-    f.close();
+    io([&] {
+        File f = store().open(path, "r+");
+        if (!f)
+            return;
+        SavedHeader h;
+        if (f.read(reinterpret_cast<uint8_t *>(&h), sizeof(h)) == sizeof(h) && memcmp(h.magic, kMagic, 4) == 0) {
+            h.fetched = wallClock();
+            if (maxAge)
+                h.maxAge = maxAge;
+            if (etag && strlen(etag) < sizeof(h.etag))
+                strcpy(h.etag, etag);
+            f.seek(0);
+            f.write(reinterpret_cast<const uint8_t *>(&h), sizeof(h));
+        }
+        f.close();
+    });
 }
 
 void TileMap::forget(uint8_t z, uint32_t x, uint32_t y)
@@ -910,7 +1128,7 @@ void TileMap::forget(uint8_t z, uint32_t x, uint32_t y)
         return;
     char path[48];
     tilePath(path, sizeof(path), z, x, y);
-    SPIFFS.remove(path);
+    io([&] { store().remove(path); });
     savedBytes -= it->bytes;
     saved.erase(it);
     indexDirty = true;
@@ -918,16 +1136,40 @@ void TileMap::forget(uint8_t z, uint32_t x, uint32_t y)
 
 void TileMap::wipeSaved(void)
 {
-    for (const Saved &s : saved) {
-        char path[48];
-        tilePath(path, sizeof(path), s.z, s.x, s.y);
-        SPIFFS.remove(path);
+    // sixteen files per card job; then the card's emptied folders, and the list
+    std::vector<uint64_t> cols; // z/x of each folder on the card
+    for (size_t at = 0; at < saved.size(); at += 16)
+        io([&] {
+            for (size_t i = at; i < std::min(at + 16, saved.size()); i++) {
+                char path[48];
+                tilePath(path, sizeof(path), saved[i].z, saved[i].x, saved[i].y);
+                store().remove(path);
+            }
+        });
+    if (onCard()) {
+        for (const Saved &s : saved)
+            cols.push_back(((uint64_t)s.z << 32) | s.x);
+        std::sort(cols.begin(), cols.end());
+        cols.erase(std::unique(cols.begin(), cols.end()), cols.end());
+        for (size_t at = 0; at < cols.size(); at += 16)
+            io([&] {
+                for (size_t i = at; i < std::min(at + 16, cols.size()); i++) {
+                    char p[40];
+                    snprintf(p, sizeof(p), "/hoptics/tiles/%u/%u", (unsigned)(cols[i] >> 32), (unsigned)cols[i]);
+                    SD.rmdir(p); // only when empty
+                    if (i + 1 == cols.size() || (cols[i + 1] >> 32) != (cols[i] >> 32)) {
+                        snprintf(p, sizeof(p), "/hoptics/tiles/%u", (unsigned)(cols[i] >> 32));
+                        SD.rmdir(p);
+                    }
+                }
+            });
     }
     ILOG_INFO("Hoptics map: cleared %u saved tiles", (unsigned)saved.size());
     saved.clear();
     savedBytes = 0;
     dirMade = 0;
     indexDirty = true;
+    flushIndex(true);
 }
 #else
 // ---- PC harness: plain files under hostRoot, a pretend 3.4 MB flash with 600 KB of node files on it
@@ -938,9 +1180,14 @@ size_t fsFreeHost(uint32_t savedBytes)
     const size_t total = 3456 * 1024, other = 600 * 1024;
     return total > other + savedBytes ? total - other - savedBytes : 0;
 }
+bool onCard(void) { return false; }
+uint64_t capBytes(void) { return HOPTICS_MAP_CACHE_KB * 1024ull; }
+uint64_t reserveBytes(void) { return HOPTICS_MAP_FS_RESERVE_KB * 1024ull; }
+void findPacks(void) {}
+bool packTile(uint8_t, uint32_t, uint32_t, Blob &) { return false; }
 } // namespace
 
-void TileMap::flushIndex(void) { indexDirty = false; }
+void TileMap::flushIndex(bool) { indexDirty = false; }
 
 void TileMap::loadIndex(void)
 {
@@ -1093,22 +1340,23 @@ void TileMap::wipeSaved(void)
 }
 #endif
 
-// keep the flash budget: drop the saved tiles farthest from what is on screen until `bytes` fits
+// keep the budget (flash or card): drop the saved tiles farthest from what is on screen until `bytes` fits
 bool TileMap::makeRoom(uint32_t bytes)
 {
-    const uint32_t cap = HOPTICS_MAP_CACHE_KB * 1024u, reserve = HOPTICS_MAP_FS_RESERVE_KB * 1024u;
+    const uint64_t cap = capBytes(), reserve = reserveBytes();
     if (bytes > cap)
         return false;
+    uint64_t freed = 0; // deleted during this call
     // centre of the current view as a fraction of the world
     const double wz = (double)(256u << cur.z);
     const double cx = (cur.ox + cur.w / 2) / wz, cy = (cur.oy + cur.h / 2) / wz;
     for (;;) {
 #if defined(ARDUINO_ARCH_ESP32)
-        const size_t free = fsFree();
+        const uint64_t free = storeFree(freed);
 #else
-        const size_t free = fsFreeHost(savedBytes);
+        const uint64_t free = fsFreeHost(savedBytes);
 #endif
-        if (savedBytes + bytes <= cap && free >= (size_t)bytes + reserve)
+        if ((uint64_t)savedBytes + bytes <= cap && free >= bytes + reserve)
             return true;
         if (saved.empty())
             return false;
@@ -1127,6 +1375,7 @@ bool TileMap::makeRoom(uint32_t bytes)
         }
         const Saved s = saved[worst];
         forget(s.z, s.x, s.y);
+        freed += s.bytes;
     }
 }
 
@@ -1198,7 +1447,7 @@ int TileMap::fetch(uint8_t z, uint32_t x, uint32_t y, const char *etag, Blob &ou
     if (code < 0) {
         char err[96] = "";
         tls->lastError(err, sizeof(err));
-        ILOG_WARN("Hoptics map: %s failed: %d %s", url, code, err);
+        ILOG_WARN("Hoptics map: tile server failed: %d %s", code, err); // not the address: it holds the tile's place
         tls->stop(); // start over with a fresh connection next time
     }
     return code;

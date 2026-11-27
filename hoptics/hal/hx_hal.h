@@ -19,4 +19,5 @@ bool hasKeyLight(void);        // a keyboard backlight the firmware can set (T-D
 void setKeyLight(uint8_t v);   // 0 = off, 255 = full
 uint32_t framesDrawn(void);    // screen redraws finished since start, for the status line (hx_lvgl.cpp)
 void refreshTimes(uint32_t &refrUs, uint32_t &drawUs); // microseconds in LVGL's refreshes (layout + drawing), and drawing
+bool frameOpen(void);          // a DMA board is part way through sending a frame (its SPI transaction is open)
 } // namespace hxhal
