@@ -85,10 +85,36 @@ bool begin(void)
     }
     REG_CLR_BIT(SPI_DMA_CONF_REG(2), SPI_DMA_TX_ENA | SPI_DMA_RX_ENA);
     const uint32_t t0 = millis();
-    if (!SD.begin(CS, SPI, FREQ, "/sd", 4, false)) {
+    // A card can be slow to wake (the ThinkNode M9's built-in one does not answer its first tries at boot): a few
+    // tries with a pause, then slower clocks, as WADAMESH found on the same boards. No card costs about 1.2 s.
+    static const struct {
+        uint16_t settleMs;
+        uint32_t hz;
+    } kTries[] = {{0, FREQ}, {220, FREQ}, {300, 1000000}, {650, 400000}};
+    bool ok = false;
+    uint32_t hz = 0;
+    for (const auto &t : kTries) {
+        if (t.settleMs) {
+            SD.end();
+            pinMode(CS, OUTPUT);
+            digitalWrite(CS, HIGH); // deselected while it waits: the screen and the radio share the bus
+            delay(t.settleMs);
+        }
+        if (SD.begin(CS, SPI, t.hz, "/sd", 4, false) && SD.cardType() != CARD_NONE) {
+            ok = true;
+            hz = t.hz;
+            break;
+        }
+    }
+    if (!ok) {
+        SD.end();
+        pinMode(CS, OUTPUT);
+        digitalWrite(CS, HIGH);
         hxlog::line("sd: no card, or not FAT32 (%lu ms)", (unsigned long)(millis() - t0));
         return false;
     }
+    if (hz != FREQ)
+        hxlog::line("sd: answered at %lu kHz", (unsigned long)(hz / 1000));
     // FatFS's drive number for the card (the only FAT volume on these boards; checked against the card's size)
     const uint64_t total = SD.totalBytes();
     for (int i = 0; i < FF_VOLUMES; i++) {
