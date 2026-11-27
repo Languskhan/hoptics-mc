@@ -239,7 +239,7 @@ class App : public Ui
     void appendBubble(const Line &l);
     // a chat shows its newest kChatShown messages (the rest behind a button): building all 60 bubbles took most of
     // a second on the radios, each time a message was sent or confirmed
-    static constexpr size_t kChatShown = 25;
+    static constexpr size_t kChatShown = 15;
     bool chatShowAll = false;
     lv_obj_t *chatEarlier = nullptr;
     void addLine(const Line &l);    // one new message: its bubble only
