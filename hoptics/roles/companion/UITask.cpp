@@ -394,7 +394,7 @@ void UITask::decode(const uint8_t *raw, int len, hx::Packet &p) const
         // [dest hash][src hash]: name the sender when exactly one contact matches its first key byte
         int matches = 0;
         ContactInfo c, found;
-        for (int k = 0; k < the_mesh.getNumContacts() && matches < 2; k++)
+        for (int k = MAX_ANON_CONTACTS; k < the_mesh.getTotalContactSlots() && matches < 2; k++)
             if (the_mesh.getContactByIdx(k, c) && c.id.pub_key[0] == pay[1]) {
                 found = c;
                 matches++;
@@ -542,7 +542,8 @@ size_t UITask::contactCount() const { return (size_t)the_mesh.getNumContacts(); 
 bool UITask::contactAt(size_t i, hx::Contact &out) const
 {
     ContactInfo c;
-    if (!the_mesh.getContactByIdx(i, c))
+    // slots 0..MAX_ANON_CONTACTS-1 are reserved blanks for anonymous requests
+    if (!the_mesh.getContactByIdx(MAX_ANON_CONTACTS + i, c))
         return false;
     toContact(c, out);
     return true;
@@ -1777,7 +1778,7 @@ void UITask::histTick(uint32_t ms)
     uint16_t heard = 0;
     if (t) {
         ContactInfo c;
-        for (int i = 0; the_mesh.getContactByIdx(i, c); i++)
+        for (int i = MAX_ANON_CONTACTS; the_mesh.getContactByIdx(i, c); i++)
             heard += c.lastmod && t - c.lastmod <= 3600;
     }
     x.nodes = heard;
