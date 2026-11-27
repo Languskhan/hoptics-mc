@@ -94,6 +94,7 @@ class UITask : public AbstractUITask, public hx::Model
     void setWeb(bool on) override;
     void newWebPin() override;
     bool channelWebKey(size_t i, char out[33]) const override;
+    int joinHashChannel(const char *name) override;
     void webExtras(std::string &out, uint32_t histHave) const override;
     bool saveData(const char *name, const std::string &data) override;
     bool loadData(const char *name, std::string &out) const override;

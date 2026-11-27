@@ -31,6 +31,11 @@ const API = DEMO ? DEMO.api : {
     const j = await r.json().catch(() => ({}));
     return r.ok ? { ok: true } : { ok: false, error: j.error || "No answer (" + r.status + ")" };
   },
+  async join(name) {
+    const r = await fetch("/api/channel", { method: "POST", headers: { "Content-Type": "application/json", "X-Hoptics": "1" }, body: JSON.stringify({ name }) });
+    const j = await r.json().catch(() => ({}));
+    return r.ok ? { ok: true, i: j.i } : { ok: false, error: j.error || "No answer (" + r.status + ")" };
+  },
   async clearTiles() { const r = await fetch("/api/tiles/clear", { method: "POST", headers: { "X-Hoptics": "1" } }); return r.ok; },
   update(file, progress) { // XHR: fetch has no upload progress
     return new Promise((done) => {
@@ -642,7 +647,21 @@ V.messages = {
     };
     form.append(this.input, go);
     this.box.style.flex = "1"; right.append(this.box, form);
-    wrap.append(this.list, right); c.append(wrap); v.append(c);
+    // joining a #hashtag channel (anyone who knows its name can read it, as in the MeshCore apps)
+    const jf = el("form"); jf.style.cssText = "display:flex;gap:6px;padding:8px 0 0";
+    const jn = el("input"); jn.placeholder = "#channel"; jn.maxLength = 30; jn.autocomplete = "off";
+    jn.style.cssText = "flex:1;min-width:0;background:var(--card2);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:7px 10px;font:inherit";
+    const jb = el("button", "btn sm", "Join"); jb.type = "submit";
+    jf.onsubmit = async (e) => {
+      e.preventDefault();
+      const name = jn.value.trim().toLowerCase(); if (!name) return;
+      if (DEMO) { toast("Not in the demo"); return; }
+      jb.disabled = true; const r = await API.join(name); jb.disabled = false;
+      if (r.ok) { jn.value = ""; UI.chan = r.i; toast("Joined " + (name.startsWith("#") ? name : "#" + name)); Poll.tick(); } else toast("Not joined: " + r.error);
+    };
+    jf.append(jn, jb);
+    const left = el("div"); left.style.cssText = "display:flex;flex-direction:column;min-width:0;min-height:0"; left.append(this.list, jf);
+    wrap.append(left, right); c.append(wrap); v.append(c);
   },
   render() {
     const chans = (S.snap.channels || []);

@@ -1781,6 +1781,17 @@ std::string App::webSend(uint8_t channel, const char *text)
     return id ? "{\"ok\":true}" : "{\"error\":\"The radio is busy, try again\"}";
 }
 
+std::string App::webJoin(const char *name)
+{
+    const int i = m.joinHashChannel(name);
+    if (i < 0)
+        return "{\"error\":\"Use a name like #test (letters, digits and dashes, lower case), or every channel slot is taken\"}";
+    dirtyChats = true;
+    char b[48];
+    snprintf(b, sizeof(b), "{\"ok\":true,\"i\":%d}", i);
+    return b;
+}
+
 uint32_t App::sendLine(const ConvKey &key, const char *t)
 {
     std::string text(t);

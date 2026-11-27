@@ -11,8 +11,8 @@
 namespace hxweb
 {
 struct Query {
-    enum Kind : uint8_t { NONE, STATE, LOG, SEND } kind = NONE;
-    uint8_t channel = 0; // SEND: the channel and the text (UTF-8)
+    enum Kind : uint8_t { NONE, STATE, LOG, SEND, JOIN } kind = NONE;
+    uint8_t channel = 0; // SEND: the channel and the text (UTF-8); JOIN: text is the #channel's name
     char text[168] = "";
     uint32_t contacts = 0; // the contacts version the page has (0: none): the list only comes again when it changed
     uint32_t packets = 0;  // the last packet number the page has

@@ -287,6 +287,9 @@ class Model
     // a channel whose key anyone can work out (Public, or a #hashtag channel whose key comes from its name): its key in
     // hex, for the page to read that channel off the live feed. Private channels' keys never leave the radio
     virtual bool channelWebKey(size_t i, char out[33]) const { (void)i, (void)out; return false; }
+    // join a #hashtag channel (its key is the start of SHA-256 of its name, as in the MeshCore apps): its index, or -1
+    // when the name is no good or every channel slot is taken. Already joined: its index
+    virtual int joinHashChannel(const char *name) { (void)name; return -1; }
     // what the node adds to the page's data: hardware, load, the live feed's server, and the 24-hour history (only when
     // it has a newer sample than the page's, whose end time is 'histHave')
     virtual void webExtras(std::string &out, uint32_t histHave) const { (void)out, (void)histHave; }

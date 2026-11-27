@@ -225,6 +225,8 @@ void UITask::loop()
             hxlog::text(body);
         else if (wq.kind == hxweb::Query::SEND)
             body = app->webSend(wq.channel, wq.text);
+        else if (wq.kind == hxweb::Query::JOIN)
+            body = app->webJoin(wq.text);
         else
             app->webJson(body, wq.contacts, wq.packets, wq.msgs, wq.hist);
         hxweb::answer(std::move(body));
@@ -1669,6 +1671,44 @@ void UITask::newWebPin(void)
     if (nvsOpen)
         nvs.putString("web_pin", webPin);
     hxweb::setPin(webPin); // signs every browser out
+}
+
+int UITask::joinHashChannel(const char *name)
+{
+    char n[32];
+    while (*name == ' ')
+        name++;
+    snprintf(n, sizeof(n), "%s%s", name[0] == '#' ? "" : "#", name);
+    for (char *p = n + strlen(n); p > n && p[-1] == ' ';)
+        *--p = 0;
+    const size_t len = strlen(n);
+    if (len < 2 || len >= sizeof(n) - 1)
+        return -1;
+    for (size_t i = 1; i < len; i++) // the apps' rule: letters, digits and dashes, lower case
+        if (!(isalnum((unsigned char)n[i]) || n[i] == '-') || isupper((unsigned char)n[i]))
+            return -1;
+    ChannelDetails d;
+    memset(&d, 0, sizeof(d));
+    strncpy(d.name, n, sizeof(d.name) - 1);
+    uint8_t h[32];
+    SHA256 sha;
+    sha.update(n, len);
+    sha.finalize(h, sizeof(h));
+    memcpy(d.channel.secret, h, 16);
+    int freeSlot = -1;
+    for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+        ChannelDetails c;
+        if (!the_mesh.getChannel(i, c) || !c.name[0]) {
+            if (freeSlot < 0)
+                freeSlot = i;
+        } else if (!memcmp(c.channel.secret, d.channel.secret, 16))
+            return i; // already joined
+    }
+    if (freeSlot < 0 || !the_mesh.setChannel(freeSlot, d))
+        return -1;
+    the_mesh.saveChannels();
+    hxlog::line("joined channel %s", n);
+    return freeSlot;
 }
 
 // Public's key is published, and a #hashtag channel's key is the start of SHA-256 of its name: anyone can work them out,

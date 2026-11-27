@@ -57,6 +57,7 @@ class App : public Ui
     // plus what the node adds (Model::webExtras)
     void webJson(std::string &out, uint32_t contactsHave, uint32_t packetsHave, uint32_t msgsHave, uint32_t histHave);
     std::string webSend(uint8_t channel, const char *text); // a channel message from the web page: JSON answer
+    std::string webJoin(const char *name);                  // join a #channel from the web page: JSON answer
     std::string bandWarning(const Radio &rd) const;          // empty when the radio fits the chosen country band
     lv_obj_t *bandInfo = nullptr;
     lv_obj_t *setVol = nullptr; // More > Sound > Volume

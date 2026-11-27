@@ -372,6 +372,40 @@ esp_err_t onSend(httpd_req_t *r)
     return sendJson(r, out.find("\"ok\"") != std::string::npos ? "200 OK" : "400 Bad Request", out.c_str());
 }
 
+// join a #hashtag channel: POST /api/channel {"name":"#test"}. Done by the main loop, which owns the channels
+esp_err_t onJoin(httpd_req_t *r)
+{
+    headers(r);
+    if (sessionOf(r) < 0)
+        return sendJson(r, "401 Unauthorized", "{\"error\":\"Sign in\"}");
+    char x[4], body[128];
+    if (httpd_req_get_hdr_value_str(r, "X-Hoptics", x, sizeof(x)) != ESP_OK)
+        return sendJson(r, "403 Forbidden", "{\"error\":\"Send it from the Hoptics page\"}");
+    if (r->content_len <= 0 || r->content_len >= sizeof(body))
+        return sendJson(r, "400 Bad Request", "{\"error\":\"Bad request\"}");
+    size_t got = 0;
+    while (got < (size_t)r->content_len) {
+        const int n = httpd_req_recv(r, body + got, r->content_len - got);
+        if (n <= 0)
+            return sendJson(r, "400 Bad Request", "{\"error\":\"Bad request\"}");
+        got += n;
+    }
+    body[got] = 0;
+    Query q;
+    q.kind = Query::JOIN;
+    const char *t = strstr(body, "\"name\"");
+    if (!t)
+        return sendJson(r, "400 Bad Request", "{\"error\":\"Bad request\"}");
+    t += 6;
+    t += strspn(t, " :");
+    if (*t != '"' || !jsonText(t + 1, q.text, 32) || !q.text[0])
+        return sendJson(r, "400 Bad Request", "{\"error\":\"That name is too long\"}");
+    std::string out;
+    if (!ask(q, out))
+        return sendJson(r, "503 Service Unavailable", "{\"error\":\"The node is busy, try again\"}");
+    return sendJson(r, out.find("\"ok\"") != std::string::npos ? "200 OK" : "400 Bad Request", out.c_str());
+}
+
 // one map tile from the user's own tile pack: POST /api/tile?z=&x=&y= with the PNG as the body
 esp_err_t onTile(httpd_req_t *r)
 {
@@ -463,6 +497,7 @@ bool start(uint16_t port)
                                {"/api/update", HTTP_POST, onUpdate, nullptr},
                                {"/api/tile", HTTP_POST, onTile, nullptr},
                                {"/api/send", HTTP_POST, onSend, nullptr},
+                               {"/api/channel", HTTP_POST, onJoin, nullptr},
                                {"/api/tiles/clear", HTTP_POST, onTilesClear, nullptr}};
     for (const auto &u : api)
         httpd_register_uri_handler(srv, &u);
