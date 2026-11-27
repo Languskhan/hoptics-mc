@@ -3679,7 +3679,7 @@ void App::buildMap(lv_obj_t *p)
         },
         LV_EVENT_SHORT_CLICKED, nullptr);
 
-    // zoom buttons for touch (the keys use Up / Down / OK)
+    // zoom buttons: tapped, or reached with the arrows like everything else
     static const char *zl[3] = {"+", "-", LV_SYMBOL_GPS};
     for (int i = 0; i < 3; i++) {
         lv_obj_t *b = lv_button_create(p);
@@ -3695,6 +3695,7 @@ void App::buildMap(lv_obj_t *p)
         lv_obj_t *l = label(b, i == 2 ? F12 : F16, C_TEXT, zl[i]);
         lv_obj_center(l);
         lv_obj_set_user_data(b, (void *)(intptr_t)i);
+        stop(b);
         lv_obj_add_event_cb(
             b,
             [](lv_event_t *e) {
@@ -5023,18 +5024,6 @@ void App::key(uint32_t k)
             return;
         }
         setRail(false); // anything else: off the menu, and the key does what it does on the page
-    }
-    if (tab == T_MAP && !topOverlay()) { // the map: Up / Down zoom, OK fits the mesh back on screen
-        if (k == K_UP || k == K_DOWN || k == K_ENTER || k == '\r' || k == '\n') {
-            keysUsed = true;
-            if (k == K_UP)
-                mapZoom(0.625f);
-            else if (k == K_DOWN)
-                mapZoom(1.6f);
-            else
-                mapCentre();
-            return;
-        }
     }
     lv_obj_t *f = lv_group_get_focused(group);
     if (!keysUsed) {

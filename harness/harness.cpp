@@ -1003,17 +1003,21 @@ int main(int argc, char **argv)
     shot("18b_map_flight");
     pump(560);
     shot("18c_map_landing");
-    app.key(hx::K_UP);
+    // the arrows move freely on the map too: the zoom buttons are reached like any control, OK presses one
+    app.key(hx::K_DOWN); // the first key only shows where the focus is: the + button
+    app.key(hx::K_ENTER);
     pump(100);
     shot("18d_map_zoomed_in");
-    app.key(hx::K_DOWN);
-    app.key(hx::K_DOWN);
+    app.key(hx::K_DOWN); // onto -
+    app.key(hx::K_ENTER);
+    app.key(hx::K_ENTER);
     pump(100);
     shot("18e_map_zoomed_out");
     // the live feed: a packet only the observers heard, its route ending at the observer, not here
-    app.key(hx::K_UP);
-    app.key(hx::K_UP);
-    app.key(hx::K_UP);
+    app.key(hx::K_UP); // back onto +
+    app.key(hx::K_ENTER);
+    app.key(hx::K_ENTER);
+    app.key(hx::K_ENTER);
     pump(100);
     {
         hx::Packet k;
