@@ -117,7 +117,8 @@ class App : public Ui
     lv_obj_t *liveList = nullptr, *liveEmpty = nullptr;
     bool dirtyLive = true;
     // nodes
-    lv_obj_t *nodeList = nullptr, *nodeChips[5] = {}, *nodeEmpty = nullptr; // nodeEmpty: the "no nodes yet" note
+    lv_obj_t *nodeList = nullptr, *nodeChips[5] = {}, *nodeEmpty = nullptr, *nodeMore = nullptr; // the "no nodes yet" note; "Show more"
+    size_t nodeShown = 40;
     int nodeFilter = 0;
     bool dirtyContacts = true;
     uint32_t contactsSeen = 0xffffffff;
@@ -236,6 +237,14 @@ class App : public Ui
     void refreshWifi(void);
     void renderChat(void);
     void appendBubble(const Line &l);
+    // a chat shows its newest kChatShown messages (the rest behind a button): building all 60 bubbles took most of
+    // a second on the radios, each time a message was sent or confirmed
+    static constexpr size_t kChatShown = 25;
+    bool chatShowAll = false;
+    lv_obj_t *chatEarlier = nullptr;
+    void addLine(const Line &l);    // one new message: its bubble only
+    void updateLine(const Line &l); // its status changed: that bubble's last line only
+    void bubbleMeta(const Line &l, char *out, size_t n, lv_color_t &col);
 
     // actions
     void openChat(const ConvKey &k);

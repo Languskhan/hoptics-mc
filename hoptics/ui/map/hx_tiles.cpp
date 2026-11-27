@@ -395,6 +395,7 @@ void TileMap::workerLoop(void)
             publishStatus();
         }
         takeImport();
+        flushIndex(); // the saved-tile list, after any change
         const uint32_t g = gen.load();
         if (!enabled.load()) {
             idleGen = g;
@@ -756,11 +757,34 @@ size_t fsFree(void)
 }
 } // namespace
 
+// The list of saved tiles is kept in one small file: listing SPIFFS's root walks the whole 3.4 MB partition, and while
+// flash is read nothing else runs from it, so the screen froze for 6 s the first time the map opened
+constexpr const char *kIndexPath = "/hmap.idx";
+struct IndexRec {
+    uint8_t z;
+    uint32_t x, y, bytes;
+} __attribute__((packed));
+
 void TileMap::loadIndex(void)
 {
     if (indexLoaded)
         return;
     indexLoaded = true;
+    File ix = SPIFFS.open(kIndexPath, "r");
+    if (ix && ix.size() % sizeof(IndexRec) == 0) {
+        IndexRec r;
+        while (ix.read(reinterpret_cast<uint8_t *>(&r), sizeof(r)) == sizeof(r))
+            if (r.z <= 31) {
+                saved.push_back({r.z, r.x, r.y, r.bytes});
+                savedBytes += r.bytes;
+            }
+        ix.close();
+        ILOG_INFO("Hoptics map: %u saved tiles, %u KB", (unsigned)saved.size(), (unsigned)(savedBytes / 1024));
+        return;
+    }
+    if (ix)
+        ix.close();
+    // no list yet (the first start of this version): the slow walk, once, then the list is written.
     // SPIFFS has no folders: every file is listed from the root by its whole path, "/hmap/<z>/<x>_<y>.hmt"
     File root = SPIFFS.open("/");
     if (!root)
@@ -774,7 +798,24 @@ void TileMap::loadIndex(void)
         saved.push_back({(uint8_t)z, x, y, bytes});
         savedBytes += bytes;
     }
-    ILOG_INFO("Hoptics map: %u saved tiles, %u KB", (unsigned)saved.size(), (unsigned)(savedBytes / 1024));
+    indexDirty = true;
+    flushIndex();
+    ILOG_INFO("Hoptics map: %u saved tiles, %u KB (listed once)", (unsigned)saved.size(), (unsigned)(savedBytes / 1024));
+}
+
+void TileMap::flushIndex(void)
+{
+    if (!indexDirty)
+        return;
+    indexDirty = false;
+    File ix = SPIFFS.open(kIndexPath, "w");
+    if (!ix)
+        return;
+    for (const Saved &sv : saved) {
+        const IndexRec r{sv.z, sv.x, sv.y, sv.bytes};
+        ix.write(reinterpret_cast<const uint8_t *>(&r), sizeof(r));
+    }
+    ix.close();
 }
 
 bool TileMap::readSaved(uint8_t z, uint32_t x, uint32_t y, Blob &out, uint32_t &fetched, uint32_t &maxAge, char *etag)
@@ -785,8 +826,12 @@ bool TileMap::readSaved(uint8_t z, uint32_t x, uint32_t y, Blob &out, uint32_t &
     char path[48];
     tilePath(path, sizeof(path), z, x, y);
     File f = SPIFFS.open(path, "r");
-    if (!f)
+    if (!f) {
+        savedBytes -= it->bytes; // listed, but its file is gone
+        saved.erase(it);
+        indexDirty = true;
         return false;
+    }
     SavedHeader h;
     bool ok = f.read(reinterpret_cast<uint8_t *>(&h), sizeof(h)) == sizeof(h) && memcmp(h.magic, kMagic, 4) == 0 &&
               h.pngLen + sizeof(h) == f.size() && h.pngLen <= kMaxTileBytes && out.reserve(h.pngLen) &&
@@ -832,6 +877,7 @@ bool TileMap::save(uint8_t z, uint32_t x, uint32_t y, const uint8_t *pngData, si
     }
     saved.push_back({z, x, y, bytes});
     savedBytes += bytes;
+    indexDirty = true;
     std::lock_guard<std::mutex> lk(statLock);
     stat.storageFull = false;
     return true;
@@ -867,6 +913,7 @@ void TileMap::forget(uint8_t z, uint32_t x, uint32_t y)
     SPIFFS.remove(path);
     savedBytes -= it->bytes;
     saved.erase(it);
+    indexDirty = true;
 }
 
 void TileMap::wipeSaved(void)
@@ -880,6 +927,7 @@ void TileMap::wipeSaved(void)
     saved.clear();
     savedBytes = 0;
     dirMade = 0;
+    indexDirty = true;
 }
 #else
 // ---- PC harness: plain files under hostRoot, a pretend 3.4 MB flash with 600 KB of node files on it
@@ -891,6 +939,8 @@ size_t fsFreeHost(uint32_t savedBytes)
     return total > other + savedBytes ? total - other - savedBytes : 0;
 }
 } // namespace
+
+void TileMap::flushIndex(void) { indexDirty = false; }
 
 void TileMap::loadIndex(void)
 {

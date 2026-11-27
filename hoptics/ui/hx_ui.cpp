@@ -1059,6 +1059,7 @@ void App::buildNodes(lv_obj_t *p)
             b,
             [](lv_event_t *e) {
                 self->nodeFilter = (int)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_current_target(e));
+                self->nodeShown = 40;
                 self->dirtyContacts = true;
             },
             LV_EVENT_CLICKED, nullptr);
@@ -1069,6 +1070,17 @@ void App::buildNodes(lv_obj_t *p)
     nodeEmpty = nullptr;
     lv_obj_set_size(nodeList, LV_PCT(100), LV_SIZE_CONTENT);
     column(nodeList, 4);
+    // the list starts at the newest 40 (building 120 rows at once held the screen up for seconds); more on request
+    nodeShown = 40;
+    nodeMore = button(p, "", C_MUTED, LV_PCT(100), 30);
+    lv_obj_add_flag(nodeMore, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(
+        nodeMore,
+        [](lv_event_t *) {
+            self->nodeShown += 40;
+            self->refreshNodes();
+        },
+        LV_EVENT_CLICKED, nullptr);
 }
 
 namespace
@@ -1100,8 +1112,14 @@ void App::refreshNodes(void)
             return a.favourite;
         return std::max(a.lastHeard, a.lastAdvert) > std::max(b.lastHeard, b.lastAdvert);
     });
-    if (list.size() > 120)
-        list.resize(120); // the newest 120: enough to scroll through, and kind to memory
+    const size_t total = std::min<size_t>(list.size(), 120); // the newest 120 at most: kind to memory
+    if (list.size() > nodeShown)
+        list.resize(nodeShown);
+    if (total > list.size()) {
+        lv_label_set_text_fmt(lv_obj_get_child(nodeMore, 0), LV_SYMBOL_DOWN "  Show %u more", (unsigned)std::min<size_t>(40, total - list.size()));
+        lv_obj_remove_flag(nodeMore, LV_OBJ_FLAG_HIDDEN);
+    } else
+        lv_obj_add_flag(nodeMore, LV_OBJ_FLAG_HIDDEN);
     // the rows already there are reused, only their text and colours changing: building 120 rows from scratch
     // held the screen up for most of a second each time an advert was heard
     if (nodeEmpty) {
@@ -1618,7 +1636,7 @@ void App::msgAction(int a)
     }
     case A_RESEND: {
         const uint32_t id = sendLine(chatKey, l.text.c_str());
-        renderChat();
+        addLine(conv(chatKey).lines.back());
         toast(id ? LV_SYMBOL_REFRESH " Sent again" : "Couldn't send: the radio is busy, try again");
         return refocus(chatInput);
     }
@@ -1629,6 +1647,37 @@ void App::msgAction(int a)
         toast(LV_SYMBOL_TRASH " Deleted from this screen");
         return refocus(chatInput);
     }
+}
+
+// a bubble's last line: when, and the route it came by or what became of it
+void App::bubbleMeta(const Line &l, char *out, size_t n, lv_color_t &col)
+{
+    std::string when = "now";
+    uint32_t now = m.now();
+    if (l.time && now > 1600000000 && l.time > 1600000000) {
+        struct tm tmv;
+        localTime(l.time, tmv);
+        char hm[8];
+        snprintf(hm, sizeof(hm), "%02d:%02d", tmv.tm_hour, tmv.tm_min);
+        when = hm;
+    } else if (l.time)
+        when = ago(now, l.time);
+    if (l.mine && l.state == 4 && l.hops > 0)
+        snprintf(out, n, "%s  " LV_SYMBOL_OK " heard by %d observer%s", when.c_str(), l.hops, l.hops == 1 ? "" : "s");
+    else if (l.mine)
+        snprintf(out, n, "%s  %s", when.c_str(),
+                 l.state == 2   ? LV_SYMBOL_OK " delivered"
+                 : l.state == 3 ? LV_SYMBOL_CLOSE " no reply"
+                 : l.state == 4 ? LV_SYMBOL_OK " sent"
+                 : l.state == 1 ? "sending..."
+                                : "");
+    else if (l.hops == -2)
+        snprintf(out, n, "%s  " LV_SYMBOL_WIFI " via internet", when.c_str());
+    else if (l.hops >= 0)
+        snprintf(out, n, "%s  %s", when.c_str(), route(l.hops).c_str());
+    else
+        snprintf(out, n, "%s", when.c_str());
+    col = l.mine ? C_ME_META : (l.state == 3 ? C_RED : C_DIM);
 }
 
 void App::appendBubble(const Line &l)
@@ -1656,33 +1705,10 @@ void App::appendBubble(const Line &l)
     lv_obj_t *t = label(b, big ? F16 : F14, l.mine ? C_ON_ME : C_TEXT, l.text.c_str());
     lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_style_max_width(t, maxW - 18, 0);
-    char meta[48];
-    std::string when = "now";
-    uint32_t now = m.now();
-    if (l.time && now > 1600000000 && l.time > 1600000000) {
-        struct tm tmv;
-        localTime(l.time, tmv);
-        char hm[8];
-        snprintf(hm, sizeof(hm), "%02d:%02d", tmv.tm_hour, tmv.tm_min);
-        when = hm;
-    } else if (l.time)
-        when = ago(now, l.time);
-    if (l.mine && l.state == 4 && l.hops > 0)
-        snprintf(meta, sizeof(meta), "%s  " LV_SYMBOL_OK " heard by %d observer%s", when.c_str(), l.hops, l.hops == 1 ? "" : "s");
-    else if (l.mine)
-        snprintf(meta, sizeof(meta), "%s  %s", when.c_str(),
-                 l.state == 2   ? LV_SYMBOL_OK " delivered"
-                 : l.state == 3 ? LV_SYMBOL_CLOSE " no reply"
-                 : l.state == 4 ? LV_SYMBOL_OK " sent"
-                 : l.state == 1 ? "sending..."
-                                : "");
-    else if (l.hops == -2)
-        snprintf(meta, sizeof(meta), "%s  " LV_SYMBOL_WIFI " via internet", when.c_str());
-    else if (l.hops >= 0)
-        snprintf(meta, sizeof(meta), "%s  %s", when.c_str(), route(l.hops).c_str());
-    else
-        snprintf(meta, sizeof(meta), "%s", when.c_str());
-    label(b, big ? F12 : F10, l.mine ? C_ME_META : (l.state == 3 ? C_RED : C_DIM), meta);
+    char meta[64];
+    lv_color_t mc;
+    bubbleMeta(l, meta, sizeof(meta), mc);
+    label(b, big ? F12 : F10, mc, meta);
     // tap or hold it (or OK on it with the keys) for its details and what can be done with it: reply, privately, ...
     lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_opa(b, LV_OPA_60, LV_STATE_PRESSED);
@@ -1704,6 +1730,7 @@ void App::renderChat(void)
 {
     busy = "chat";
     lv_obj_clean(chatMsgs);
+    chatEarlier = nullptr;
     Conv &c = conv(chatKey);
     if (c.lines.empty()) {
         lv_obj_t *l = label(chatMsgs, F12, C_DIM, chatKey.dm ? "Say hello!" : "No messages on this channel yet.");
@@ -1711,19 +1738,80 @@ void App::renderChat(void)
         lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_pad_top(l, 30, 0);
     }
-    for (auto &l : c.lines)
-        appendBubble(l);
+    const size_t from = chatShowAll || c.lines.size() <= kChatShown ? 0 : c.lines.size() - kChatShown;
+    if (from) {
+        chatEarlier = button(chatMsgs, "", C_MUTED, LV_PCT(100), 28);
+        lv_label_set_text_fmt(lv_obj_get_child(chatEarlier, 0), LV_SYMBOL_UP "  %u earlier messages", (unsigned)from);
+        lv_obj_add_event_cb(
+            chatEarlier,
+            [](lv_event_t *) {
+                self->chatShowAll = true;
+                self->renderChat();
+            },
+            LV_EVENT_CLICKED, nullptr);
+    }
+    for (size_t i = from; i < c.lines.size(); i++)
+        appendBubble(c.lines[i]);
     lv_obj_update_layout(chatMsgs);
     lv_obj_scroll_to_y(chatMsgs, LV_COORD_MAX, LV_ANIM_OFF);
     if (chatOpen && topOverlay() == chatOv)
         refocus(chatInput); // the new bubbles join the keys' stops
 }
 
+void App::addLine(const Line &l)
+{
+    busy = "chat";
+    const Conv &c = conv(chatKey);
+    if (c.lines.size() <= 1)
+        return renderChat(); // the "no messages yet" note goes
+    appendBubble(l);
+    // keep to the newest kChatShown: the oldest bubble goes, and the button above says how many are hidden
+    const uint32_t bubbles = lv_obj_get_child_count(chatMsgs) - (chatEarlier ? 1 : 0);
+    if (!chatShowAll && bubbles > kChatShown) {
+        lv_obj_delete(lv_obj_get_child(chatMsgs, chatEarlier ? 1 : 0));
+        if (!chatEarlier) {
+            chatEarlier = button(chatMsgs, "", C_MUTED, LV_PCT(100), 28);
+            lv_obj_move_to_index(chatEarlier, 0);
+            lv_obj_add_event_cb(
+                chatEarlier,
+                [](lv_event_t *) {
+                    self->chatShowAll = true;
+                    self->renderChat();
+                },
+                LV_EVENT_CLICKED, nullptr);
+        }
+        lv_label_set_text_fmt(lv_obj_get_child(chatEarlier, 0), LV_SYMBOL_UP "  %u earlier messages",
+                              (unsigned)(c.lines.size() - kChatShown));
+    }
+    lv_obj_update_layout(chatMsgs);
+    lv_obj_scroll_to_y(chatMsgs, LV_COORD_MAX, LV_ANIM_ON);
+    if (chatOpen && topOverlay() == chatOv)
+        refocus(lv_group_get_focused(group)); // the new bubble joins the keys' stops, the focus stays put
+}
+
+void App::updateLine(const Line &l)
+{
+    for (uint32_t i = 0; i < lv_obj_get_child_count(chatMsgs); i++) {
+        lv_obj_t *b = lv_obj_get_child(lv_obj_get_child(chatMsgs, (int32_t)i), 0);
+        if (!b || (uint32_t)(uintptr_t)lv_obj_get_user_data(b) != l.seq)
+            continue;
+        char meta[64];
+        lv_color_t mc;
+        bubbleMeta(l, meta, sizeof(meta), mc);
+        lv_obj_t *ml = lv_obj_get_child(b, (int32_t)lv_obj_get_child_count(b) - 1);
+        setText(ml, meta);
+        setColor(ml, mc);
+        return;
+    }
+}
+
 void App::openChat(const ConvKey &k)
 {
     busy = "opening a chat";
-    if (!(k == chatKey))
+    if (!(k == chatKey)) {
         lv_textarea_set_text(chatInput, ""); // a half-typed message stays with its own chat
+        chatShowAll = false;
+    }
     chatKey = k;
     Conv &c = conv(k);
     c.title = convTitle(k);
@@ -1758,7 +1846,7 @@ void App::sendFromInput(void)
         return;
     const uint32_t id = sendLine(chatKey, t);
     lv_textarea_set_text(chatInput, "");
-    renderChat();
+    addLine(conv(chatKey).lines.back());
     if (!id)
         toast("Couldn't send: no route and the radio is busy, try again");
 }
@@ -1776,7 +1864,7 @@ std::string App::webSend(uint8_t channel, const char *text)
         return "{\"error\":\"No such channel on this node\"}";
     const uint32_t id = sendLine(k, text);
     if (chatOpen && chatKey == k)
-        renderChat(); // open on the screen too
+        addLine(conv(k).lines.back()); // open on the screen too
     dirtyChats = true;
     return id ? "{\"ok\":true}" : "{\"error\":\"The radio is busy, try again\"}";
 }
@@ -1836,11 +1924,7 @@ void App::onMessage(const Message &msg)
     if (tone > 0 && !msg.viaNet && (msg.conv.dm || m.uiPref("snd_all", 1)))
         m.playSound(tone, m.uiPref("vol", 60));
     if (visible) {
-        appendBubble(l);
-        lv_obj_update_layout(chatMsgs);
-        lv_obj_scroll_to_y(chatMsgs, LV_COORD_MAX, LV_ANIM_ON);
-        if (topOverlay() == chatOv)
-            refocus(lv_group_get_focused(group)); // the new bubble joins the keys' stops, the focus stays put
+        addLine(c.lines.back());
     } else {
         c.unread++;
         char b[120];
@@ -1866,7 +1950,7 @@ void App::onHeard(uint32_t id, uint8_t observers)
                 l.hops = (int8_t)observers;
                 chatsChanged();
                 if (chatOpen && c.key == chatKey)
-                    renderChat();
+                    updateLine(l);
                 return;
             }
 }
@@ -1883,7 +1967,7 @@ void App::onDelivered(uint32_t id, bool ok)
                     l.rttMs = lv_tick_elaps(l.sentMs);
                 chatsChanged();
                 if (chatOpen && c.key == chatKey)
-                    renderChat();
+                    updateLine(l);
                 return;
             }
 }
@@ -5194,7 +5278,7 @@ void App::loop(uint32_t ms)
         lastSlow = t;
         if (int16_t nf = m.stats().noiseFloor)
             noiseHist[29] = nf; // this minute's latest reading
-        if (statOpen >= 0 && topOverlay() == statOv && t - statDrawn >= 5000)
+        if (statOpen >= 0 && topOverlay() == statOv && t - statDrawn >= 30000) // (a rebuild is about a second on the radios)
             renderStat();
         refreshStatus();
         if (tab == T_HOME && !topOverlay())

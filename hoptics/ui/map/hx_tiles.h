@@ -161,6 +161,7 @@ class TileMap
 
     // flash cache
     void loadIndex(void);
+    void flushIndex(void); // the saved-tile list to /hmap.idx, when it changed
     bool readSaved(uint8_t z, uint32_t x, uint32_t y, Blob &png, uint32_t &fetched, uint32_t &maxAge, char *etag);
     bool save(uint8_t z, uint32_t x, uint32_t y, const uint8_t *png, size_t len, uint32_t maxAge, const char *etag);
     struct Import {
@@ -208,7 +209,7 @@ class TileMap
     MapView cur;             // view being drawn
     std::vector<Tile> tiles; // tiles of cur
     std::vector<Saved> saved;
-    bool indexLoaded = false;
+    bool indexLoaded = false, indexDirty = false;
     uint32_t savedBytes = 0;
     uint32_t dirMade = 0; // bit per zoom level whose directory exists
     uint32_t backoffUntil = 0, backoffMs = 0;

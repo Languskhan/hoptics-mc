@@ -109,44 +109,52 @@ bool panelInit(void)
     return true;
 }
 
-// CHSC6x: register 0 holds the touch report; byte 2 = points, bytes 3-6 = the first point (4-bit high, 8-bit low)
-bool touchPoint(int16_t &x, int16_t &y)
+// CHSC6x: register 0 holds the touch report; byte 2 = points, bytes 3-6 = the first point (4-bit high, 8-bit low).
+// 1: a finger (x, y set), 0: no finger, -1: the read failed (says nothing either way)
+int touchPoint(int16_t &x, int16_t &y)
 {
     touchBus.beginTransmission(CHSC6X);
     touchBus.write(0x00);
     if (touchBus.endTransmission(false) != 0)
-        return false;
+        return -1;
     uint8_t b[16];
     if (touchBus.requestFrom(CHSC6X, (uint8_t)sizeof(b)) != sizeof(b) || touchBus.readBytes(b, sizeof(b)) != sizeof(b))
-        return false;
-    if ((b[2] & 0x07) == 0 || (b[3] & 0xC0) == 0xC0)
-        return false; // no finger, or not a valid point
+        return -1;
+    if ((b[2] & 0x07) == 0)
+        return 0;
+    if ((b[3] & 0xC0) == 0xC0)
+        return -1; // not a valid point this time
     x = (int16_t)(((b[3] & 0x0F) << 8) | b[4]);
     y = (int16_t)(((b[5] & 0x0F) << 8) | b[6]);
-    return x < 240 && y < 320;
+    return x < 240 && y < 320 ? 1 : -1;
 }
 
+// A press ends only after two empty reports in a row (~30 ms): a single missed sample in the middle of a press
+// (seen on the V4 kit, whose touch chip has its own I2C pins) made LVGL see a release and a new press, so one tap
+// could click a button several times. A failed read keeps the state as it was. Small wobbles of the finger
+// (2 px) are held still, so a tap isn't taken for the start of a scroll.
 void touchRead(lv_indev_t *, lv_indev_data_t *data)
 {
     static int16_t lx = 0, ly = 0;
     static uint32_t last = 0;
     static bool down = false;
+    static uint8_t misses = 0;
+    if (millis() - last >= 15) { // don't hog the I2C bus between its updates
+        last = millis();
+        int16_t x, y;
+        const int r = touchPoint(x, y);
+        if (r == 1) {
+            misses = 0;
+            if (!down || abs(x - lx) > 2 || abs(y - ly) > 2)
+                lx = x, ly = y;
+            down = true;
+            touchedFlag = true;
+        } else if (r == 0 && down && ++misses >= 2)
+            down = false;
+    }
     data->point.x = lx;
     data->point.y = ly;
     data->state = down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
-    if (millis() - last < 15)
-        return; // don't hog the I2C bus between its updates
-    last = millis();
-    int16_t x, y;
-    down = touchPoint(x, y);
-    if (down) {
-        lx = x, ly = y;
-        data->point.x = x;
-        data->point.y = y;
-        data->state = LV_INDEV_STATE_PRESSED;
-        touchedFlag = true;
-    } else
-        data->state = LV_INDEV_STATE_RELEASED;
 }
 } // namespace
 
