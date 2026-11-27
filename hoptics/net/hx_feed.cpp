@@ -345,7 +345,7 @@ void session(uint32_t gen0, uint8_t *msg)
     }
     setErr("");
     st = State::LIVE;
-    hxlog::line("feed live from %s, stack left %u, internal heap %u", host, (unsigned)uxTaskGetStackHighWaterMark(nullptr),
+    hxlog::line("feed live, stack left %u, internal heap %u", (unsigned)uxTaskGetStackHighWaterMark(nullptr), // no address in the log
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     size_t have = 0;
     bool skip = false; // the message being read is too big: drop it

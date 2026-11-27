@@ -125,8 +125,10 @@ void save(void)
     xSemaphoreTake(saveLock, portMAX_DELAY);
     lastSave = millis();
     char *buf = (char *)heap_caps_malloc(RING, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!buf)
+    if (!buf) {
+        xSemaphoreGive(saveLock);
         return;
+    }
     size_t upTo;
     const size_t have = snapshot(buf, RING, upTo);
     const size_t fresh = std::min(upTo - savedWr, have);

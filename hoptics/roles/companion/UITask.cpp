@@ -1709,7 +1709,7 @@ int UITask::joinHashChannel(const char *name)
     if (freeSlot < 0 || !the_mesh.setChannel(freeSlot, d))
         return -1;
     the_mesh.saveChannels();
-    hxlog::line("joined channel %s", n);
+    hxlog::line("joined a #channel"); // no names in the log
     return freeSlot;
 }
 

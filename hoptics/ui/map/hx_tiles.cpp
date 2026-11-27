@@ -555,7 +555,7 @@ void TileMap::renderView(uint32_t g)
                 }
                 if (gen.load() != g)
                     return;
-                ILOG_WARN("Hoptics map: saved tile %u/%u/%u unreadable, dropped", cur.z, t.x, t.y);
+                ILOG_WARN("Hoptics map: a saved zoom %u tile was unreadable, dropped", cur.z); // no x/y: they say where you are
                 forget(cur.z, t.x, t.y);
             }
             t.gone = std::find(notFound.begin(), notFound.end(), tileKey(cur.z, t.x, t.y)) != notFound.end();
@@ -586,8 +586,7 @@ void TileMap::downloadMissing(uint32_t g)
         uint32_t t0 = nowMs();
         int code = fetch(cur.z, t.x, t.y, nullptr, png, etag, maxAge);
         if (code == 200) {
-            ILOG_INFO("Hoptics map: tile %u/%u/%u downloaded (%u B, %u ms)", cur.z, t.x, t.y, (unsigned)png.len,
-                      (unsigned)(nowMs() - t0));
+            ILOG_INFO("Hoptics map: zoom %u tile downloaded (%u B, %u ms)", cur.z, (unsigned)png.len, (unsigned)(nowMs() - t0));
             backoffMs = 0;
             setProblem(MapStatus::NONE);
             bool ok = drawPng(png.data, png.len, t, cur, g);
@@ -597,12 +596,12 @@ void TileMap::downloadMissing(uint32_t g)
                 t.shown = true;
                 dirty = true;
             } else if (gen.load() == g) {
-                ILOG_WARN("Hoptics map: tile %u/%u/%u is not a 256 px PNG", cur.z, t.x, t.y);
+                ILOG_WARN("Hoptics map: a zoom %u tile is not a 256 px PNG", cur.z);
                 t.gone = true;
             }
             publishStatus();
         } else if (code == 404 || (code >= 400 && code < 500 && code != 403 && code != 429)) {
-            ILOG_WARN("Hoptics map: tile %u/%u/%u answered %d", cur.z, t.x, t.y, code);
+            ILOG_WARN("Hoptics map: a zoom %u tile answered %d", cur.z, code);
             if (notFound.size() >= 64)
                 notFound.erase(notFound.begin());
             notFound.push_back(tileKey(cur.z, t.x, t.y));
@@ -634,7 +633,7 @@ void TileMap::revalidate(uint32_t g)
             touchSaved(cur.z, t.x, t.y, maxAge, etag[0] ? etag : t.etag);
             t.stale = false;
         } else if (code == 200) {
-            ILOG_INFO("Hoptics map: tile %u/%u/%u changed, updated", cur.z, t.x, t.y);
+            ILOG_INFO("Hoptics map: a zoom %u tile changed, updated", cur.z);
             if (drawPng(png.data, png.len, t, cur, g)) {
                 save(cur.z, t.x, t.y, png.data, png.len, maxAge, etag);
                 dirty = true;
@@ -1198,7 +1197,7 @@ int TileMap::fetch(uint8_t z, uint32_t x, uint32_t y, const char *etag, Blob &ou
     if (code < 0) {
         char err[96] = "";
         tls->lastError(err, sizeof(err));
-        ILOG_WARN("Hoptics map: %s failed: %d %s", url, code, err);
+        ILOG_WARN("Hoptics map: tile server failed: %d %s", code, err); // not the address: it holds the tile's place
         tls->stop(); // start over with a fresh connection next time
     }
     return code;
