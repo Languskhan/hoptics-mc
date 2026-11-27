@@ -132,25 +132,35 @@ function takeSnapshot(d) {
 
 // ------------------------------------------------------------------ the live feed, straight from the browser
 const Feed = {
-  ws: null, url: "", backoff: 3000, timer: 0, sim: null,
+  ws: null, url: "", backoff: 3000, timer: 0, sim: null, fails: 0, opened: false,
   want() { return store("feed") !== "0"; },
   start(url) {
     if (!this.want() || !url) { this.stop(); return; }
-    if (this.url === url && (this.ws || this.sim)) return;
+    if (this.url === url) return; // already on it: connected, waiting to retry, or refused
     this.stop(); this.url = url;
     if (DEMO) { this.sim = DEMO.feed((m) => this.onMsg(m)); S.feedState = "live"; return; }
+    this.connect();
+  },
+  connect() {
+    const url = this.url;
     let u = url.replace(/^https?:/, (m) => (m === "https:" ? "wss:" : "ws:"));
     if (!/^wss?:\/\//.test(u)) u = "wss://" + u;
     if (!/\/[^/]/.test(u.replace(/^wss?:\/\//, ""))) u = u.replace(/\/?$/, "/ws");
     S.feedState = "connecting"; UI.chips();
     try { this.ws = new WebSocket(u); } catch (e) { this.retry(); return; }
-    this.ws.onopen = () => { S.feedState = "live"; this.backoff = 3000; UI.chips(); };
+    this.ws.onopen = () => { S.feedState = "live"; this.backoff = 3000; this.fails = 0; this.opened = true; UI.chips(); };
     this.ws.onmessage = (e) => { try { this.onMsg(JSON.parse(e.data)); } catch (x) {} };
     this.ws.onclose = () => { this.ws = null; if (this.url) this.retry(); };
     this.ws.onerror = () => { S.feedState = "failed"; UI.chips(); };
   },
-  retry() { S.feedState = "failed"; UI.chips(); clearTimeout(this.timer); this.timer = setTimeout(() => { const u = this.url; this.url = ""; this.start(u); }, this.backoff); this.backoff = Math.min(this.backoff * 2, 120000); },
-  stop() { this.url = ""; clearTimeout(this.timer); if (this.ws) { this.ws.onclose = null; this.ws.close(); } this.ws = null; if (this.sim) this.sim.stop(); this.sim = null; S.feedState = "off"; },
+  retry() {
+    // a server that never once let this browser in (CoreScope turns away pages from other sites) is left alone,
+    // instead of the chip flicking between Connecting and Internet down every few seconds
+    if (++this.fails >= 3 && !this.opened) { S.feedState = "refused"; this.timer = 0; UI.chips(); return; }
+    S.feedState = "failed"; UI.chips(); clearTimeout(this.timer);
+    this.timer = setTimeout(() => { this.timer = 0; if (this.url) this.connect(); }, this.backoff); this.backoff = Math.min(this.backoff * 2, 120000);
+  },
+  stop() { this.url = ""; clearTimeout(this.timer); this.timer = 0; this.fails = 0; this.opened = false; this.backoff = 3000; if (this.ws) { this.ws.onclose = null; this.ws.close(); } this.ws = null; if (this.sim) this.sim.stop(); this.sim = null; S.feedState = "off"; },
   onMsg(j) {
     const pick = (o, k, d = 0) => { if (!o || typeof o !== "object" || d > 4) return undefined; if (k in o) return o[k]; for (const v of Object.values(o)) { const r = pick(v, k, d + 1); if (r !== undefined) return r; } };
     const raw = pick(j, "raw_hex");
@@ -320,7 +330,7 @@ const UI = {
     c.replaceChildren();
     const chip = (cls, text, opt) => { const e = el("span", "chip " + cls + (opt ? " opt" : "")); e.append(el("i"), text); c.append(e); };
     if (n.batt) chip(n.batt.pct >= 101 ? "ok" : n.batt.pct > 30 ? "ok" : n.batt.pct > 15 ? "warn" : "bad", n.batt.pct >= 101 ? "USB power" : (n.batt.pct >= 0 ? n.batt.pct + "% " : "") + (n.batt.mv / 1000).toFixed(2) + " V");
-    chip(S.feedState === "live" ? "ok" : S.feedState === "off" ? "" : S.feedState === "connecting" ? "warn" : "bad", S.feedState === "live" ? "Internet live" : S.feedState === "off" ? "Internet off" : S.feedState === "connecting" ? "Connecting" : "Internet down", true);
+    chip(S.feedState === "live" ? "ok" : S.feedState === "off" ? "" : S.feedState === "connecting" ? "warn" : "bad", S.feedState === "live" ? "Internet live" : S.feedState === "off" ? "Internet off" : S.feedState === "connecting" ? "Connecting" : S.feedState === "refused" ? "Internet refused" : "Internet down", true);
     if (n.rssi) chip(n.rssi > -67 ? "ok" : n.rssi > -78 ? "warn" : "bad", "Wi-Fi " + n.rssi + " dBm", true);
     $("hdrName").textContent = n.name || "Hoptics-MC";
     const r = S.snap.radio || {};
@@ -1003,7 +1013,7 @@ V.device = {
     this.load.set([{ name: "Screen", color: "--violet", data: xy(h.lvgl, (v) => v) }]);
     this.net.replaceChildren();
     const box = el("div", "kvlist");
-    for (const [k, v] of [["Server", (d.feed && d.feed.url) || "-"], ["In this browser", Feed.want() ? S.feedState : "off"], ["Packets this visit", String(S.feedCount)], ["On the node's own screen", d.feed && d.feed.device ? "on" : "off (saves the node's processor)"]]) box.append(el("span", "", k), el("span", "", v));
+    for (const [k, v] of [["Server", (d.feed && d.feed.url) || "-"], ["In this browser", !Feed.want() ? "off" : S.feedState === "refused" ? "refused: the server doesn't accept browsers from other sites (the node's own screen can still show it)" : S.feedState], ["Packets this visit", String(S.feedCount)], ["On the node's own screen", d.feed && d.feed.device ? "on" : "off (saves the node's processor)"]]) box.append(el("span", "", k), el("span", "", v));
     this.net.append(el("p", "muted", "The page connects your browser to the CoreScope server itself, so the internet feed costs the node nothing. Channel messages are decoded here with the channels the node shares with this page."), box);
     this.net.firstChild.style.cssText = "margin:0 0 10px;font-size:12.5px";
     this.feedBtn.textContent = Feed.want() ? "Turn the internet feed off here" : "Turn the internet feed on here";
