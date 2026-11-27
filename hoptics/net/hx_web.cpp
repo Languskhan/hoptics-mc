@@ -7,6 +7,7 @@
 #if defined(ARDUINO_ARCH_ESP32)
 #include "hx_web_files.h"
 #include <Arduino.h>
+#include <Preferences.h>
 #include <esp_http_server.h>
 #include <esp_system.h>
 #include <esp_heap_caps.h>
@@ -31,6 +32,25 @@ struct Session {
 } ses[4] = {};
 uint8_t fails = 0;
 uint32_t lockUntil = 0;
+
+// the sessions survive a restart (a firmware update over Wi-Fi restarts the node: the page shouldn't have to sign
+// in again): their tokens are kept with the PIN they were made under, and only come back for that PIN
+void keepSessions()
+{
+    char toks[4][33];
+    xSemaphoreTake(lock, portMAX_DELAY);
+    for (int i = 0; i < 4; i++)
+        memcpy(toks[i], ses[i].tok, 33);
+    char p[8];
+    memcpy(p, pin, sizeof(p));
+    xSemaphoreGive(lock);
+    Preferences nv;
+    if (!nv.begin("hxweb", false))
+        return;
+    nv.putBytes("ses", toks, sizeof(toks));
+    nv.putString("sespin", p);
+    nv.end();
+}
 volatile bool waiting = false; // read without the lock by the main loop on every pass
 bool taken = false;
 Query pending;
@@ -185,6 +205,7 @@ esp_err_t onLogin(httpd_req_t *r)
     char cookie[96];
     snprintf(cookie, sizeof(cookie), "hx=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200", ses[slot].tok);
     xSemaphoreGive(lock);
+    keepSessions();
     hxlog::line("web page: a browser signed in");
     httpd_resp_set_hdr(r, "Set-Cookie", cookie);
     return sendJson(r, "200 OK", "{\"ok\":true}");
@@ -198,6 +219,7 @@ esp_err_t onLogout(httpd_req_t *r)
         xSemaphoreTake(lock, portMAX_DELAY);
         ses[s].tok[0] = 0;
         xSemaphoreGive(lock);
+        keepSessions();
     }
     httpd_resp_set_hdr(r, "Set-Cookie", "hx=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
     return sendJson(r, "200 OK", "{\"ok\":true}");
@@ -523,13 +545,39 @@ void setPin(const char *p)
         one = xSemaphoreCreateMutex();
         ready = xSemaphoreCreateBinary();
     }
+    const bool first = !pin[0]; // just started: the sessions kept under this same PIN come back
+    bool changed = false;
     xSemaphoreTake(lock, portMAX_DELAY);
     if (strcmp(pin, p)) {
         strncpy(pin, p, sizeof(pin) - 1);
         memset(ses, 0, sizeof(ses)); // a new PIN signs everyone out
         fails = 0;
         lockUntil = 0;
+        changed = true;
     }
+    xSemaphoreGive(lock);
+    if (!changed)
+        return;
+    Preferences nv;
+    char toks[4][33] = {};
+    bool restore = false;
+    if (first && nv.begin("hxweb", true)) {
+        restore = nv.getString("sespin", "") == String(p) && nv.getBytes("ses", toks, sizeof(toks)) == sizeof(toks);
+        nv.end();
+    }
+    if (!restore) {
+        if (!first)
+            keepSessions(); // a new PIN: the kept sessions go too
+        return;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    const uint32_t now = millis();
+    for (int i = 0; i < 4; i++)
+        if (strspn(toks[i], "0123456789abcdef") == 32) {
+            memcpy(ses[i].tok, toks[i], 32);
+            ses[i].tok[32] = 0;
+            ses[i].last = now; // a fresh 12 hours from the restart
+        }
     xSemaphoreGive(lock);
 }
 
