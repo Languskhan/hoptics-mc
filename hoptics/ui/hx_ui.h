@@ -122,6 +122,17 @@ class App : public Ui
     lv_obj_t *chatOv = nullptr, *chatTitle = nullptr, *chatMsgs = nullptr, *chatInput = nullptr;
     ConvKey chatKey;
     bool chatOpen = false;
+    // replying: the last conversation a message came in on (tap its toast, or press R, to open it), and the
+    // "Reply to ..." box a tap on someone's channel message opens (reply on the channel, or privately)
+    ConvKey lastIn, toastConv;
+    bool haveLastIn = false, toastIsMsg = false;
+    lv_obj_t *replyBox = nullptr, *replyTitle = nullptr, *replyDm = nullptr;
+    std::string replyName;
+    uint8_t replyKey[6] = {};
+    void buildReplyBox(void);
+    void askReply(uint32_t seq);
+    void closeReply(void);
+    bool chatContactByName(const std::string &name, uint8_t key[6]) const;
     lv_obj_t *nodeOv = nullptr, *nodeOvBody = nullptr;
     uint8_t nodeOvKey[6] = {};
     // stat details: a Home tile (or the top card, or the activity chart) opened full screen

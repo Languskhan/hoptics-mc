@@ -693,6 +693,23 @@ void App::build(void)
     toastLbl = label(toastBox, F14, C_TEXT, "");
     wrap(toastLbl);
     lv_obj_add_flag(toastBox, LV_OBJ_FLAG_HIDDEN);
+    // a tap on a toast hides it; on a new message's toast it also opens that conversation, ready to reply
+    lv_obj_add_flag(toastBox, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(
+        toastBox,
+        [](lv_event_t *) {
+            self->toastUntil = 0;
+            lv_obj_add_flag(self->toastBox, LV_OBJ_FLAG_HIDDEN);
+            if (!self->toastIsMsg)
+                return;
+            self->toastIsMsg = false;
+            if (self->askBox && !lv_obj_has_flag(self->askBox, LV_OBJ_FLAG_HIDDEN))
+                return; // the radio question is answered first
+            lv_obj_add_flag(self->replyBox, LV_OBJ_FLAG_HIDDEN);
+            self->selectTab(T_CHATS);
+            self->openChat(self->toastConv);
+        },
+        LV_EVENT_CLICKED, nullptr);
     dirtyLive = dirtyContacts = dirtyChats = true;
     contactsSeen = 0xffffffff;
     statOpen = -1;
@@ -1382,6 +1399,88 @@ void App::buildChatOverlay(void)
     lv_obj_add_event_cb(chatInput, [](lv_event_t *) { self->sendFromInput(); }, LV_EVENT_READY, nullptr); // on-screen OK
     lv_obj_t *send = button(in, LV_SYMBOL_UPLOAD, C_CYAN, 40, 32);
     lv_obj_add_event_cb(send, [](lv_event_t *) { self->sendFromInput(); }, LV_EVENT_CLICKED, nullptr);
+    buildReplyBox();
+}
+
+// "Reply to NAME": opened by a tap (or OK) on someone's message in a channel
+void App::buildReplyBox(void)
+{
+    replyBox = plain(scr);
+    lv_obj_set_size(replyBox, W(), H());
+    lv_obj_set_style_bg_color(replyBox, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(replyBox, LV_OPA_60, 0);
+    lv_obj_add_flag(replyBox, LV_OBJ_FLAG_CLICKABLE); // a tap outside the card closes it
+    lv_obj_add_flag(replyBox, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(
+        replyBox, [](lv_event_t *e) { if (lv_event_get_target(e) == self->replyBox) self->closeReply(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *cd = card(replyBox, nullptr);
+    lv_obj_set_width(cd, std::min<int32_t>(W() - 24, 280));
+    lv_obj_center(cd);
+    replyTitle = label(cd, F14, C_TEXT, "");
+    oneLine(replyTitle);
+    lv_obj_set_width(replyTitle, LV_PCT(100));
+    lv_obj_t *ch = button(cd, "# Reply on the channel", C_CYAN, LV_PCT(100), 30);
+    lv_obj_add_event_cb(
+        ch,
+        [](lv_event_t *) {
+            // MeshCore's mention, as the phone apps write it: @[Name]
+            std::string t = "@[" + self->replyName + "] " + lv_textarea_get_text(self->chatInput);
+            self->closeReply();
+            lv_textarea_set_text(self->chatInput, t.c_str());
+            self->refocus(self->chatInput);
+        },
+        LV_EVENT_CLICKED, nullptr);
+    replyDm = button(cd, LV_SYMBOL_ENVELOPE " Message privately", C_GREEN, LV_PCT(100), 30);
+    lv_obj_add_event_cb(
+        replyDm,
+        [](lv_event_t *) {
+            ConvKey k;
+            k.dm = true;
+            memcpy(k.key, self->replyKey, 6);
+            self->closeReply();
+            self->openChat(k);
+        },
+        LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *cx = button(cd, "Cancel", C_MUTED, LV_PCT(100), 30);
+    lv_obj_add_event_cb(cx, [](lv_event_t *) { self->closeReply(); }, LV_EVENT_CLICKED, nullptr);
+}
+
+bool App::chatContactByName(const std::string &name, uint8_t key[6]) const
+{
+    Contact c;
+    for (size_t i = 0; i < m.contactCount(); i++)
+        if (m.contactAt(i, c) && c.type == NodeType::Chat && name == c.name) {
+            memcpy(key, c.key, 6);
+            return true;
+        }
+    return false;
+}
+
+void App::askReply(uint32_t seq)
+{
+    const Conv &c = conv(chatKey);
+    const Line *l = nullptr;
+    for (auto &x : c.lines)
+        if (x.seq == seq)
+            l = &x;
+    if (!l || l->mine || l->from.empty())
+        return;
+    replyName = l->from;
+    lv_label_set_text_fmt(replyTitle, "Reply to %s", replyName.c_str());
+    // privately only when we know them (their key is in our contacts)
+    if (chatContactByName(replyName, replyKey))
+        lv_obj_remove_flag(replyDm, LV_OBJ_FLAG_HIDDEN);
+    else
+        lv_obj_add_flag(replyDm, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(replyBox, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(replyBox);
+    refocus();
+}
+
+void App::closeReply(void)
+{
+    lv_obj_add_flag(replyBox, LV_OBJ_FLAG_HIDDEN);
+    refocus(chatInput);
 }
 
 void App::appendBubble(const Line &l)
@@ -1402,6 +1501,14 @@ void App::appendBubble(const Line &l)
     column(b, 1);
     const bool big = m.uiPref("chattext", 0) == 1; // Large chat text
     if (!l.mine && !chatKey.dm) {
+        // someone's message on a channel: tap it (or OK on it) to reply to them
+        lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(b, C_CARD, LV_STATE_PRESSED);
+        stop(b);
+        lv_obj_set_user_data(b, (void *)(uintptr_t)l.seq);
+        lv_obj_add_event_cb(
+            b, [](lv_event_t *e) { self->askReply((uint32_t)(uintptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_current_target(e))); },
+            LV_EVENT_CLICKED, nullptr);
         lv_obj_t *w = label(b, big ? F14 : F12, C_CYAN, l.from.c_str());
         oneLine(w);
         lv_obj_set_style_max_width(w, maxW - 18, 0);
@@ -1452,10 +1559,14 @@ void App::renderChat(void)
         appendBubble(l);
     lv_obj_update_layout(chatMsgs);
     lv_obj_scroll_to_y(chatMsgs, LV_COORD_MAX, LV_ANIM_OFF);
+    if (chatOpen && topOverlay() == chatOv)
+        refocus(chatInput); // the new bubbles join the keys' stops
 }
 
 void App::openChat(const ConvKey &k)
 {
+    if (!(k == chatKey))
+        lv_textarea_set_text(chatInput, ""); // a half-typed message stays with its own chat
     chatKey = k;
     Conv &c = conv(k);
     c.title = convTitle(k);
@@ -1557,14 +1668,20 @@ void App::onMessage(const Message &msg)
         appendBubble(l);
         lv_obj_update_layout(chatMsgs);
         lv_obj_scroll_to_y(chatMsgs, LV_COORD_MAX, LV_ANIM_ON);
+        if (topOverlay() == chatOv)
+            refocus(lv_group_get_focused(group)); // the new bubble joins the keys' stops, the focus stays put
     } else {
         c.unread++;
         char b[120];
         snprintf(b, sizeof(b), "%s %s%s%s: %s", msg.viaNet ? LV_SYMBOL_WIFI : LV_SYMBOL_ENVELOPE, msg.conv.dm ? "" : c.title.c_str(),
                  msg.conv.dm ? "" : " ", msg.from, l.text.c_str());
         toast(b);
+        toastIsMsg = true; // a tap on it opens the conversation
+        toastConv = msg.conv;
         wake();
     }
+    lastIn = msg.conv; // R (outside a text field) opens it
+    haveLastIn = true;
     dirtyChats = true;
     refreshStatus();
 }
@@ -2989,6 +3106,7 @@ void App::selectTab(int t)
 {
     if (t < 0 || t >= T_COUNT)
         return;
+    lv_obj_add_flag(replyBox, LV_OBJ_FLAG_HIDDEN);
     if (chatOpen)
         closeChat();
     if (!lv_obj_has_flag(nodeOv, LV_OBJ_FLAG_HIDDEN))
@@ -3040,6 +3158,8 @@ lv_obj_t *App::topOverlay(void) const
 {
     if (askBox && !lv_obj_has_flag(askBox, LV_OBJ_FLAG_HIDDEN))
         return askBox;
+    if (replyBox && !lv_obj_has_flag(replyBox, LV_OBJ_FLAG_HIDDEN))
+        return replyBox;
     if (chatOpen)
         return chatOv;
     if (rm)
@@ -4445,7 +4565,9 @@ void App::goBack(void)
 {
     if (kb && !lv_obj_has_flag(kb, LV_OBJ_FLAG_HIDDEN))
         return kbHide(); // Back closes the keyboard first
-    if (chatOpen)
+    if (topOverlay() == replyBox)
+        closeReply();
+    else if (chatOpen)
         closeChat();
     else if (rm)
         closeRemote();
@@ -4699,6 +4821,12 @@ void App::key(uint32_t k)
     switch (k) {
     case K_UP:
     case K_DOWN:
+        if (inText && chatOpen && k == K_UP && f == chatInput && !lv_textarea_get_text(f)[0] && !chatKey.dm) {
+            // nothing typed yet: Up steps onto the messages above (OK on one replies to its sender)
+            lv_obj_t *n = nearest(f, k);
+            if (n && lv_obj_get_parent(n) && lv_obj_get_parent(lv_obj_get_parent(n)) == chatMsgs)
+                return jump(n);
+        }
         if (inText && chatOpen) { // typing a message: Up / Down scroll the conversation above
             lv_obj_scroll_by_bounded(chatMsgs, 0, k == K_UP ? 40 : -40, LV_ANIM_ON);
             return;
@@ -4787,6 +4915,8 @@ void App::key(uint32_t k)
         break;
     }
     if (k >= 0x20 && k < 0x110000) {
+        if (topOverlay() == replyBox)
+            return; // pick one of its buttons first
         if (!inText && chatOpen) { // typing anywhere in a chat goes to the message
             lv_group_focus_obj(chatInput);
             lv_obj_add_state(chatInput, LV_STATE_FOCUS_KEY);
@@ -4795,8 +4925,13 @@ void App::key(uint32_t k)
             f = rmTypingTarget();
             lv_group_focus_obj(f);
             lv_obj_add_state(f, LV_STATE_FOCUS_KEY);
-        } else if (!inText)
+        } else if (!inText) {
+            if ((k == 'r' || k == 'R') && haveLastIn) { // R: open the conversation the last message came in on
+                selectTab(T_CHATS);
+                openChat(lastIn);
+            }
             return;
+        }
         char u[5] = {0};
         if (k < 0x80)
             u[0] = (char)k;
@@ -4811,6 +4946,7 @@ void App::key(uint32_t k)
 void App::toast(const char *text)
 {
     lv_label_set_text(toastLbl, text);
+    toastIsMsg = false;
     lv_obj_remove_flag(toastBox, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(toastBox);
     toastUntil = lv_tick_get() + 3500;

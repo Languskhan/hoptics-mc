@@ -600,6 +600,36 @@ int main(int argc, char **argv)
     app.onDelivered(100, true);
     pump(200);
     shot("06b_chat_sent");
+    // replying to someone on the channel: Up from the empty message box onto their message, OK, then "on the channel"
+    app.key(hx::K_UP);
+    pump(200);
+    shot("06c_chat_pick_msg");
+    app.key(hx::K_ENTER);
+    pump(200);
+    shot("06d_chat_reply_box");
+    app.key(hx::K_ENTER); // "# Reply on the channel"
+    pump(200);
+    shot("06e_chat_reply_mention");
+    // a known contact's message offers a private reply too: Trail Tracker on #smf
+    app.selectTab(hx::App::T_CHATS);
+    pump(200);
+    app.key(hx::K_DOWN);
+    app.key(hx::K_ENTER); // opens #smf
+    pump(200);
+    app.key(hx::K_UP);
+    app.key(hx::K_ENTER);
+    pump(200);
+    shot("06g_chat_reply_box_known");
+    app.key(hx::K_DOWN);
+    app.key(hx::K_ENTER); // "Message privately"
+    pump(300);
+    shot("06h_chat_private");
+    app.key(hx::K_BACK);
+    app.key(hx::K_BACK);
+    app.selectTab(hx::App::T_HOME);
+    app.key('r'); // R: the conversation the last message came in on
+    pump(300);
+    shot("06f_chat_r_key");
     app.key(hx::K_BACK);
     app.selectTab(hx::App::T_MORE);
     pump(300);
