@@ -39,6 +39,11 @@ Download the firmware for your board from the [latest release](https://github.co
   messages and private channels' keys never go to the page. From the page you can also send channel
   messages, install a firmware update (it starts on trial and goes back by itself if it doesn't start
   properly), and send a folder of offline map tiles for the radio's map.
+- **microSD card** (T-Deck Plus, ThinkNode M9, V4-R8 Kit V2; FAT32): the street map keeps its tiles on the card
+  (up to 1 GB) and shows ready-made map packs from it (Meshtastic's `maps/<style>/z/x/y.png` or `map/`, MeshCore's
+  `tiles/`); the web page gets a **Files** tab (browse, download, upload, new folder, delete) and a **Backup** of
+  the settings, channels and contacts (kept on the card, and brought back from there or from a file); the device
+  log is kept on the card too. Without a card everything works as before.
 - **Settings** (the More tab): quick switches for Wi-Fi, Bluetooth, GPS and sound (tap to flip, hold for
   their page), then six categories, each showing what it's set to: **Radio** (presets or a custom radio, asked
   before they change anything; path hash size; region), **Messages** (auto-add rules, telemetry privacy),
@@ -63,7 +68,8 @@ to the same functions the app commands use, and one ThinkNode M9 pin name that c
 
 Every push also runs quick checks on a PC beside the firmware builds: cppcheck on `hoptics/`, the web page's
 SHA-256, HMAC, AES and packet decoder against Node's crypto (`node harness/web/core_test.js`), the feed parser
-and WebSocket client under ASan/UBSan (`harness/feed/run.sh`), and every screen in every theme rendered by
+and WebSocket client under ASan/UBSan (`harness/feed/run.sh`), the web server's card paths and JSON reading
+(`harness/parse/run.sh`), and every screen in every theme rendered by
 `harness/build_and_run.sh` (kept as the run's `screens` artifact), with the web page's JSON checked.
 
 ## Licence

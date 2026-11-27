@@ -87,6 +87,23 @@ On the Heltec kits, the user button is Back.
 - **Web page → Device → Offline map tiles**: send a folder of `zoom/x/y.png` tiles (for example from Mobile
   Atlas Creator, from a tile source that allows keeping tiles offline) and check the radio's map shows them
   with Wi-Fi off.
+- **microSD card** (T-Deck Plus, ThinkNode M9, V4-R8 Kit V2; FAT32, put in with the radio off): the start-up log
+  says `sd: card mounted`. Then:
+  - **Web page → Files**: open folders, make one, upload a few files (and one big one, tens of MB), download one
+    and compare it, delete a file and an empty folder. A folder with something in it can't be deleted.
+  - **Map** with Wi-Fi on: the streets fill in as before; More → Location says they are saved on the card, and
+    `hoptics/tiles` appears on it. Copy a Meshtastic map pack (`maps/<style>/z/x/y.png`) or a MeshCore one
+    (`tiles/z/x/y.png`) onto the card, restart, and check the map shows it with Wi-Fi off.
+  - **Web page → Device → Offline map tiles**: the tiles go to the card.
+  - After a few minutes, `hoptics/logs/hoptics.log` is on the card. **More → System → Device log** and the web
+    page's **Download the device log** each leave a `report-...txt` there too. Open them: no messages, names,
+    positions, network names or addresses.
+  - **Web page → Device → Backup → Back up now**: a file downloads and one appears in `hoptics/backup`. On a
+    second radio (or after deleting a contact and a channel), restore it, from the file or from the list of
+    backups on the card, and check the contact and the channel come back. Try **Settings** only on a radio you
+    can fix by hand: it sets the radio too.
+  - The map, the web page and the radio itself keep working smoothly while files go up and down.
+  - Take the card out (radio off) and check everything works as before without it.
 - **More → Display → Sound**: pick a message sound and set the volume (each change plays it). Have someone send you a
   message: it should chirp. The T-Deck plays through its speaker; the M9 and the Heltec kits use their buzzer.
 - **More → Display**: try a wallpaper, the lock screen (it shows when the screen comes back on; a key or a long
@@ -127,3 +144,6 @@ What the lines mean:
 - The live feed only shows what the region's observers hear, a few seconds late, and only on the radio's screen
   (not in the phone app). It is receive only.
 - Only the companion role so far: repeater, room server and observer builds are planned.
+- microSD cards: FAT32 only (this Arduino core has no exFAT: format cards over 32 GB as FAT32). The card runs at
+  4 MHz for now (the V4-R8 kit's card only read reliably that slowly), so big uploads take a while. Put a card in
+  or take it out with the radio off. The Heltec V4 Expansion Kit has no card slot.
