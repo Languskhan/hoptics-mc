@@ -8,6 +8,8 @@
 
 namespace hx
 {
+// the screen work running last (set as each heavy step starts), so a slow pass can say what it was doing
+extern const char *busy;
 
 // keys, after each board's driver has mapped its keyboard / trackball / d-pad onto them
 enum Key : uint32_t {
@@ -114,7 +116,7 @@ class App : public Ui
     lv_obj_t *liveList = nullptr, *liveEmpty = nullptr;
     bool dirtyLive = true;
     // nodes
-    lv_obj_t *nodeList = nullptr, *nodeChips[5] = {};
+    lv_obj_t *nodeList = nullptr, *nodeChips[5] = {}, *nodeEmpty = nullptr; // nodeEmpty: the "no nodes yet" note
     int nodeFilter = 0;
     bool dirtyContacts = true;
     uint32_t contactsSeen = 0xffffffff;

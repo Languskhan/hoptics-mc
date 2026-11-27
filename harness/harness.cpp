@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <chrono>
 #include <map>
 #include <string>
 #include <vector>
@@ -436,6 +437,9 @@ struct HarnessAccess {
     static void msgAction(App &a, int act) { a.msgAction(act); }
     static std::string input(App &a) { return lv_textarea_get_text(a.chatInput); }
     static size_t lines(App &a) { return a.conv(a.chatKey).lines.size(); }
+    static void refreshNodes(App &a) { a.refreshNodes(); }
+    static void refreshChats(App &a) { a.refreshChats(); }
+    static void renderChat(App &a) { a.renderChat(); }
     static void clearInput(App &a) { lv_textarea_set_text(a.chatInput, ""); }
     static void sendText(App &a, const char *t) { lv_textarea_set_text(a.chatInput, t); a.sendFromInput(); }
     static void keyOk(App &a, lv_obj_t *o)
@@ -1122,6 +1126,52 @@ int main(int argc, char **argv)
     app.selectTab(hx::App::T_HOME);
     pump(100);
     model.setUiPref("theme", 0);
+
+    // timings (with HX_PERF set): a full Nodes list, a full chat, each tab; desktop numbers, for comparing
+    if (getenv("HX_PERF")) {
+        using HA = hx::HarnessAccess;
+        auto ms = [](auto t0) { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); };
+        for (int i = 0; i < 130; i++) {
+            hx::Contact c;
+            snprintf(c.name, sizeof(c.name), "Node %03d Somewhere", i);
+            c.type = i % 3 ? hx::NodeType::Chat : hx::NodeType::Repeater;
+            c.pathLen = i % 4;
+            c.lastHeard = NOW - i * 60;
+            for (int k = 0; k < 6; k++)
+                c.key[k] = (uint8_t)(i * 7 + k * 13 + 1);
+            model.contacts.push_back(c);
+        }
+        model.ver++;
+        app.selectTab(hx::App::T_NODES);
+        pump(100);
+        auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 10; i++)
+            HA::refreshNodes(app);
+        printf("perf: Nodes list (%zu contacts) %.2f ms\n", model.contacts.size(), ms(t0) / 10);
+        t0 = std::chrono::steady_clock::now();
+        lv_obj_invalidate(lv_screen_active());
+        lv_refr_now(nullptr);
+        printf("perf: Nodes full redraw %.2f ms\n", ms(t0));
+        HA::channel(app, 1);
+        for (int i = 0; i < 70; i++)
+            HA::sendText(app, "A message long enough to wrap onto a second line on the small screens");
+        t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 10; i++)
+            HA::renderChat(app);
+        printf("perf: chat (%zu lines) %.2f ms\n", HA::lines(app), ms(t0) / 10);
+        app.key(hx::K_BACK);
+        t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 10; i++)
+            HA::refreshChats(app);
+        printf("perf: Chats list %.2f ms\n", ms(t0) / 10);
+        for (int t = 0; t < hx::App::T_COUNT; t++) {
+            t0 = std::chrono::steady_clock::now();
+            app.selectTab(t);
+            lv_refr_now(nullptr);
+            printf("perf: tab %d %.2f ms\n", t, ms(t0));
+        }
+        return 0;
+    }
 
     // a restart: a new App on the same radio finds the chats where they were
     hx::HarnessAccess::saveChats(app);

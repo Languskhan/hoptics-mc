@@ -230,16 +230,22 @@ void UITask::loop()
         hxweb::answer(std::move(body));
     }
     t = micros();
+    hx::busy = "";
     app->loop(ms);
     const uint32_t t1 = micros();
     load.ui += t1 - t;
+    if (t1 - t > 300000) // a slow pass: what the screen was doing, to find the cause
+        hxlog::line("ui: %lu ms in the screen loop (%s)", (unsigned long)((t1 - t) / 1000), hx::busy[0] ? hx::busy : "other");
     if (input || (int32_t)(ms - lvNext) >= 0) {
+        hx::busy = "";
         const uint32_t wait = lv_timer_handler();
         lvNext = millis() + std::min<uint32_t>(wait, 15);
         const uint32_t d = micros() - t1;
         load.lvgl += d;
         if (d > load.lvglWorst)
             load.lvglWorst = d;
+        if (d > 300000)
+            hxlog::line("ui: %lu ms drawing or answering a touch (%s)", (unsigned long)(d / 1000), hx::busy[0] ? hx::busy : "drawing");
     }
 }
 
