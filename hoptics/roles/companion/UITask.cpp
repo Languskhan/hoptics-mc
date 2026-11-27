@@ -98,7 +98,8 @@ void UITask::begin(DisplayDriver *display, SensorManager *s, NodePrefs *p)
         snprintf(webHost, sizeof(webHost), "hoptics-%02x%02x", k[0], k[1]);
     }
     webOn = nvsOpen && nvs.getInt("web_on", 0);
-    if (!nvsOpen || nvs.getString("web_pin", webPin, sizeof(webPin)) != 6 || strspn(webPin, "0123456789") != 6)
+    // getString counts the end-of-string byte: a good PIN reads back as 7
+    if (!nvsOpen || nvs.getString("web_pin", webPin, sizeof(webPin)) != 7 || strspn(webPin, "0123456789") != 6)
         newWebPin();
     hxweb::setPin(webPin);
     if (nvsOpen && nvs.getInt("gps_baud", 0) > 0 && sensors && sensors->getLocationProvider()) {
