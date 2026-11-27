@@ -21,7 +21,7 @@ Download the firmware for your board from the [latest release](https://github.co
 - **Home**: what the mesh is doing at a glance; tap any number for the full detail (heard, repeaters, packets
   per minute, noise floor, this radio).
 - **Map**: nodes at their positions, each packet animated along its route, links learned from the paths.
-- **Live**: every packet heard or sent. **Nodes** and **Chats**: contacts, channels and direct messages, with emoji. Hold a message for its details (time, repeaters, signal, delivery) and to reply, message the sender privately, see their node, send again or delete.
+- **Live**: every packet heard or sent. **Nodes** and **Chats**: contacts, channels and direct messages, with emoji. Tap or hold a message for its details (time, repeaters, signal, delivery) and to reply, message the sender privately, see their node, send again or delete.
 - **Manage a repeater or room server**: log in with its admin password (kept on the radio if you like), then
   its status and telemetry, the nodes it hears, every setting its command line has (name, position, radio, a
   10-minute radio trial, TX power, repeating and hop limits, loop detection, advert intervals, timing,

@@ -432,6 +432,7 @@ struct HarnessAccess {
         return nullptr;
     }
     static bool msgOpen(App &a) { return a.msgBox && !lv_obj_has_flag(a.msgBox, LV_OBJ_FLAG_HIDDEN); }
+    static bool chatIsOpen(App &a) { return a.chatOpen; }
     static void msgAction(App &a, int act) { a.msgAction(act); }
     static std::string input(App &a) { return lv_textarea_get_text(a.chatInput); }
     static size_t lines(App &a) { return a.conv(a.chatKey).lines.size(); }
@@ -625,6 +626,29 @@ int main(int argc, char **argv)
     app.onDelivered(100, true);
     pump(200);
     shot("06b_chat_sent");
+    // the keys: Up from the empty message box steps onto the newest message, OK opens its menu, Back closes
+    // just the menu
+    app.key(hx::K_UP);
+    pump(200);
+    shot("06c_chat_pick_msg");
+    app.key(hx::K_ENTER);
+    pump(200);
+    if (!hx::HarnessAccess::msgOpen(app)) {
+        printf("FAIL OK on a message with the keys\n");
+        return 1;
+    }
+    shot("06d_chat_msg_menu_keys");
+    app.key(hx::K_BACK);
+    pump(200);
+    if (hx::HarnessAccess::msgOpen(app) || hx::HarnessAccess::tab(app) != hx::App::T_CHATS || !hx::HarnessAccess::chatIsOpen(app)) {
+        printf("FAIL Back on the message menu must close only the menu\n");
+        return 1;
+    }
+    app.key(hx::K_BACK);
+    app.selectTab(hx::App::T_HOME);
+    app.key('r'); // R: the conversation the last message came in on
+    pump(300);
+    shot("06f_chat_r_key");
     app.key(hx::K_BACK);
     app.selectTab(hx::App::T_MORE);
     pump(300);
@@ -730,11 +754,18 @@ int main(int argc, char **argv)
             printf("FAIL no received message to hold\n");
             return 1;
         }
-        lv_obj_send_event(b, LV_EVENT_CLICKED, nullptr);
+        lv_obj_send_event(b, LV_EVENT_CLICKED, nullptr); // (a touch's CLICKED alone, as after a hold: not again)
         if (HA::msgOpen(app)) {
-            printf("FAIL a tap opened the message menu\n");
+            printf("FAIL a plain CLICKED opened the message menu\n");
             return 1;
         }
+        lv_obj_send_event(b, LV_EVENT_SHORT_CLICKED, nullptr); // a tap
+        pump(100);
+        if (!HA::msgOpen(app)) {
+            printf("FAIL a tap on a message\n");
+            return 1;
+        }
+        HA::msgAction(app, 5); // Close
         lv_obj_send_event(b, LV_EVENT_LONG_PRESSED, nullptr);
         pump(100);
         if (!HA::msgOpen(app)) {

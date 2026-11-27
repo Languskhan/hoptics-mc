@@ -134,6 +134,9 @@ class App : public Ui
     void msgAction(int a);
     ConvKey chatKey;
     bool chatOpen = false;
+    // the last conversation a message came in on (tap its toast, or press R, to open it)
+    ConvKey lastIn, toastConv;
+    bool haveLastIn = false, toastIsMsg = false;
     lv_obj_t *nodeOv = nullptr, *nodeOvBody = nullptr;
     uint8_t nodeOvKey[6] = {};
     // stat details: a Home tile (or the top card, or the activity chart) opened full screen

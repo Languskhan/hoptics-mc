@@ -61,10 +61,12 @@ On the Heltec kits, the user button is Back.
 
 - Send and receive in a channel and a direct message, with emoji. Restart the radio and check that the chats
   are still there.
-- **Hold a message** (or press OK on it with the trackball or keys; Up from the message box moves onto the
-  messages): when it was sent, the channel, how many repeaters it came through and its signal, or for yours
+- **Tap or hold a message** (or press OK on it with the trackball or keys; Up from the empty message box moves
+  onto the messages): when it was sent, the channel, how many repeaters it came through and its signal, or for yours
   whether it was delivered and how fast. Try **Reply** (puts `@[Name]` in the message box), **Private**, **Node
   info**, **Send again** and **Delete**.
+- Tap a new message's pop-up to jump to that chat; with a keyboard, **R** (outside a text box) opens the chat the
+  last message came in on. A half-typed message stays with the chat it was typed in.
 - Tap each number on Home for its detail screen.
 - **Map**: with a GPS fix (or a position set in the app), watch packets travel along their routes.
 - **Nodes → a repeater you run → Manage**: log in with its admin password. Check its status, the nodes it hears,
