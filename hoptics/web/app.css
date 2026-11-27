@@ -53,7 +53,8 @@ body.day .btn.primary{color:#fff;background:linear-gradient(180deg,#0aa5c7,#0891
 header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;padding:10px 18px;background:var(--bar);
 border-bottom:1px solid var(--line);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 header .brand h1{font-size:15px}
-.chips{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.chips{display:flex;gap:6px;flex-wrap:nowrap;overflow:hidden;justify-content:flex-end;min-width:0}
+.chip{font-variant-numeric:tabular-nums}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:var(--card2);border:1px solid var(--line);font-size:12px;color:var(--muted);white-space:nowrap}
 .chip i{width:7px;height:7px;border-radius:50%;background:var(--dim)}
 .chip.ok i{background:var(--green);box-shadow:0 0 8px var(--green)}

@@ -79,7 +79,7 @@ esp_err_t sendJson(httpd_req_t *r, const char *status, const char *json)
 // the session token in the "hx" cookie, if it is one of ours (and still fresh): its slot, or -1
 int sessionOf(httpd_req_t *r)
 {
-    char c[256];
+    char c[640]; // other sites' cookies on the same address come along too: a short buffer read as "signed out"
     if (httpd_req_get_hdr_value_str(r, "Cookie", c, sizeof(c)) != ESP_OK)
         return -1;
     const char *p = strstr(c, "hx=");
@@ -498,7 +498,7 @@ bool start(uint16_t port)
     c.server_port = port;
     c.ctrl_port = 32770;
     c.stack_size = 6144;
-    c.max_open_sockets = 4;
+    c.max_open_sockets = 7; // a browser opens up to 6 at once; fewer made it drop live requests (page flapping)
     c.lru_purge_enable = true;
     c.max_uri_handlers = 14;
     c.recv_wait_timeout = 10; // an update arrives over a slow link sometimes

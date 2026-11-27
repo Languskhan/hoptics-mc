@@ -156,13 +156,14 @@ const Feed = {
     this.ws.onopen = () => { S.feedState = "live"; this.backoff = 3000; this.fails = 0; this.opened = true; UI.chips(); };
     this.ws.onmessage = (e) => { try { this.onMsg(JSON.parse(e.data)); } catch (x) {} };
     this.ws.onclose = () => { this.ws = null; if (this.url) this.retry(); };
-    this.ws.onerror = () => { S.feedState = "failed"; UI.chips(); };
+    this.ws.onerror = () => {}; // onclose follows and decides what to show
   },
   retry() {
     // a server that never once let this browser in (CoreScope turns away pages from other sites) is left alone,
     // instead of the chip flicking between Connecting and Internet down every few seconds
     if (++this.fails >= 3 && !this.opened) { S.feedState = "refused"; this.timer = 0; UI.chips(); return; }
-    S.feedState = "failed"; UI.chips(); clearTimeout(this.timer);
+    if (this.fails >= 2) { S.feedState = "failed"; UI.chips(); } // a single drop just reconnects ("Connecting")
+    clearTimeout(this.timer);
     this.timer = setTimeout(() => { this.timer = 0; if (this.url) this.connect(); }, this.backoff); this.backoff = Math.min(this.backoff * 2, 120000);
   },
   stop() { this.url = ""; clearTimeout(this.timer); this.timer = 0; this.fails = 0; this.opened = false; this.backoff = 3000; if (this.ws) { this.ws.onclose = null; this.ws.close(); } this.ws = null; if (this.sim) this.sim.stop(); this.sim = null; S.feedState = "off"; },
@@ -335,7 +336,9 @@ const UI = {
     c.replaceChildren();
     const chip = (cls, text, opt) => { const e = el("span", "chip " + cls + (opt ? " opt" : "")); e.append(el("i"), text); c.append(e); };
     if (n.batt) chip(n.batt.pct >= 101 ? "ok" : n.batt.pct > 30 ? "ok" : n.batt.pct > 15 ? "warn" : "bad", n.batt.pct >= 101 ? "USB power" : (n.batt.pct >= 0 ? n.batt.pct + "% " : "") + (n.batt.mv / 1000).toFixed(2) + " V");
-    chip(S.feedState === "live" ? "ok" : S.feedState === "off" ? "" : S.feedState === "connecting" ? "warn" : "bad", S.feedState === "live" ? "Internet live" : S.feedState === "off" ? "Internet off" : S.feedState === "connecting" ? "Connecting" : S.feedState === "refused" ? "Internet refused" : "Internet down", true);
+    if (S.feedState !== "refused") // a server that turns browsers away is a lasting fact (Settings says so), not an alarm
+      chip(S.feedState === "live" ? "ok" : S.feedState === "off" ? "" : S.feedState === "connecting" ? "warn" : "bad", S.feedState === "live" ? "Internet live" : S.feedState === "off" ? "Internet off" : S.feedState === "connecting" ? "Connecting" : "Internet down", true);
+    if (Poll.fails > 3) chip("bad", "Node not answering, retrying");
     if (n.rssi) chip(n.rssi > -67 ? "ok" : n.rssi > -78 ? "warn" : "bad", "Wi-Fi " + n.rssi + " dBm", true);
     $("hdrName").textContent = n.name || "Hoptics-MC";
     const r = S.snap.radio || {};
@@ -1053,15 +1056,17 @@ const Poll = {
     try {
       const d = await API.state();
       if (!d) { showLogin(); return; }
+      const was = this.fails;
       this.fails = 0;
+      if (was > 3) UI.chips();
       const first = !S.snap;
       takeSnapshot(d);
       if (first) showApp();
       if (d.feed && d.feed.url) Feed.start(d.feed.url);
       UI.render();
     } catch (e) {
-      this.fails++;
-      if (this.fails > 2) { const c = $("chips"); if (c) { c.replaceChildren(); const x = el("span", "chip bad"); x.append(el("i"), "Node not reachable, retrying"); c.append(x); } }
+      this.fails++; // a missed answer now and then is normal on Wi-Fi: only a run of them shows (in the header chips)
+      if (this.fails === 4) UI.chips();
     }
     this.t = setTimeout(() => this.tick(), document.hidden ? 10000 : 2000);
   },
