@@ -383,6 +383,8 @@ esp_err_t onSend(httpd_req_t *r)
         return sendJson(r, "400 Bad Request", "{\"error\":\"Bad request\"}");
     c += 3;
     c += strspn(c, " :");
+    if (*c < '0' || *c > '9') // a number only: anything else must not fall back to channel 0 (Public)
+        return sendJson(r, "400 Bad Request", "{\"error\":\"Bad channel\"}");
     q.channel = (uint8_t)atoi(c);
     t += 6;
     t += strspn(t, " :");
