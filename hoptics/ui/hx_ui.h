@@ -73,6 +73,9 @@ class App : public Ui
         bool mine = false;
         uint8_t state = 0; // 0 none, 1 sending, 2 delivered (ACK), 3 no ACK, 4 sent (channels)
         int8_t hops = -1; // received: hops it took (-1 unknown, -2 came over the live feed); sent: observers that heard it
+        // kept only while running (not saved): the last hop's signal, and for a direct message the wait for its ACK
+        int8_t snr4 = -128; // -128 unknown
+        uint32_t sentMs = 0, rttMs = 0;
     };
     struct Conv {
         ConvKey key;
@@ -120,6 +123,15 @@ class App : public Ui
     bool dirtyChats = true;
     // overlays
     lv_obj_t *chatOv = nullptr, *chatTitle = nullptr, *chatMsgs = nullptr, *chatInput = nullptr;
+    // hold a message (or OK on it with the keys): what is known about it, and what can be done with it
+    lv_obj_t *msgBox = nullptr, *msgCard = nullptr, *msgInfo = nullptr, *msgBtns = nullptr;
+    uint32_t msgSeq = 0;      // the message the box is about
+    uint8_t msgFrom[6] = {};  // its sender, when they are a contact
+    bool msgFromKnown = false;
+    bool keyClick = false;    // the CLICKED being handled came from a key, not a tap
+    void openMsgMenu(uint32_t seq);
+    void closeMsgMenu(void);
+    void msgAction(int a);
     ConvKey chatKey;
     bool chatOpen = false;
     lv_obj_t *nodeOv = nullptr, *nodeOvBody = nullptr;

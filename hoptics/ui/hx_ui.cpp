@@ -1382,6 +1382,197 @@ void App::buildChatOverlay(void)
     lv_obj_add_event_cb(chatInput, [](lv_event_t *) { self->sendFromInput(); }, LV_EVENT_READY, nullptr); // on-screen OK
     lv_obj_t *send = button(in, LV_SYMBOL_UPLOAD, C_CYAN, 40, 32);
     lv_obj_add_event_cb(send, [](lv_event_t *) { self->sendFromInput(); }, LV_EVENT_CLICKED, nullptr);
+
+    // the message box: dims the chat, a card with the details and a column of actions
+    msgBox = plain(scr);
+    lv_obj_set_size(msgBox, W(), H());
+    lv_obj_set_style_bg_color(msgBox, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(msgBox, LV_OPA_60, 0);
+    lv_obj_add_flag(msgBox, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(msgBox, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(
+        msgBox,
+        [](lv_event_t *e) {
+            if (lv_event_get_target(e) == lv_event_get_current_target(e))
+                self->closeMsgMenu(); // a tap beside the card closes it
+        },
+        LV_EVENT_CLICKED, nullptr);
+    msgCard = card(msgBox, "");
+    lv_obj_set_width(msgCard, std::min<int32_t>(W() - 20, 300));
+    lv_obj_set_style_max_height(msgCard, H() - 20, 0);
+    lv_obj_add_flag(msgCard, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_center(msgCard);
+    msgInfo = label(msgCard, F12, C_TEXT, "");
+    wrap(msgInfo);
+    msgBtns = plain(msgCard);
+    lv_obj_set_size(msgBtns, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(msgBtns, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(msgBtns, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(msgBtns, 5, 0);
+}
+
+namespace
+{
+enum MsgAct { A_REPLY, A_PRIVATE, A_NODE, A_RESEND, A_DELETE, A_CLOSE };
+}
+
+void App::openMsgMenu(uint32_t seq)
+{
+    const Conv &c = conv(chatKey);
+    const Line *l = nullptr;
+    for (const auto &x : c.lines)
+        if (x.seq == seq)
+            l = &x;
+    if (!l)
+        return;
+    msgSeq = seq;
+    // the sender, when they are a contact (a direct chat's other end; on a channel, a contact of the same name)
+    msgFromKnown = false;
+    Contact ct;
+    if (!l->mine && chatKey.dm && m.findContact(chatKey.key, ct)) {
+        memcpy(msgFrom, ct.key, 6);
+        msgFromKnown = true;
+    } else if (!l->mine && !l->from.empty())
+        for (size_t i = 0; i < m.contactCount() && !msgFromKnown; i++)
+            if (m.contactAt(i, ct) && l->from == ct.name) {
+                memcpy(msgFrom, ct.key, 6);
+                msgFromKnown = true;
+            }
+    // the title, then the details
+    lv_obj_t *title = lv_obj_get_child(msgCard, 0);
+    if (l->mine)
+        lv_label_set_text(title, "YOUR MESSAGE");
+    else
+        lv_label_set_text_fmt(title, "FROM %s", chatKey.dm ? c.title.c_str() : l->from.c_str());
+    std::string t;
+    char b[96];
+    const uint32_t now = m.now();
+    if (l->time > 1600000000 && now > 1600000000) {
+        struct tm tmv;
+        localTime(l->time, tmv);
+        strftime(b, sizeof(b), "%a %d %b, %H:%M:%S", &tmv);
+        t += std::string(l->mine ? "Sent " : "Received ") + b + (now - l->time >= 60 ? " (" + ago(now, l->time) + ")" : std::string());
+    } else
+        t += std::string(l->mine ? "Sent " : "Received ") + (l->time ? ago(now, l->time) : std::string("just now"));
+    t += chatKey.dm ? "\nDirect message" : "\nChannel: " + c.title;
+    if (l->mine) {
+        if (chatKey.dm) {
+            if (l->state == 2 && l->rttMs) {
+                snprintf(b, sizeof(b), "\nDelivered: their radio confirmed it after %.1f s", l->rttMs / 1000.0f);
+                t += b;
+            } else
+                t += l->state == 2 ? "\nDelivered: their radio confirmed it"
+                     : l->state == 3 ? "\nNo reply: their radio didn't confirm it (it may still have arrived)"
+                                     : l->state == 1 ? "\nWaiting for their radio to confirm it"
+                                                     : "\nSent";
+        } else {
+            t += "\nSent to the channel (channels don't confirm delivery)";
+            if (l->hops > 0) {
+                snprintf(b, sizeof(b), "\nHeard by %d observer%s on the live feed", l->hops, l->hops == 1 ? "" : "s");
+                t += b;
+            }
+        }
+    } else {
+        if (l->hops == -2)
+            t += "\nCame over the internet (the live feed): an observer heard it, this radio didn't";
+        else if (l->hops == 0)
+            t += "\nHeard directly, no repeaters";
+        else if (l->hops > 0) {
+            snprintf(b, sizeof(b), "\nCame through %d repeater%s", l->hops, l->hops == 1 ? "" : "s");
+            t += b;
+        } else
+            t += "\nRoute unknown";
+        if (l->snr4 != -128) {
+            snprintf(b, sizeof(b), "\nSignal %+.1f dB SNR (the last hop to this radio)", l->snr4 / 4.0f);
+            t += b;
+        }
+    }
+    unsigned chars = 0;
+    for (unsigned char ch : l->text)
+        chars += (ch & 0xC0) != 0x80; // letters, not bytes
+    snprintf(b, sizeof(b), "\n%u characters", chars);
+    t += b;
+    setText(msgInfo, t.c_str());
+    // what can be done with it
+    lv_obj_clean(msgBtns);
+    auto act = [this](const char *txt, lv_color_t col, int a) {
+        lv_obj_t *bt = button(msgBtns, txt, col, LAND ? LV_PCT(49) : LV_PCT(100), 30); // two across on the wide screens
+        lv_obj_set_user_data(bt, (void *)(intptr_t)a);
+        lv_obj_add_event_cb(
+            bt, [](lv_event_t *e) { self->msgAction((int)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_current_target(e))); },
+            LV_EVENT_CLICKED, nullptr);
+        return bt;
+    };
+    lv_obj_t *first = nullptr;
+    if (!l->mine && !chatKey.dm && !l->from.empty())
+        first = act(LV_SYMBOL_EDIT " Reply", C_CYAN, A_REPLY);
+    if (!l->mine && !chatKey.dm && msgFromKnown)
+        act(LV_SYMBOL_ENVELOPE " Private", C_CYAN, A_PRIVATE);
+    if (msgFromKnown)
+        act(LV_SYMBOL_LIST " Node info", C_BLUE, A_NODE);
+    if (l->mine)
+        first = act(LV_SYMBOL_REFRESH " Send again", C_CYAN, A_RESEND);
+    act(LV_SYMBOL_TRASH " Delete", C_RED, A_DELETE);
+    lv_obj_t *cl = act("Close", C_MUTED, A_CLOSE);
+    lv_obj_remove_flag(msgBox, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(msgBox);
+    lv_obj_scroll_to_y(msgCard, 0, LV_ANIM_OFF);
+    refocus(first ? first : cl);
+}
+
+void App::closeMsgMenu(void)
+{
+    lv_obj_add_flag(msgBox, LV_OBJ_FLAG_HIDDEN);
+    refocus(chatInput);
+}
+
+void App::msgAction(int a)
+{
+    Conv &c = conv(chatKey);
+    auto it = std::find_if(c.lines.begin(), c.lines.end(), [this](const Line &x) { return x.seq == msgSeq; });
+    if (it == c.lines.end() || a == A_CLOSE)
+        return closeMsgMenu();
+    const Line l = *it;
+    lv_obj_add_flag(msgBox, LV_OBJ_FLAG_HIDDEN); // (its buttons stay until the next message's: one is running this)
+    switch (a) {
+    case A_REPLY: { // the MeshCore apps' mention: @[Name], at the start of the message
+        std::string t = "@[" + l.from + "] ";
+        const char *had = lv_textarea_get_text(chatInput);
+        if (had && strncmp(had, t.c_str(), t.size()))
+            t += had;
+        else if (had)
+            t = had;
+        lv_textarea_set_text(chatInput, t.c_str());
+        refocus(chatInput);
+        if (kbNeeded())
+            kbShow(chatInput);
+        return;
+    }
+    case A_PRIVATE: {
+        ConvKey k;
+        k.dm = true;
+        memcpy(k.key, msgFrom, 6);
+        return openChat(k);
+    }
+    case A_NODE: {
+        uint8_t key[6];
+        memcpy(key, msgFrom, 6);
+        closeChat(); // its page opens on its own, over the tab
+        return openNode(key);
+    }
+    case A_RESEND: {
+        const uint32_t id = sendLine(chatKey, l.text.c_str());
+        renderChat();
+        toast(id ? LV_SYMBOL_REFRESH " Sent again" : "Couldn't send: the radio is busy, try again");
+        return refocus(chatInput);
+    }
+    case A_DELETE:
+        c.lines.erase(it);
+        chatsChanged();
+        renderChat();
+        toast(LV_SYMBOL_TRASH " Deleted from this screen");
+        return refocus(chatInput);
+    }
 }
 
 void App::appendBubble(const Line &l)
@@ -1436,6 +1627,18 @@ void App::appendBubble(const Line &l)
     else
         snprintf(meta, sizeof(meta), "%s", when.c_str());
     label(b, big ? F12 : F10, l.mine ? C_ME_META : (l.state == 3 ? C_RED : C_DIM), meta);
+    // hold it (or OK on it with the keys) for its details and what can be done with it
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_opa(b, LV_OPA_60, LV_STATE_PRESSED);
+    stop(b);
+    lv_obj_set_user_data(b, (void *)(uintptr_t)l.seq);
+    auto open = [](lv_event_t *e) {
+        if (lv_event_get_code(e) == LV_EVENT_CLICKED && !self->keyClick)
+            return; // a tap only scrolls past; a hold or the OK key opens it
+        self->openMsgMenu((uint32_t)(uintptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_current_target(e)));
+    };
+    lv_obj_add_event_cb(b, open, LV_EVENT_LONG_PRESSED, nullptr);
+    lv_obj_add_event_cb(b, open, LV_EVENT_CLICKED, nullptr);
 }
 
 void App::renderChat(void)
@@ -1524,6 +1727,7 @@ uint32_t App::sendLine(const ConvKey &key, const char *t)
     l.time = m.now();
     l.id = id;
     l.state = !id ? 3 : (key.dm ? 1 : 4); // channels have no ACK: "sent" is as far as it goes
+    l.sentMs = lv_tick_get();
     l.seq = ++lineSeq;
     c.lines.push_back(l);
     if (c.lines.size() > 60)
@@ -1542,6 +1746,8 @@ void App::onMessage(const Message &msg)
     l.text = msg.text ? msg.text : "";
     l.time = msg.time ? msg.time : m.now();
     l.hops = msg.viaNet ? -2 : msg.pathLen;
+    if (!msg.viaNet)
+        l.snr4 = msg.snr4;
     l.seq = ++lineSeq;
     c.lines.push_back(l);
     if (c.lines.size() > 60)
@@ -1591,6 +1797,8 @@ void App::onDelivered(uint32_t id, bool ok)
         for (auto &l : c.lines)
             if (l.mine && l.id == id) {
                 l.state = ok ? 2 : 3;
+                if (ok && l.sentMs)
+                    l.rttMs = lv_tick_elaps(l.sentMs);
                 chatsChanged();
                 if (chatOpen && c.key == chatKey)
                     renderChat();
@@ -3040,6 +3248,8 @@ lv_obj_t *App::topOverlay(void) const
 {
     if (askBox && !lv_obj_has_flag(askBox, LV_OBJ_FLAG_HIDDEN))
         return askBox;
+    if (msgBox && !lv_obj_has_flag(msgBox, LV_OBJ_FLAG_HIDDEN))
+        return msgBox;
     if (chatOpen)
         return chatOv;
     if (rm)
@@ -4453,6 +4663,8 @@ void App::goBack(void)
         closeNode();
     else if (topOverlay() == statOv)
         closeStat();
+    else if (topOverlay() == msgBox)
+        closeMsgMenu();
     else if (topOverlay() == askBox)
         lv_obj_send_event(lv_obj_get_child(lv_obj_get_child(lv_obj_get_child(askBox, 0), 2), 0), LV_EVENT_CLICKED, nullptr); // Cancel
     else if (tab == T_MORE && moreOpen >= 0)
@@ -4780,8 +4992,11 @@ void App::key(uint32_t k)
             lv_obj_send_event(f, LV_EVENT_VALUE_CHANGED, nullptr);
         } else if (lv_obj_check_type(f, &lv_dropdown_class))
             lv_dropdown_open(f);
-        else
+        else {
+            keyClick = true; // a message bubble opens its menu on OK, but only on a hold when tapped
             lv_obj_send_event(f, LV_EVENT_CLICKED, nullptr);
+            keyClick = false;
+        }
         return;
     default:
         break;

@@ -418,6 +418,31 @@ struct HarnessAccess {
     static void unlock(App &a) { a.unlock(); }
     static lv_obj_t *feedField(App &a) { return a.feedUrl; }
     static void tapChatInput(App &a) { lv_obj_send_event(a.chatInput, LV_EVENT_CLICKED, nullptr); }
+    // the bubble of the newest message (mine or someone else's) in the open chat
+    static lv_obj_t *bubble(App &a, bool mine)
+    {
+        const auto &ls = a.conv(a.chatKey).lines;
+        for (auto it = ls.rbegin(); it != ls.rend(); ++it)
+            if (it->mine == mine)
+                for (uint32_t i = 0; i < lv_obj_get_child_count(a.chatMsgs); i++) {
+                    lv_obj_t *b = lv_obj_get_child(lv_obj_get_child(a.chatMsgs, i), 0);
+                    if (b && (uint32_t)(uintptr_t)lv_obj_get_user_data(b) == it->seq)
+                        return b;
+                }
+        return nullptr;
+    }
+    static bool msgOpen(App &a) { return a.msgBox && !lv_obj_has_flag(a.msgBox, LV_OBJ_FLAG_HIDDEN); }
+    static void msgAction(App &a, int act) { a.msgAction(act); }
+    static std::string input(App &a) { return lv_textarea_get_text(a.chatInput); }
+    static size_t lines(App &a) { return a.conv(a.chatKey).lines.size(); }
+    static void clearInput(App &a) { lv_textarea_set_text(a.chatInput, ""); }
+    static void sendText(App &a, const char *t) { lv_textarea_set_text(a.chatInput, t); a.sendFromInput(); }
+    static void keyOk(App &a, lv_obj_t *o)
+    {
+        a.keyClick = true;
+        lv_obj_send_event(o, LV_EVENT_CLICKED, nullptr);
+        a.keyClick = false;
+    }
     static void tapRemoteField(App &a) { lv_obj_send_event(a.rmTypingTarget(), LV_EVENT_CLICKED, nullptr); }
     static void node(App &a, const uint8_t *k) { a.openNode(k); }
     static void remote(App &a, const uint8_t *k) { a.openRemote(k); }
@@ -697,6 +722,64 @@ int main(int argc, char **argv)
     hx::HarnessAccess::channel(app, 1);
     pump(300);
     shot("20_chat_emoji");
+    // hold a message: its details and actions. A tap doesn't open it; OK on it with the keys does.
+    {
+        using HA = hx::HarnessAccess;
+        lv_obj_t *b = HA::bubble(app, false);
+        if (!b) {
+            printf("FAIL no received message to hold\n");
+            return 1;
+        }
+        lv_obj_send_event(b, LV_EVENT_CLICKED, nullptr);
+        if (HA::msgOpen(app)) {
+            printf("FAIL a tap opened the message menu\n");
+            return 1;
+        }
+        lv_obj_send_event(b, LV_EVENT_LONG_PRESSED, nullptr);
+        pump(100);
+        if (!HA::msgOpen(app)) {
+            printf("FAIL holding a message\n");
+            return 1;
+        }
+        shot("20b_message_menu");
+        HA::msgAction(app, 0); // Reply on the channel
+        pump(100);
+        printf("reply puts: [%s]\n", HA::input(app).c_str());
+        if (HA::msgOpen(app) || HA::input(app).rfind("@[", 0) != 0) {
+            printf("FAIL reply on the channel\n");
+            return 1;
+        }
+        if (HT > WD) {
+            app.key(hx::K_BACK); // the keyboard the reply opened
+            pump(100);
+        }
+        HA::clearInput(app);
+        // one of mine, opened with the OK key: Send again, then Delete
+        HA::sendText(app, "Testing the message menu");
+        pump(100);
+        const size_t n = HA::lines(app);
+        HA::keyOk(app, HA::bubble(app, true));
+        pump(100);
+        if (!HA::msgOpen(app)) {
+            printf("FAIL OK on my message\n");
+            return 1;
+        }
+        shot("20c_message_menu_mine");
+        HA::msgAction(app, 3); // Send again
+        pump(100);
+        if (HA::lines(app) != n + 1) {
+            printf("FAIL send again\n");
+            return 1;
+        }
+        HA::keyOk(app, HA::bubble(app, true));
+        HA::msgAction(app, 4); // Delete
+        pump(100);
+        if (HA::lines(app) != n || HA::msgOpen(app)) {
+            printf("FAIL delete\n");
+            return 1;
+        }
+        pump(4500); // the toasts go
+    }
     if (HT > WD) {
         hx::HarnessAccess::tapChatInput(app);
         pump(100);
