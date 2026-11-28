@@ -3,12 +3,12 @@ name: Build Hoptics-MC M7
 # ThinkNode M7 images, built from agessaman's MeshCore observer firmware (MIT) at the commit in m7/OBSERVER_PIN.
 on:
   push:
-    branches: [main]
+    branches: [main, beta]   # main publishes to m7-builds (stable), beta to m7-beta
     paths: ['m7/**', '.github/workflows/m7.yml']
   workflow_dispatch:
 
 permissions:
-  contents: write # publish the images to the m7-builds branch
+  contents: write # publish the images to the m7-builds / m7-beta branch
 
 jobs:
   build:
@@ -89,12 +89,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: out
-      - name: Push to m7-builds
+      - name: Push the images
+        env:
+          DEST: ${{ github.ref_name == 'main' && 'm7-builds' || 'm7-beta' }}
         run: |
           cd out
-          git init -q -b m7-builds
+          # never publish a set missing the Hoptics images: the dashboards update from these folders
+          for d in Hoptics_M7_repeater_observer Hoptics_M7_room_observer; do
+            [ -s "$d/$d.update.bin" ] && [ -s "$d/SHA256SUMS.txt" ] || { echo "missing $d, not publishing"; exit 1; }
+          done
+          git init -q -b "$DEST"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -qm "M7 images from ${GITHUB_SHA::7}"
-          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" m7-builds
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" "$DEST"

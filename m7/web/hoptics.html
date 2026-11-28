@@ -28,7 +28,7 @@ main{padding:0 12px 30px;max-width:1400px;margin:0 auto}section{display:none;ani
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:12px}
 .tile{padding:14px 16px;cursor:default}.tile .k{color:var(--dim);font-size:12px;font-weight:550;text-transform:uppercase;letter-spacing:.5px}
 .tile .v{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:4px}.tile .s{color:var(--dim);font-size:12px}
-[hidden]{display:none!important}.card{padding:16px 18px;margin-bottom:12px}.card h3{margin:0 0 10px;font-size:15px;font-weight:620}
+[hidden]{display:none!important}body.viewer .admin-only,body:not(.viewer) .viewer-only{display:none!important}.card{padding:16px 18px;margin-bottom:12px}.card h3{margin:0 0 10px;font-size:15px;font-weight:620}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:900px){.two{grid-template-columns:1fr}}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--faint);white-space:nowrap}
 th{color:var(--dim);font-weight:550;font-size:12px;position:sticky;top:0;background:rgba(14,21,30,.9);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
@@ -70,9 +70,10 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 <div id="login" class="glass" hidden>
   <svg class="logo" viewBox="0 0 32 32" style="width:46px;height:46px"><use href="#mark"/></svg>
   <h2 style="margin:8px 0 2px">Hoptics M7</h2>
-  <p class="dim">Enter this node's admin password.</p>
+  <p class="dim">Enter this node's admin password, or the viewer password to watch.</p>
   <input id="pw" type="password" autocomplete="current-password">
   <button class="b p" id="go" style="width:100%">Sign in</button>
+  <button class="b" id="vgo" style="width:100%;margin-top:8px" hidden>View only</button>
   <p id="lmsg" class="dim"></p>
 </div>
 <svg width="0" height="0" style="position:absolute"><defs>
@@ -85,7 +86,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 <header class="glass">
   <svg class="logo"><use href="#mark"/></svg>
   <div><h1 id="name">Hoptics M7</h1><div class="sub" id="hsub"></div></div>
-  <span class="sp"></span><span class="sub" id="hnet"></span><a class="b" href="/" style="padding:6px 12px;border-radius:10px;background:rgba(255,255,255,.08);color:var(--text)">Settings</a>
+  <span class="sp"></span><span class="sub" id="hnet"></span><span class="pill viewer-only" id="vbadge">View only</span><button class="b viewer-only" id="vout">Sign out</button><a class="b admin-only" href="/" style="padding:6px 12px;border-radius:10px;background:rgba(255,255,255,.08);color:var(--text)">Settings</a>
 </header>
 <nav id="tabs" class="glass"></nav>
 <main>
@@ -120,8 +121,8 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
   <div id="map" class="glass"></div>
 </section>
 <section id="t-nbrs">
-  <div class="row"><button class="b" id="scan">Scan now</button><span class="dim" id="scanmsg">Repeaters this node hears directly (zero hop).</span></div>
-  <div class="card glass"><h3>Remote admin</h3>
+  <div class="row admin-only"><button class="b" id="scan">Scan now</button><span class="dim" id="scanmsg">Repeaters this node hears directly (zero hop).</span></div>
+  <div class="card glass admin-only"><h3>Remote admin</h3>
     <div id="admoff" class="dim" hidden>Remote admin signs in with this node's chat identity, so turn on <b>Direct messages</b> on the Chat tab first.</div>
     <div id="admon">
       <div class="row"><select id="admsel" style="flex:1;min-width:200px"></select><input id="admpw" type="password" maxlength="15" autocomplete="off" placeholder="Its admin password" style="width:180px"><button class="b p" id="admgo">Sign in</button><button class="b" id="admout">Sign out</button></div>
@@ -132,7 +133,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
       <details style="margin-top:8px"><summary class="dim">Add a repeater or room by public key</summary>
         <div class="row" style="margin-top:8px"><input id="admapub" maxlength="64" placeholder="64-character public key" style="flex:2" class="mono"><input id="admanm" maxlength="23" placeholder="Name" style="flex:1"><select id="admaty"><option value="repeater">Repeater</option><option value="room">Room</option></select><button class="b" id="admadd">Save</button></div></details>
     </div></div>
-  <div class="card glass"><h3>Trace route</h3>
+  <div class="card glass admin-only"><h3>Trace route</h3>
     <div class="row"><input id="trpath" maxlength="64" placeholder="Repeater IDs, e.g. a1 or a1,b2" style="flex:1" class="mono"><label><input type="checkbox" id="trback" checked> and back</label><button class="b p" id="trgo">Trace</button></div>
     <div id="trout" style="margin-top:8px"><span class="dim" style="font-size:12px">Sends a trace out through the repeaters you list; each one adds the signal it heard. "And back" returns it the same way so you see both directions. Or press Trace on a neighbour below.</span></div></div>
   <div class="card glass"><h3>Neighbours</h3><div class="scroll"><table><thead><tr><th>Name</th><th>ID</th><th>SNR (dB)</th><th>Signal</th><th>Distance</th><th>Last heard</th><th></th></tr></thead><tbody id="nbody"></tbody></table></div></div>
@@ -151,9 +152,9 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
   <div class="card glass"><div class="row"><select id="chsel"></select><span class="dim">Channels you can read: Public, plus hashtags added in Insights.</span></div>
     <div id="chatlog" class="scroll" style="height:460px;display:flex;flex-direction:column;gap:6px;padding:4px"></div>
     <div id="chatat" class="glass" hidden style="margin-top:8px;padding:6px;border-radius:12px;display:flex;flex-wrap:wrap;gap:6px"></div>
-    <div class="row" style="margin-top:10px"><input id="chatin" maxlength="140" placeholder="Message as this node. Type @ to mention someone" style="flex:1"><button class="b p" id="chatsend">Send</button></div>
-    <p class="dim" style="font-size:12px" id="chatnote">Messages go out under this node's name. Each one is a flood that every repeater resends, so keep it to what's needed.</p></div>
-  <div class="card glass"><h3>Direct messages</h3>
+    <div class="row admin-only" style="margin-top:10px"><input id="chatin" maxlength="140" placeholder="Message as this node. Type @ to mention someone" style="flex:1"><button class="b p" id="chatsend">Send</button></div>
+    <p class="dim admin-only" style="font-size:12px" id="chatnote">Messages go out under this node's name. Each one is a flood that every repeater resends, so keep it to what's needed.</p></div>
+  <div class="card glass admin-only"><h3>Direct messages</h3>
     <div id="dmoff"><p class="dim" style="margin-top:0">Gives this node a second identity, a chat contact like a phone running MeshCore. People add it from its advert and message it; you read and reply here. The repeater keeps working exactly as before. Off by default.</p>
       <div class="row"><input id="dmnm" maxlength="31" placeholder="Chat name, e.g. Bluffs M7 chat" style="flex:1"><button class="b p" id="dmon1">Turn on</button></div></div>
     <div id="dmon" hidden>
@@ -169,7 +170,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
         <div class="row" style="margin-top:8px"><input id="dmapub" maxlength="64" placeholder="64-character public key" style="flex:2"><input id="dmanm" maxlength="31" placeholder="Name" style="flex:1"><button class="b" id="dmadd">Save</button></div></details>
     </div>
     <p class="dim" style="font-size:12px" id="dmnote">Contacts appear when their adverts are heard. A message goes direct once a path is known, otherwise by flood, and is retried twice. Saved contacts (16 at most) stay after a restart.</p></div>
-  <div class="card glass" id="roomcard" hidden><h3>Room posts</h3>
+  <div class="card glass admin-only" id="roomcard" hidden><h3>Room posts</h3>
     <div id="roomlog" class="scroll" style="height:360px;display:flex;flex-direction:column;gap:6px;padding:4px"></div>
     <div class="row" style="margin-top:8px"><input id="roomin" maxlength="140" placeholder="Post to the room as the room" style="flex:1"><button class="b p" id="roomsend">Post</button></div>
     <p class="dim" style="font-size:12px" id="roomnote">The last 32 posts in this room. Your posts go out under the room's own name to everyone logged in.</p></div>
@@ -199,6 +200,10 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 </section>
 <section id="t-system">
   <div class="two">
+    <div class="card glass"><h3>Viewer access</h3>
+      <p class="dim" style="margin-top:0">A second, read-only password so others can watch this dashboard: stats, graphs, map, packets, neighbours and public channels. Viewers never see DMs, room posts, alerts, settings, the console, updates, or this node's address and broker names.</p>
+      <div class="row"><input id="vpw" type="password" maxlength="64" autocomplete="new-password" placeholder="Viewer password (8+ characters)" style="flex:1"><button class="b" id="vset">Set</button><button class="b" id="vclr">Turn off</button></div>
+      <div id="vmsg" class="dim" style="margin-top:8px;font-size:13px"></div></div>
     <div class="card glass"><h3>Path ID size</h3>
       <p class="dim" style="margin-top:0">How many bytes of this node's key it puts in packet paths when it adverts. Bigger IDs stop two repeaters being mistaken for each other, at the cost of fewer hops a flood can carry. Every size is still forwarded on MeshCore 1.14 and newer; nodes older than that may drop multi-byte paths, so match what your mesh uses.</p>
       <div class="row"><select id="phm"><option value="0">1 byte: 256 IDs, floods up to 64 hops</option><option value="1">2 bytes: 65,536 IDs, up to 32 hops</option><option value="2">3 bytes: 16.7 million IDs, up to 21 hops</option></select><button class="b" id="phmset">Apply</button></div>
@@ -219,7 +224,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
       <p class="dim">New builds: <a href="https://github.com/Languskhan/hoptics-mc/tree/m7-builds/Hoptics_M7_repeater_observer" target="_blank" rel="noopener">Hoptics M7 downloads ↗</a></p></div>
   </div>
   <div class="card glass"><h3>Role</h3><div id="rolecard"><span class="dim">Loading...</span></div></div>
-  <div class="card glass"><h3>Updates</h3><div class="row"><button class="b" id="chk">Check for updates</button><span class="dim" id="chkmsg"></span></div></div>
+  <div class="card glass"><h3>Updates</h3><div class="row"><select id="chan"><option value="stable">Stable</option><option value="beta">Beta</option></select><button class="b" id="chk">Check for updates</button><span class="dim" id="chkmsg"></span></div></div>
   <div class="card glass"><h3>Discord alerts</h3><div id="alertcard"><span class="dim">Loading...</span></div></div>
   <div class="card glass"><h3>Stats feed (Home Assistant, Grafana)</h3><div id="statscard"><span class="dim">Loading...</span></div></div>
   <div class="card glass"><h3>Restart</h3><div class="row"><button class="b" id="reboot">Restart node</button><span class="dim">History in memory is cleared by a restart.</span></div></div>
@@ -360,7 +365,7 @@ const nowEpoch=()=>Math.floor(Date.now()/1000);
 function ago(sec){if(sec==null||sec<0||!isFinite(sec))return"-";if(sec<60)return Math.round(sec)+" s";if(sec<3600)return Math.round(sec/60)+" min";if(sec<86400)return(sec/3600).toFixed(1)+" h";return(sec/86400).toFixed(1)+" d"}
 function dur(s){const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return(d?d+"d ":"")+h+"h "+m+"m"}
 const fmtT=t=>new Date(t*1000).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
-async function api(path,opt){const r=await fetch(path,opt);if(r.status===401){showLogin();throw new Error("auth")}if(!r.ok)throw new Error(path+" "+r.status);return r.json()}
+async function api(path,opt){const r=await fetch(path,opt);if(r.status===401){if(!S.viewer)showLogin();throw new Error("auth")}if(!r.ok)throw new Error(path+" "+r.status);return r.json()}
 
 // ================================================================ background: the Hoptics constellation, drawn at screen resolution
 (()=>{const cv=$("sky"),c=cv.getContext("2d");let W,H,dpr,pts=[],last=0;
@@ -387,6 +392,14 @@ async function login(){
   if(r.ok){$("pw").value="";$("login").hidden=true;$("app").hidden=false;$("lmsg").textContent="";start()}
   else{const j=await r.json().catch(()=>({}));$("lmsg").textContent=j.error||("Sign in failed ("+r.status+")")}
 }
+async function vlogin(){$("lmsg").textContent="Signing in...";
+  const r=await fetch("/api/hx/view-login",{method:"POST",body:new URLSearchParams({password:$("pw").value})});$("pw").value="";
+  if(r.ok){$("login").hidden=true;viewerMode();$("app").hidden=false;$("lmsg").textContent="";start()}
+  else{const j=await r.json().catch(()=>({}));$("lmsg").textContent=j.error||("Sign in failed ("+r.status+")")}}
+$("vgo").onclick=vlogin;
+const VIEW_TABS=["overview","graphs","map","nbrs","packets","chat","insights"];
+function viewerMode(){S.viewer=true;document.body.classList.add("viewer");TABS.forEach(([t])=>{if(!VIEW_TABS.includes(t))$("b-"+t).hidden=true})}
+$("vout").onclick=async()=>{await fetch("/api/hx/view-logout",{method:"POST"}).catch(()=>{});location.reload()};
 $("go").onclick=login;$("pw").onkeydown=e=>{if(e.key==="Enter")login()};
 
 // ================================================================ CLI, one batch at a time
@@ -409,6 +422,11 @@ let phmRead=false;async function readPhm(){if(phmRead)return;phmRead=true;try{co
 $("phmset").onclick=async()=>{const v=$("phm").value;if(!/^[0-2]$/.test(v))return;
   if(!confirm("Use "+(+v+1)+"-byte path IDs for this node's adverts? Check the rest of your mesh runs MeshCore 1.14 or newer first."))return;
   try{const r=await cli(["set path.hash.mode "+v]);const t=val(r[0]);$("phmmsg").textContent=/ok/i.test(t)?"Set to "+(+v+1)+" byte"+(v==="0"?"":"s")+".":"Not set: "+t}catch(e){$("phmmsg").textContent="Not set: "+e.message}};
+// viewer password (admin)
+async function setViewPass(pw){const r=await fetch("/api/hx/view-pass",{method:"POST",body:new URLSearchParams({password:pw})});if(r.status===401){showLogin();return}
+  const j=await r.json().catch(()=>({}));$("vmsg").textContent=r.ok?(j.on?"Viewer sign-in is on. Share the password only with people you want watching.":"Viewer sign-in is off."):"Not set: "+(j.error||r.status)}
+$("vset").onclick=()=>{const p=$("vpw").value;$("vpw").value="";if(p.length<8){$("vmsg").textContent="Use 8 or more characters.";return}setViewPass(p)};
+$("vclr").onclick=()=>{if(confirm("Turn off viewer sign-in? Anyone watching is signed out."))setViewPass("")};
 // regional map source
 let regShown=null;function renderRegSrc(){const v=regSrc();if(regShown!==v&&document.activeElement!==$("regurl")){$("regurl").value=v;regShown=v}
   const ri=S.regionInfo;$("regmsg").textContent=!v?"Off.":ri&&ri.count?ri.count+" nodes, updated "+ago(ri.age)+" ago.":ri&&ri.err?"Not loaded: "+ri.err:"Loading (takes a minute)…"}
@@ -448,7 +466,7 @@ $("bkfile").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f
 const TABS=[["overview","Overview"],["graphs","Graphs"],["map","Live map"],["nbrs","Neighbours"],["packets","Packets"],["chat","Chat"],["insights","Insights"],["mqtt","MQTT"],["advisor","Advisor"],["console","Console"],["system","System"]];
 let tab="overview";
 TABS.forEach(([id,label])=>{const b=document.createElement("button");b.textContent=label;b.onclick=()=>setTab(id);b.id="b-"+id;$("tabs").appendChild(b)});
-function setTab(id){if(!TABS.some(t=>t[0]===id))id="overview";tab=id;TABS.forEach(([t])=>{$("t-"+t).classList.toggle("on",t===id);$("b-"+t).classList.toggle("on",t===id)});
+function setTab(id){if(!TABS.some(t=>t[0]===id)||(S.viewer&&!VIEW_TABS.includes(id)))id="overview";tab=id;TABS.forEach(([t])=>{$("t-"+t).classList.toggle("on",t===id);$("b-"+t).classList.toggle("on",t===id)});
   if(id==="map"){initMap();if(mapReady)setTimeout(()=>{map.invalidateSize();renderMapNodes(!S.mapFit);S.mapFit=1},60)}if(id==="advisor")loadAdvisor();history.replaceState(null,"","#"+id);render()}
 TYPES.forEach((t,i)=>{if(t){const o=document.createElement("option");o.value=i;o.textContent=t;$("pf").appendChild(o)}});
 
@@ -964,7 +982,8 @@ function sendFirmware(blob,name){
 
 // ---- builds on GitHub: the browser downloads them over HTTPS, checks the SHA-256 against the published list,
 // then hands them to the node, which checks the image again before switching to it.
-const BUILDS="https://raw.githubusercontent.com/Languskhan/hoptics-mc/m7-builds/";
+let CHAN="stable";try{CHAN=localStorage.getItem("hx.chan")==="beta"?"beta":"stable"}catch(e){}
+const buildsUrl=()=>"https://raw.githubusercontent.com/Languskhan/hoptics-mc/"+(CHAN==="beta"?"m7-beta":"m7-builds")+"/";
 const ROLES=[
  {id:"observer",env:"Hoptics_M7_repeater_observer",name:"Observer only",dash:1,repeat:false,desc:"Listens and uploads to MQTT; doesn't resend anything. The safest choice where repeaters already cover the area."},
  {id:"repeater",env:"Hoptics_M7_repeater_observer",name:"Observer + repeater",dash:1,repeat:true,desc:"Uploads to MQTT and resends packets for others. Helps where coverage is thin."},
@@ -975,9 +994,9 @@ const ROLES=[
  {id:"kiss",env:"ThinkNode_M7_kiss_modem",name:"KISS modem",desc:"A plain radio modem for other software (no mesh logic)."}];
 async function fetchBuild(env,msg){
   msg("Downloading the "+env+" build...");
-  const sums=await (await fetch(BUILDS+env+"/SHA256SUMS.txt",{cache:"no-store"})).text();
+  const sums=await (await fetch(buildsUrl()+env+"/SHA256SUMS.txt",{cache:"no-store"})).text();
   const m=sums.match(new RegExp("^([0-9a-f]{64})\\s+\\*?"+env+"\\.update\\.bin$","m"));if(!m)throw new Error("no checksum published for this build");
-  const r=await fetch(BUILDS+env+"/"+env+".update.bin",{cache:"no-store"});if(!r.ok)throw new Error("download failed ("+r.status+")");
+  const r=await fetch(buildsUrl()+env+"/"+env+".update.bin",{cache:"no-store"});if(!r.ok)throw new Error("download failed ("+r.status+")");
   const b=new Uint8Array(await r.arrayBuffer());if(b.length<500000||b.length>3300000)throw new Error("unexpected size");
   msg("Checking the download...");await sleep(30);
   if(hex(SHA.sha256(b))!==m[1])throw new Error("checksum doesn't match: not installing");
@@ -1042,12 +1061,13 @@ async function renderStats(token){let on=false;try{on=(await api("/api/hx?k=stat
   const call=async body=>{const r=await fetch("/api/hx/stats-token",{method:"POST",body:new URLSearchParams(body)});const j=await r.json().catch(()=>({}));if(r.ok)renderStats(j.token||"")};
   $("stnew").onclick=()=>{if(on&&!confirm("Make a new token? The old one stops working."))return;call({})};
   if(on)$("stoff").onclick=()=>call({off:1})}
+{const c=$("chan");if(c){c.value=CHAN;c.onchange=()=>{CHAN=c.value==="beta"?"beta":"stable";try{localStorage.setItem("hx.chan",CHAN)}catch(e){}$("chkmsg").textContent=CHAN==="beta"?"Beta: newest changes first, may have rough edges. Rollback still protects you.":"Stable: tested releases."}}}
 $("chk").onclick=async()=>{const env=S.self&&S.self.role==="room"?"Hoptics_M7_room_observer":"Hoptics_M7_repeater_observer";const msg=x=>$("chkmsg").innerHTML=x;
-  msg("Checking...");try{const v=(await (await fetch(BUILDS+env+"/version.txt",{cache:"no-store"})).text()).trim();
+  msg("Checking...");try{const v=(await (await fetch(buildsUrl()+env+"/version.txt",{cache:"no-store"})).text()).trim();
     if(!/^[0-9.]+$/.test(v))throw new Error("no version published");
     const newer=v.split(".").map(Number).some((n,i,a)=>{const c=(S.self.version||"0").split(".").map(Number);for(let k=0;k<a.length;k++){if((a[k]||0)!==(c[k]||0))return(a[k]||0)>(c[k]||0)}return false});
-    if(!newer){msg("Up to date (v"+esc(S.self.version)+").");return}
-    msg(`Version ${esc(v)} is available. <button class="b p" id="instnew">Install</button>`);
+    if(!newer&&v===S.self.version){msg("Up to date (v"+esc(S.self.version)+", "+CHAN+").");return}
+    msg(newer?`Version ${esc(v)} (${CHAN}) is available. <button class="b p" id="instnew">Install</button>`:`${CHAN==="beta"?"Beta":"Stable"} is v${esc(v)}; this node runs v${esc(S.self.version)}. <button class="b" id="instnew">Install v${esc(v)}</button>`);
     $("instnew").onclick=async()=>{try{const blob=await fetchBuild(env,x=>msg(esc(x)));sendFirmware(blob,env+".update.bin");msg("Installing...")}catch(e){msg("Didn't install: "+esc(e.message))}}}
   catch(e){msg("Couldn't check: "+esc(e.message))}};
 $("reboot").onclick=async()=>{if(!confirm("Restart the node now?"))return;try{await api("/api/reboot",{method:"POST"});$("upmsg").textContent="Restarting...";setTimeout(()=>location.reload(),25000)}catch(e){}};
@@ -1063,13 +1083,14 @@ function render(){safe(renderOverview);if(tab==="system"){safe(renderRegSrc);rea
 let started=false;
 async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);
-  cli(["get repeat"]).then(r=>{S.repeat=/on/i.test(val(r[0]));render()}).catch(()=>{});
+  if(!S.viewer)cli(["get repeat"]).then(r=>{S.repeat=/on/i.test(val(r[0]));render()}).catch(()=>{});
   setTab((location.hash||"#overview").slice(1).replace(/[^a-z]/g,""));
   setInterval(async()=>{await pollStats();if(!$("modal").classList.contains("on"))render()},3000);
-  setInterval(pollPk,2000);pollChat();pollDm();pollRoom();pollAdm();setInterval(async()=>{await pollChat();await pollDm();await pollRoom();if(tab==="nbrs"&&S.adm.state)await pollAdm();if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}if(tab==="nbrs")safe(renderAdm)},4000);
+  setInterval(pollPk,2000);pollChat();if(!S.viewer){pollDm();pollRoom();pollAdm()}setInterval(async()=>{await pollChat();if(!S.viewer){await pollDm();await pollRoom();if(tab==="nbrs"&&S.adm.state)await pollAdm()}if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}if(tab==="nbrs")safe(renderAdm)},4000);
   setInterval(async()=>{await pollNodes();await pollSelf();if(mapReady)renderMapNodes(false)},15000);
   setInterval(pollHist,60000);pollRegion();setInterval(pollRegion,1800000);$("showreg").onchange=()=>renderMapNodes(false)}
-(async()=>{try{await api("/api/hx?k=self");$("app").hidden=false;start()}catch(e){if(e.message!=="auth"){$("app").hidden=false;start()}}})();
+(async()=>{try{const w=await fetch("/api/hx?k=whoami").then(r=>r.json());$("vgo").hidden=!w.viewers;
+  if(w.admin){$("app").hidden=false;start()}else if(w.viewer){viewerMode();$("app").hidden=false;start()}else showLogin()}catch(e){$("app").hidden=false;start()}})();
 </script>
 </body>
 </html>

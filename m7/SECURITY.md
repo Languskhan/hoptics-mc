@@ -71,3 +71,11 @@ Report problems through GitHub issues.
   single login packet (encrypted to that node, like the phone app) and wipes it straight away. It is never written
   to flash, logged or sent back to the page. Commands go only to the node signed in to, as admin, one at a time;
   the page asks before commands that change or restart the remote node.
+- **Viewers are read-only and see nothing private.** The viewer password is set by the admin (8-64 characters,
+  never the admin one) and stored only as a salted, 4096-round SHA-256 hash. Sign-in has its own lockout (5 tries,
+  then 30 s doubling to an hour) and gives a 12-hour session cookie (HttpOnly, SameSite=Strict; 4 sessions at
+  most). A viewer can read only self, packets, history, nodes, region, raw and channel data, plus stats with the
+  node's address and broker names removed; every route that changes anything, and DMs, room posts, remote admin,
+  alerts and the stats token, stays admin-only. Changing or clearing the password ends every viewer session.
+- **Update images are published whole or not at all.** The build refuses to publish a set missing either
+  Hoptics image, so a failed build can't leave the update check pointing at nothing.

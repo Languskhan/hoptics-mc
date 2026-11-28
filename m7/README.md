@@ -27,6 +27,8 @@ with the Hoptics dashboard at `http://<node-ip>/hoptics`.
 - Mesh check: warns when this node's short ID is shared by a repeater on the regional map
 - Graphs: download the 30-day history as CSV
 - Discord alert when the chip runs hot (80 C) and when it cools down
+- Viewer access: a second, read-only password (System tab) so others can watch stats, graphs, map, packets and public channels
+- Update channel: Stable (main) or Beta (the beta branch) in System → Updates
 - Stats feed for Home Assistant / Prometheus (read-only token); automatic rollback after a bad update
 - Web page always on while the network is up; advert at boot
 

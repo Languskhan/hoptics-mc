@@ -475,10 +475,18 @@ index cc8600b..d3c67b3 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
  
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..10cb7ac 100644
+index 167e5cd..f4bf1b7 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
-@@ -690,8 +690,42 @@ uint32_t WebConfigServer::handlerRefCount() const {
+@@ -11,6 +11,7 @@
+ #include <esp_system.h>
+ #include <esp_heap_caps.h>
+ #include <SHA256.h>
++#include <Preferences.h>
+ 
+ #include <helpers/CommonCLI.h>
+ #include <helpers/NetworkLink.h>
+@@ -690,8 +691,42 @@ uint32_t WebConfigServer::handlerRefCount() const {
    return refs;
  }
  
@@ -521,7 +529,7 @@ index 167e5cd..10cb7ac 100644
    WebConfigServer* target = NULL;
    portENTER_CRITICAL(&s_wc_route_mux);
    if (_active != NULL) {
-@@ -735,6 +769,25 @@ void WebConfigServer::registerRoutes() {
+@@ -735,6 +770,28 @@ void WebConfigServer::registerRoutes() {
    _server->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleScan); });
    _server->on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleReboot); });
    _server->on("/api/portal/exit", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handlePortalExit); });
@@ -536,6 +544,9 @@ index 167e5cd..10cb7ac 100644
 +  _server->on("/api/hx/room", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxRoom); });
 +  _server->on("/api/hx/region-src", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxRegionSrc); });
 +  _server->on("/api/hx/admin", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxAdmin); });
++  _server->on("/api/hx/view-login", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxViewLogin); });
++  _server->on("/api/hx/view-pass", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxViewPass); });
++  _server->on("/api/hx/view-logout", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxViewLogout); });
 +  _server->on("/api/hx/alerts", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxAlerts); });
 +  _server->on("/api/hx/update", HTTP_POST,
 +      [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxUpdateDone); },
@@ -547,7 +558,7 @@ index 167e5cd..10cb7ac 100644
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -856,7 +909,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -856,7 +913,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    uint32_t now = millis();
    if (_login_lock_until && (int32_t)(now - _login_lock_until) < 0) {
@@ -559,7 +570,7 @@ index 167e5cd..10cb7ac 100644
      return;
    }
    const char* body = (const char*)req->_tempObject;
-@@ -871,7 +928,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -871,7 +932,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
                                                 : sizeof(_prefs->password);
    if (!fixedTimeEquals(pwd, expected, expected_size)) {
      if (++_login_fails >= 5) {
@@ -574,7 +585,7 @@ index 167e5cd..10cb7ac 100644
        if (_login_lock_until == 0) _login_lock_until = 1;
        _login_fails = 0;
      }
-@@ -880,6 +944,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -880,6 +948,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    _login_fails = 0;
    _login_lock_until = 0;
@@ -592,7 +603,44 @@ index 167e5cd..10cb7ac 100644
    uint32_t generation;
    {
      WCLock lock(_mux);
-@@ -1631,3 +1706,326 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -1503,9 +1582,36 @@ void WebConfigServer::handleCliResult(AsyncWebServerRequest* req) {
+   req->send(res);
+ }
+ 
++#ifdef HOPTICS_M7
++static int hvSession(AsyncWebServerRequest* req);
++#endif
++
+ void WebConfigServer::handleStats(AsyncWebServerRequest* req) {
+   if (_mode == MODE_OFF) { req->send(503); return; }
++#ifdef HOPTICS_M7
++  if (!checkAuth(req)) {
++    // a Hoptics viewer gets the numbers without the node's address or broker names
++    if (_mode != MODE_LAN || hvSession(req) < 0) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
++    _stats_wanted_until = (millis() + 15000) | 1;
++    DynamicJsonDocument doc(6144);
++    {
++      WCLock lock(_mux);
++      if (_stats_json[0] == 0 || deserializeJson(doc, _stats_json) != DeserializationError::Ok) {
++        req->send(200, "application/json", "{\"state\":\"pending\"}");
++        return;
++      }
++    }
++    doc.remove("ip");
++    doc.remove("wifi_rssi");
++    for (JsonObject sl : doc["slots"].as<JsonArray>()) sl["name"] = "";
++    String out;
++    serializeJson(doc, out);
++    req->send(200, "application/json", out);
++    return;
++  }
++#else
+   if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
++#endif
+   uint32_t until = millis() + 15000;
+   if (until == 0) until = 1;
+   _stats_wanted_until = until;  // tick() refreshes the snapshot while polled
+@@ -1631,3 +1737,484 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -609,6 +657,67 @@ index 167e5cd..10cb7ac 100644
 +  const String o = req->header("Origin");
 +  const String h = req->header("Host");
 +  return h.length() > 0 && (o == String("http://") + h);
++}
++
++// ---- Read-only viewer login (Hoptics). A second password, set by the admin, stored only as a salted, iterated
++// hash. Viewers get the dashboard's public numbers and nothing that changes the node or is private to its owner.
++// Everything here runs on the web server's one task, so no locking is needed.
++struct HxViewSess { char tok[33]; uint32_t seen; };
++static HxViewSess s_hv[4];
++static uint8_t s_hv_salt[16], s_hv_hash[32];
++static bool s_hv_loaded = false, s_hv_on = false;
++static uint8_t s_hv_fail = 0;
++static uint32_t s_hv_lock_until = 0, s_hv_lock_ms = 30000;
++static const uint32_t kHvTtlMs = 12UL * 3600UL * 1000UL;
++
++static void hvLoad() {
++  if (s_hv_loaded) return;
++  s_hv_loaded = true;
++  Preferences p;
++  if (!p.begin("hxview", true)) return;
++  s_hv_on = p.getBytes("salt", s_hv_salt, 16) == 16 && p.getBytes("hash", s_hv_hash, 32) == 32;
++  p.end();
++}
++
++static void hvHash(const char* pw, size_t n, uint8_t out[32]) {   // sha256(salt|pw), then 4095 more rounds
++  SHA256 h;
++  h.update(s_hv_salt, 16);
++  h.update(pw, n);
++  h.finalize(out, 32);
++  for (int i = 1; i < 4096; i++) {
++    h.reset();
++    h.update(out, 32);
++    h.update(pw, n);
++    h.finalize(out, 32);
++  }
++}
++
++static bool hvSame(const void* a, const void* b, size_t n) {
++  const uint8_t *x = (const uint8_t*)a, *y = (const uint8_t*)b;
++  uint8_t d = 0;
++  for (size_t i = 0; i < n; i++) d |= x[i] ^ y[i];
++  return d == 0;
++}
++
++static int hvSession(AsyncWebServerRequest* req) {   // index of this browser's viewer session, or -1
++  hvLoad();
++  if (!s_hv_on || !req->hasHeader("Cookie")) return -1;
++  const String& c = req->getHeader("Cookie")->value();
++  const int i = c.indexOf("hxv=");
++  if (i < 0 || (int)c.length() < i + 4 + 32) return -1;
++  const String t = c.substring(i + 4, i + 4 + 32);
++  const uint32_t now = millis();
++  int found = -1;
++  for (int k = 0; k < 4; k++) {
++    if (!s_hv[k].tok[0] || now - s_hv[k].seen > kHvTtlMs) continue;
++    if (hvSame(s_hv[k].tok, t.c_str(), 32)) found = k;
++  }
++  if (found >= 0) s_hv[found].seen = now;
++  return found;
++}
++
++static bool hxViewKey(const String& k) {
++  return k == "self" || k == "packets" || k == "history" || k == "nodes" || k == "region" || k == "raw" || k == "grp";
 +}
 +
 +// Upload state lives outside the session object: the session can be freed while a request is still open,
@@ -736,6 +845,95 @@ index 167e5cd..10cb7ac 100644
 +  }
 +  if (!hx::queueChannelMsg(key, t.c_str())) { req->send(429, "application/json", "{\"error\":\"wait a few seconds between messages\"}"); return; }
 +  req->send(200, "application/json", "{\"ok\":true}");
++}
++
++// Viewer sign-in: password -> a 12-hour read-only session (4 at most). Five wrong tries lock it for 30 s,
++// doubling each time up to an hour.
++void WebConfigServer::handleHxViewLogin(AsyncWebServerRequest* req) {
++  if (_mode != MODE_LAN) { req->send(503); return; }
++  if (!hxSameOrigin(req)) { req->send(403, "application/json", "{\"error\":\"wrong origin\"}"); return; }
++  hvLoad();
++  if (!s_hv_on) { req->send(404, "application/json", "{\"error\":\"viewer sign-in is off on this node\"}"); return; }
++  const uint32_t now = millis();
++  if (s_hv_lock_until && (int32_t)(s_hv_lock_until - now) > 0) {
++    req->send(429, "application/json", "{\"error\":\"too many wrong passwords, try again later\"}");
++    return;
++  }
++  const String pw = req->hasParam("password", true) ? req->getParam("password", true)->value() : String("");
++  uint8_t h[32];
++  hvHash(pw.c_str(), pw.length() > 64 ? 64 : pw.length(), h);
++  const bool ok = pw.length() >= 8 && pw.length() <= 64 && hvSame(h, s_hv_hash, 32);
++  memset(h, 0, sizeof(h));
++  if (!ok) {
++    if (++s_hv_fail >= 5) {
++      s_hv_fail = 0;
++      s_hv_lock_until = (now + s_hv_lock_ms) | 1;
++      s_hv_lock_ms = s_hv_lock_ms >= 1800000UL ? 3600000UL : s_hv_lock_ms * 2;
++    }
++    req->send(401, "application/json", "{\"error\":\"wrong password\"}");
++    return;
++  }
++  s_hv_fail = 0;
++  s_hv_lock_ms = 30000;
++  s_hv_lock_until = 0;
++  int slot = 0;
++  for (int k = 0; k < 4; k++) {
++    if (!s_hv[k].tok[0] || now - s_hv[k].seen > kHvTtlMs) { slot = k; break; }
++    if (s_hv[k].seen < s_hv[slot].seen) slot = k;
++  }
++  uint8_t r[16];
++  esp_fill_random(r, sizeof(r));
++  bytesToHex(s_hv[slot].tok, r, sizeof(r));
++  memset(r, 0, sizeof(r));
++  s_hv[slot].seen = now;
++  AsyncWebServerResponse* res = req->beginResponse(200, "application/json", "{\"ok\":true}");
++  char cookie[96];
++  snprintf(cookie, sizeof(cookie), "hxv=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200", s_hv[slot].tok);
++  res->addHeader("Set-Cookie", cookie);
++  req->send(res);
++}
++
++void WebConfigServer::handleHxViewLogout(AsyncWebServerRequest* req) {
++  if (_mode != MODE_LAN) { req->send(503); return; }
++  const int i = hvSession(req);
++  if (i >= 0) memset(&s_hv[i], 0, sizeof(s_hv[i]));
++  AsyncWebServerResponse* res = req->beginResponse(200, "application/json", "{\"ok\":true}");
++  res->addHeader("Set-Cookie", "hxv=; Max-Age=0; Path=/");
++  req->send(res);
++}
++
++// Admin sets the viewer password (8-64 characters) or turns viewer sign-in off (empty). Either one ends every
++// viewer session.
++void WebConfigServer::handleHxViewPass(AsyncWebServerRequest* req) {
++  if (_mode != MODE_LAN) { req->send(503); return; }
++  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
++  if (!hxSameOrigin(req)) { req->send(403, "application/json", "{\"error\":\"wrong origin\"}"); return; }
++  const String pw = req->hasParam("password", true) ? req->getParam("password", true)->value() : String("");
++  if (pw.length() && (pw.length() < 8 || pw.length() > 64)) {
++    req->send(400, "application/json", "{\"error\":\"viewer password: 8-64 characters\"}");
++    return;
++  }
++  if (pw.length() && strncmp(pw.c_str(), _prefs->password, sizeof(_prefs->password)) == 0) {
++    req->send(400, "application/json", "{\"error\":\"use a different password from the admin one\"}");
++    return;
++  }
++  hvLoad();
++  Preferences p;
++  if (!p.begin("hxview", false)) { req->send(500, "application/json", "{\"error\":\"storage\"}"); return; }
++  if (pw.length()) {
++    esp_fill_random(s_hv_salt, sizeof(s_hv_salt));
++    hvHash(pw.c_str(), pw.length(), s_hv_hash);
++    p.putBytes("salt", s_hv_salt, 16);
++    p.putBytes("hash", s_hv_hash, 32);
++    s_hv_on = true;
++  } else {
++    p.remove("salt");
++    p.remove("hash");
++    s_hv_on = false;
++  }
++  p.end();
++  memset(s_hv, 0, sizeof(s_hv));
++  req->send(200, "application/json", pw.length() ? "{\"ok\":true,\"on\":true}" : "{\"ok\":true,\"on\":false}");
 +}
 +
 +// Remote admin of another repeater/room: op=login (pub, password) | cmd (text) | logout. The password goes into
@@ -898,8 +1096,16 @@ index 167e5cd..10cb7ac 100644
 +void WebConfigServer::handleHxData(AsyncWebServerRequest* req) {
 +  // LAN only: the setup hotspot skips sign-in, so it must not serve messages, packets or alert settings
 +  if (_mode != MODE_LAN) { req->send(503); return; }
-+  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
 +  String k = req->hasParam("k") ? req->getParam("k")->value() : String("self");
++  const bool admin = checkAuth(req);
++  if (k == "whoami") {
++    const bool viewer = !admin && hvSession(req) >= 0;
++    hvLoad();
++    req->send(200, "application/json", String("{\"admin\":") + (admin ? "true" : "false") + ",\"viewer\":" +
++                                           (viewer ? "true" : "false") + ",\"viewers\":" + (s_hv_on ? "true" : "false") + "}");
++    return;
++  }
++  if (!admin && (!hxViewKey(k) || hvSession(req) < 0)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
 +  AsyncResponseStream* res = req->beginResponseStream("application/json");
 +  res->addHeader("Cache-Control", "no-store");
 +  hxSecurityHeaders(res);
@@ -920,7 +1126,7 @@ index 167e5cd..10cb7ac 100644
 +}
 +#endif
 diff --git a/src/helpers/esp32/WebConfigServer.h b/src/helpers/esp32/WebConfigServer.h
-index bdd3e27..ee9005b 100644
+index bdd3e27..0977cef 100644
 --- a/src/helpers/esp32/WebConfigServer.h
 +++ b/src/helpers/esp32/WebConfigServer.h
 @@ -177,6 +177,9 @@ private:
@@ -933,7 +1139,7 @@ index bdd3e27..ee9005b 100644
    uint32_t _login_lock_until = 0;
  
    // Once set (via /api/portal/exit), OS captive probes get native "success"
-@@ -236,6 +239,21 @@ private:
+@@ -236,6 +239,24 @@ private:
    void handleReboot(AsyncWebServerRequest* req);
    void handlePortalExit(AsyncWebServerRequest* req);
    void handleNotFound(AsyncWebServerRequest* req);
@@ -948,6 +1154,9 @@ index bdd3e27..ee9005b 100644
 +  void handleHxRoom(AsyncWebServerRequest* req);
 +  void handleHxRegionSrc(AsyncWebServerRequest* req);
 +  void handleHxAdmin(AsyncWebServerRequest* req);
++  void handleHxViewLogin(AsyncWebServerRequest* req);
++  void handleHxViewPass(AsyncWebServerRequest* req);
++  void handleHxViewLogout(AsyncWebServerRequest* req);
 +  void handleHxMetrics(AsyncWebServerRequest* req);
 +  void handleHxStatsToken(AsyncWebServerRequest* req);
 +  void hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final);
@@ -956,7 +1165,7 @@ index bdd3e27..ee9005b 100644
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..229d96f 100644
+index 4bd316b..44e4f14 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
 @@ -290,3 +290,43 @@ lib_deps =
@@ -968,7 +1177,7 @@ index 4bd316b..229d96f 100644
 +[hoptics_m7]
 +build_flags =
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.4.7"'
++  -D HOPTICS_M7_VERSION='"0.4.8"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +
 +[env:Hoptics_M7_repeater_observer]
