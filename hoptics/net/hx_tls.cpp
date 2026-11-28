@@ -17,7 +17,9 @@
 #include <mbedtls/ssl.h>
 #include <mbedtls/version.h>
 #include <mbedtls/x509_crt.h>
-#include <mbedtls/x509write_crt.h>
+#if !defined(MBEDTLS_X509_CRT_WRITE_C) || !defined(MBEDTLS_PK_WRITE_C) || !defined(MBEDTLS_SSL_SRV_C)
+#error "this core's mbedTLS lacks certificate writing or the TLS server"
+#endif
 #if defined(MBEDTLS_SSL_TICKET_C)
 #include <mbedtls/ssl_ticket.h>
 #elif defined(MBEDTLS_SSL_CACHE_C)
