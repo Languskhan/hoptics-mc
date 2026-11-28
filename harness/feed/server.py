@@ -26,6 +26,10 @@ if mode == "refuse":
 key = [l.split(": ")[1] for l in req.decode().split("\r\n") if l.lower().startswith("sec-websocket-key")][0]
 acc = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC11B87").encode()).digest()).decode()
 conn.sendall(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n" % acc).encode())
+if mode in ("overflow", "huge"):  # a message that starts, then a continuation with a length that once wrapped have + len
+    n = b"\xff" * 8 if mode == "overflow" else b"\x7f" + b"\xff" * 7  # top bit set (not allowed), or just very big
+    conn.sendall(frame(1, b"{", fin=False) + bytes([0x80, 127]) + n + b"A" * 16384)
+    time.sleep(1); conn.close(); sys.exit()
 conn.sendall(frame(1, pkt("15011234AABBCCDD", "A1B2C3D4E5F60011", "Folsom Ridge", 7.5)))
 conn.sendall(frame(9, b"hello"))  # ping
 whole = pkt("1602AAAA0102030405", "0102030405060708", "S2 Observer", -3.25)

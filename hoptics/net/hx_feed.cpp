@@ -364,6 +364,10 @@ void session(uint32_t gen0, uint8_t *msg)
             len = 0;
             for (int i = 0; i < k; i++)
                 len = len << 8 | e[i];
+            if (len >> 63) { // the top bit must be 0 (RFC 6455 5.2)
+                dropWhy = "the server sent a bad frame";
+                break;
+            }
         }
         uint8_t mk[4] = {0, 0, 0, 0};
         if ((h[1] & 0x80) && !readN(*c, mk, 4, gen0))
@@ -382,7 +386,7 @@ void session(uint32_t gen0, uint8_t *msg)
         }
         if (op == 1 || op == 2) // a new message starts (0 continues the last one)
             have = 0, skip = false;
-        if (skip || have + len > MSG_MAX) {
+        if (skip || len > MSG_MAX - have) { // have <= MSG_MAX, so this can't wrap the way have + len can
             skip = true;
             uint8_t sink[256];
             while (len) { // read it to keep in step, without keeping it
