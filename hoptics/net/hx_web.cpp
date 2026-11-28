@@ -58,8 +58,24 @@ uint32_t hourFrom = 0, allUntil = 0;
 constexpr uint32_t SNAPSHOT_MS = 10 * 60 * 1000;
 volatile bool savedLive = false;      // the last save held a session that was still good (or one was just restored)
 SemaphoreHandle_t nvLock = nullptr;   // one save at a time: an older snapshot can't land after a newer one
+// every lock the server uses, made by whichever of start(), setPin() and setFeed() runs first. Each is made if it is
+// missing, so none can be left out: setFeed() once made the first three only, and the first sign-in then took a
+// nvLock that didn't exist (an assert in xQueueSemaphoreTake, a restart)
+void makeLocks()
+{
+    if (!lock)
+        lock = xSemaphoreCreateMutex();
+    if (!one)
+        one = xSemaphoreCreateMutex();
+    if (!ready)
+        ready = xSemaphoreCreateBinary();
+    if (!nvLock)
+        nvLock = xSemaphoreCreateMutex();
+}
 void keepSessions()
 {
+    if (!nvLock || !lock) // couldn't be made (out of memory at start): nothing is kept, the sign-in still works
+        return;
     xSemaphoreTake(nvLock, portMAX_DELAY);
     char toks[4][33];
     uint32_t left[4];
@@ -876,12 +892,7 @@ bool start(uint16_t port)
 {
     if (srv)
         return true;
-    if (!lock) {
-        lock = xSemaphoreCreateMutex();
-        one = xSemaphoreCreateMutex();
-        ready = xSemaphoreCreateBinary();
-        nvLock = xSemaphoreCreateMutex();
-    }
+    makeLocks();
     httpd_config_t c = HTTPD_DEFAULT_CONFIG();
     c.server_port = port;
     c.ctrl_port = 32770;
@@ -937,12 +948,7 @@ bool running() { return srv != nullptr; }
 
 void setPin(const char *p)
 {
-    if (!lock) {
-        lock = xSemaphoreCreateMutex();
-        one = xSemaphoreCreateMutex();
-        ready = xSemaphoreCreateBinary();
-        nvLock = xSemaphoreCreateMutex();
-    }
+    makeLocks();
     const bool first = !pin[0]; // just started: the sessions kept under this same PIN come back
     bool changed = false;
     xSemaphoreTake(lock, portMAX_DELAY);
@@ -985,11 +991,7 @@ void setPin(const char *p)
 
 void setFeed(const char *url)
 {
-    if (!lock) {
-        lock = xSemaphoreCreateMutex();
-        one = xSemaphoreCreateMutex();
-        ready = xSemaphoreCreateBinary();
-    }
+    makeLocks();
     // the origin the page's own WebSocket goes to (app.js Feed.connect: no scheme means wss, http(s) becomes ws(s)),
     // and only from plain host characters: a ';' in a typed address must not add to the policy
     char origin[100] = "", host[64], path[64];
