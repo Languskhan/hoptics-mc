@@ -34,6 +34,7 @@ void setPin(const char *pin); // six digits; a new PIN signs every browser out (
 // the live feed's server, as set on the node: the page may open a WebSocket to it and to nowhere else (its CSP)
 void setFeed(const char *url);
 uint8_t sessions();           // browsers signed in now
+void tick();                  // main loop: now and then, saves how long each sign-in has left (it survives a restart)
 
 // main loop: a page is waiting for data. Answer it on the same pass
 bool take(Query &q);

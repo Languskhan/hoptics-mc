@@ -161,10 +161,53 @@ index 782a2f4..d225588 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
    int calcRxDelay(float score, uint32_t air_time) const override;
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..9874fd5 100644
+index 167e5cd..5ca1592 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
-@@ -735,6 +735,16 @@ void WebConfigServer::registerRoutes() {
+@@ -690,8 +690,42 @@ uint32_t WebConfigServer::handlerRefCount() const {
+   return refs;
+ }
+ 
++#ifdef HOPTICS_M7
++// A web page on another site can point its own domain name at this node's IP (DNS rebinding). Browsers always
++// send the name they used in Host, so in LAN mode anything that isn't an IPv4 address or a meshcore-* local
++// name is refused.
++static bool hxHostOk(AsyncWebServerRequest* req) {
++  if (!req->hasHeader("Host")) return true;
++  String h = req->header("Host");
++  const int colon = h.indexOf(':');
++  if (colon >= 0) h = h.substring(0, colon);
++  h.toLowerCase();
++  if (h.length() == 0 || h.length() > 63) return false;
++  int dots = 0;
++  bool ip = true;
++  for (size_t i = 0; i < h.length(); i++) {
++    if (h[i] == '.') dots++;
++    else if (h[i] < '0' || h[i] > '9') { ip = false; break; }
++  }
++  if (ip && dots == 3) return true;
++  // the node's DHCP name: meshcore-<name>, optionally .local / .lan / .home (names only a local resolver answers)
++  for (const char* sfx : {".local", ".lan", ".home"}) {
++    if (h.endsWith(sfx)) { h = h.substring(0, h.length() - strlen(sfx)); break; }
++  }
++  if (!h.startsWith("meshcore-") || h.length() <= 9) return false;
++  for (size_t i = 0; i < h.length(); i++) {
++    const char c = h[i];
++    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
++  }
++  return true;
++}
++#endif
++
+ void WebConfigServer::dispatchRequest(AsyncWebServerRequest* req, RequestHandler handler) {
+   wcLogReq(req);
++#ifdef HOPTICS_M7
++  if (_active && _active->_mode == MODE_LAN && !hxHostOk(req)) { req->send(421, "text/plain", "wrong host"); return; }
++#endif
+   WebConfigServer* target = NULL;
+   portENTER_CRITICAL(&s_wc_route_mux);
+   if (_active != NULL) {
+@@ -735,6 +769,16 @@ void WebConfigServer::registerRoutes() {
    _server->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleScan); });
    _server->on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleReboot); });
    _server->on("/api/portal/exit", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handlePortalExit); });
@@ -181,7 +224,52 @@ index 167e5cd..9874fd5 100644
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -1631,3 +1641,65 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -856,7 +900,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+   }
+   uint32_t now = millis();
+   if (_login_lock_until && (int32_t)(now - _login_lock_until) < 0) {
++#ifdef HOPTICS_M7
++    req->send(429, "application/json", "{\"error\":\"too many wrong passwords, try again later\"}");
++#else
+     req->send(429, "application/json", "{\"error\":\"locked, retry in 30s\"}");
++#endif
+     return;
+   }
+   const char* body = (const char*)req->_tempObject;
+@@ -871,7 +919,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+                                                : sizeof(_prefs->password);
+   if (!fixedTimeEquals(pwd, expected, expected_size)) {
+     if (++_login_fails >= 5) {
++#ifdef HOPTICS_M7
++      // 30 s, then 1, 2, 4 ... minutes, up to about an hour, until a correct password
++      const uint8_t n = _login_locks < 7 ? _login_locks : 7;
++      if (_login_locks < 255) _login_locks++;
++      _login_lock_until = now + (30000UL << n);
++#else
+       _login_lock_until = now + 30000;
++#endif
+       if (_login_lock_until == 0) _login_lock_until = 1;
+       _login_fails = 0;
+     }
+@@ -880,6 +935,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+   }
+   _login_fails = 0;
+   _login_lock_until = 0;
++#ifdef HOPTICS_M7
++  _login_locks = 0;
++  if (!_initial_setup && (!strcmp(_prefs->password, "password") || !strcmp(_prefs->password, "hello") ||
++                          strlen(_prefs->password) < 6)) {
++    // anyone on the network could guess these; make the owner pick a real one first
++    req->send(403, "application/json",
++              "{\"error\":\"The admin password is too easy to guess. Set a new one (6+ characters) from the "
++              "MeshCore app or USB: password <new>\"}");
++    return;
++  }
++#endif
+   uint32_t generation;
+   {
+     WCLock lock(_mux);
+@@ -1631,3 +1697,114 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -191,31 +279,76 @@ index 167e5cd..9874fd5 100644
 +#include "HopticsPage.h"  // HX_PAGE_GZ / HX_PAGE_GZ_LEN: the dashboard, gzipped at build time
 +#include <Update.h>
 +
-+// Firmware update from the dashboard: the .update.bin is streamed into the spare app slot; the node restarts
-+// on the new image only if the whole file arrived and verified.
++// Same-origin check for state-changing requests: a browser always sends Origin on a cross-site POST, so a page
++// on another site can't drive the update even if the admin is signed in here.
++static bool hxSameOrigin(AsyncWebServerRequest* req) {
++  if (!req->hasHeader("Origin")) return true;  // not a browser cross-site request
++  const String o = req->header("Origin");
++  const String h = req->header("Host");
++  return h.length() > 0 && (o == String("http://") + h);
++}
++
++// Upload state lives outside the session object: the session can be freed while a request is still open,
++// and the disconnect callback below must never touch it.
++static AsyncWebServerRequest* volatile s_hx_up_req = nullptr;  // the one upload allowed at a time
++static volatile bool s_hx_up_ok = false;
++static char s_hx_up_err[64] = "";
++
++static void hxSecurityHeaders(AsyncWebServerResponse* res) {
++  res->addHeader("X-Frame-Options", "DENY");
++  res->addHeader("X-Content-Type-Options", "nosniff");
++  res->addHeader("Referrer-Policy", "no-referrer");
++}
++
++// Firmware update from the dashboard. Only the signed-in admin, from this page, one upload at a time; the image
++// must be an ESP32-S3 app. It is streamed into the spare slot and the node restarts on it only if the whole
++// file arrived and its checksum verified (Update.end); otherwise the running firmware is untouched.
 +void WebConfigServer::hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final) {
 +  if (index == 0) {
-+    _hx_up_err[0] = 0;
-+    _hx_up_auth = (_mode == MODE_LAN) && checkAuth(req) && req->hasHeader("X-Hoptics"); // the dashboard alone sends it
-+    if (!_hx_up_auth) { strcpy(_hx_up_err, "sign in first"); return; }
++    if (s_hx_up_req && s_hx_up_req != req) return;  // another upload is running; this one gets 409
++    if (_mode != MODE_LAN || !checkAuth(req) || !hxSameOrigin(req) || !req->hasHeader("X-Hoptics")) return;  // the dashboard alone sends it
++    if (len < 16 || data[0] != 0xE9 || data[12] != 0x09 || data[13] != 0x00) {  // image magic, chip id ESP32-S3
++      s_hx_up_req = req;
++      s_hx_up_ok = false;
++      strcpy(s_hx_up_err, "not an ESP32-S3 firmware image");
++      return;
++    }
 +    if (Update.isRunning()) Update.abort();
-+    if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) { snprintf(_hx_up_err, sizeof(_hx_up_err), "can't start: %s", Update.errorString()); return; }
++    s_hx_up_req = req;
++    s_hx_up_err[0] = 0;
++    s_hx_up_ok = Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH);
++    if (!s_hx_up_ok) { snprintf(s_hx_up_err, sizeof(s_hx_up_err), "can't start: %s", Update.errorString()); return; }
++    req->onDisconnect([req]() {  // dropped mid-way: discard what arrived
++      if (s_hx_up_req != req) return;
++      if (Update.isRunning()) Update.abort();
++      s_hx_up_req = nullptr;
++      s_hx_up_ok = false;
++    });
 +    Serial.println("Hoptics: firmware upload started");
 +  }
-+  if (!_hx_up_auth || _hx_up_err[0]) return;
++  if (req != s_hx_up_req || !s_hx_up_ok) return;
 +  _last_activity = millis();
 +  if (len && Update.write(data, len) != len) {
-+    snprintf(_hx_up_err, sizeof(_hx_up_err), "write failed: %s", Update.errorString());
++    snprintf(s_hx_up_err, sizeof(s_hx_up_err), "write failed: %s", Update.errorString());
 +    Update.abort();
++    s_hx_up_ok = false;
 +    return;
 +  }
-+  if (final && !Update.end(true)) snprintf(_hx_up_err, sizeof(_hx_up_err), "not a valid image: %s", Update.errorString());
++  if (final && !Update.end(true)) {
++    snprintf(s_hx_up_err, sizeof(s_hx_up_err), "not a valid image: %s", Update.errorString());
++    s_hx_up_ok = false;
++  }
 +}
 +
 +void WebConfigServer::handleHxUpdateDone(AsyncWebServerRequest* req) {
-+  if (!_hx_up_auth) { req->send(401, "application/json", "{\"error\":\"sign in first\"}"); return; }
-+  if (_hx_up_err[0] || !Update.isFinished()) {
-+    String e = String("{\"error\":\"") + (_hx_up_err[0] ? _hx_up_err : "upload incomplete") + "\"}";
++  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"sign in first\"}"); return; }
++  if (!hxSameOrigin(req)) { req->send(403, "application/json", "{\"error\":\"wrong origin\"}"); return; }
++  if (s_hx_up_req != req) { req->send(409, "application/json", "{\"error\":\"another update is running\"}"); return; }
++  const bool ok = s_hx_up_ok && !s_hx_up_err[0] && Update.isFinished();
++  s_hx_up_req = nullptr;
++  if (!ok) {
++    if (Update.isRunning()) Update.abort();
++    String e = String("{\"error\":\"") + (s_hx_up_err[0] ? s_hx_up_err : "upload incomplete") + "\"}";
 +    req->send(400, "application/json", e);
 +    return;
 +  }
@@ -230,28 +363,42 @@ index 167e5cd..9874fd5 100644
 +  AsyncWebServerResponse* res = req->beginResponse(200, "text/html", HX_PAGE_GZ, HX_PAGE_GZ_LEN);
 +  res->addHeader("Content-Encoding", "gzip");
 +  res->addHeader("Cache-Control", "no-cache");
++  hxSecurityHeaders(res);
 +  req->send(res);
 +}
 +
-+// /api/hx?k=packets&since=N | history&from=T | nodes | raw&seq=N | self
++// /api/hx?k=packets&since=N | history&from=I | nodes | region&from=I | raw&seq=N | self (signed-in admin only)
 +void WebConfigServer::handleHxData(AsyncWebServerRequest* req) {
 +  if (_mode == MODE_OFF) { req->send(503); return; }
 +  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
 +  String k = req->hasParam("k") ? req->getParam("k")->value() : String("self");
 +  AsyncResponseStream* res = req->beginResponseStream("application/json");
++  res->addHeader("Cache-Control", "no-store");
++  hxSecurityHeaders(res);
 +  if (k == "packets") hx::writePackets(*res, req->hasParam("since") ? strtoul(req->getParam("since")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "history") hx::writeHistory(*res, req->hasParam("from") ? strtoul(req->getParam("from")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "nodes") hx::writeNodes(*res);
++  else if (k == "region") hx::writeRegion(*res, req->hasParam("from") ? strtoul(req->getParam("from")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "raw") hx::writeRaw(*res, req->hasParam("seq") ? strtoul(req->getParam("seq")->value().c_str(), NULL, 10) : 0);
 +  else hx::writeSelf(*res);
 +  req->send(res);
 +}
 +#endif
 diff --git a/src/helpers/esp32/WebConfigServer.h b/src/helpers/esp32/WebConfigServer.h
-index bdd3e27..aefc37b 100644
+index bdd3e27..7a815db 100644
 --- a/src/helpers/esp32/WebConfigServer.h
 +++ b/src/helpers/esp32/WebConfigServer.h
-@@ -236,6 +236,14 @@ private:
+@@ -177,6 +177,9 @@ private:
+   uint32_t _session_last_seen = 0;
+   uint32_t _setup_reminder_at = 0;
+   uint8_t _login_fails = 0;
++#ifdef HOPTICS_M7
++  uint8_t _login_locks = 0;  // lockouts in a row: each one doubles the wait
++#endif
+   uint32_t _login_lock_until = 0;
+ 
+   // Once set (via /api/portal/exit), OS captive probes get native "success"
+@@ -236,6 +239,12 @@ private:
    void handleReboot(AsyncWebServerRequest* req);
    void handlePortalExit(AsyncWebServerRequest* req);
    void handleNotFound(AsyncWebServerRequest* req);
@@ -260,17 +407,15 @@ index bdd3e27..aefc37b 100644
 +  void handleHxData(AsyncWebServerRequest* req);
 +  void handleHxUpdateDone(AsyncWebServerRequest* req);
 +  void hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final);
-+  bool _hx_up_auth = false;
-+  char _hx_up_err[64] = "";
 +#endif
  };
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..02c2a89 100644
+index 4bd316b..d9de9ac 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
-@@ -290,3 +290,17 @@ lib_deps =
+@@ -290,3 +290,18 @@ lib_deps =
    JChristensen/Timezone
    paulstoffregen/Time@1.6.1
    0neblock/SNMP_Agent
@@ -281,10 +426,11 @@ index 4bd316b..02c2a89 100644
 +build_flags =
 +  ${env:ThinkNode_M7_repeater_observer_mqtt.build_flags}
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.2.1"'
++  -D HOPTICS_M7_VERSION='"0.3.1"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +  -UADVERT_NAME
 +  -D ADVERT_NAME='"Hoptics M7"'
 +build_src_filter =
 +  ${env:ThinkNode_M7_repeater_observer_mqtt.build_src_filter}
 +  +<helpers/esp32/HopticsData.cpp>
++  +<helpers/esp32/HopticsRegion.cpp>

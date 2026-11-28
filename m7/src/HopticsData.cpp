@@ -26,6 +26,20 @@ struct Node {
   char name[24];
 };
 
+struct RNode {
+  uint8_t pub[4];
+  uint8_t type;
+  bool loc;
+  int32_t lat, lon;
+  uint32_t seen, relays;
+  char name[24];
+};
+constexpr int kRegion = 2600;
+RNode* region[2];       // [live, being built]
+int region_n[2];
+uint32_t region_at;     // uptime seconds of the last good refresh
+char region_err[48];
+
 constexpr int kPkts = 1024, kRaw = 256, kSeen = 256, kSamples = 8640, kNodes = 256, kNbrs = 64;  // 8640 x 5 min = 30 days
 
 SemaphoreHandle_t mu;
@@ -74,6 +88,65 @@ void begin() {
   raws = (uint8_t*)ps(kPkts * kRaw);
   samples = (Sample*)ps(sizeof(Sample) * kSamples);
   nodes = (Node*)ps(sizeof(Node) * kNodes);
+  region[0] = (RNode*)ps(sizeof(RNode) * kRegion);
+  region[1] = (RNode*)ps(sizeof(RNode) * kRegion);
+  startRegion();
+}
+
+void regionBegin() {
+  if (!mu) return;
+  Lock l;
+  region_n[1] = 0;
+}
+
+void addRegionNode(const uint8_t* pub, uint8_t type, const char* name, bool has_loc, int32_t lat, int32_t lon,
+                   uint32_t seen, uint32_t relays_24h) {
+  if (!mu || !region[1]) return;
+  Lock l;
+  if (region_n[1] >= kRegion) return;
+  RNode& n = region[1][region_n[1]++];
+  memcpy(n.pub, pub, 4);
+  n.type = type;
+  n.loc = has_loc;
+  n.lat = lat;
+  n.lon = lon;
+  n.seen = seen;
+  n.relays = relays_24h;
+  strlcpy(n.name, name ? name : "", sizeof(n.name));
+}
+
+void regionDone(bool ok, int total, const char* err) {
+  if (!mu) return;
+  Lock l;
+  strlcpy(region_err, ok ? "" : (err ? err : "failed"), sizeof(region_err));
+  if (!ok || !region[1]) return;  // keep the last good list
+  RNode* t = region[0]; region[0] = region[1]; region[1] = t;
+  region_n[0] = region_n[1];
+  region_n[1] = 0;
+  region_at = millis() / 1000;
+  (void)total;
+}
+
+void writeRegion(Print& out, uint32_t from_i) {
+  if (!mu) { out.print("{\"count\":0,\"age\":-1,\"err\":\"\",\"nodes\":[]}"); return; }
+  Lock l;
+  const int count = region[0] ? region_n[0] : 0;
+  out.printf("{\"count\":%d,\"age\":%ld,\"err\":", count,
+             region_at ? (long)(millis() / 1000 - region_at) : -1L);
+  jsonStr(out, region_err);
+  out.print(",\"nodes\":[");
+  const int start = from_i < (uint32_t)count ? (int)from_i : count;
+  const int end = start + 250 < count ? start + 250 : count;
+  for (int i = start; i < end; i++) {
+    const RNode& n = region[0][i];
+    out.printf("%s[\"%02x%02x%02x%02x\",%u,", i > start ? "," : "", n.pub[0], n.pub[1], n.pub[2], n.pub[3], n.type);
+    if (n.loc) out.printf("%.5f,%.5f,", n.lat / 1e6, n.lon / 1e6);
+    else out.print("null,null,");
+    out.printf("%lu,%lu,", (unsigned long)n.seen, (unsigned long)n.relays);
+    jsonStr(out, n.name);
+    out.print(']');
+  }
+  out.print("]}");
 }
 
 void setSelf(const uint8_t* pub, const char* name, double lat, double lon) {
@@ -117,7 +190,7 @@ void onPacket(bool tx, const mesh::Packet* p, int len, float snr, float rssi, fl
   }
   memset(k.path, 0, sizeof(k.path));
   int first = k.hops > 8 ? k.hops - 8 : 0;
-  for (int i = first; i < k.hops; i++) k.path[i - first] = p->path[i * k.hsz];
+  for (int i = first; i < k.hops && i * k.hsz < MAX_PATH_SIZE; i++) k.path[i - first] = p->path[i * k.hsz];
   k.src = 0;
   if (k.type == PAYLOAD_TYPE_ADVERT && p->payload_len > 0) k.src = p->payload[0];
   else if ((k.type == PAYLOAD_TYPE_GRP_TXT || k.type == PAYLOAD_TYPE_GRP_DATA) && p->payload_len > 0) k.src = p->payload[0];
@@ -164,12 +237,16 @@ void setNeighbours(const Neighbour* n, int count) {
 }
 
 void writePackets(Print& out, uint32_t since) {
+  if (!mu) { out.print("{\"seq\":0,\"now\":0,\"p\":[]}"); return; }
   Lock l;
   out.printf("{\"seq\":%lu,\"now\":%lu,\"p\":[", (unsigned long)pkt_seq, (unsigned long)(millis() / 1000));
+  // (seq is the newest; the page keeps asking with since = its last packet until it reaches seq)
   uint32_t lo = pkt_seq > kPkts ? pkt_seq - kPkts : 0;
-  if (since < lo) since = lo;
+  if (since < lo || since > pkt_seq) since = lo;
+  // at most 256 per reply so a response never needs much RAM; the page asks again until it has caught up
+  const uint32_t last = pkt_seq - since > 256 ? since + 256 : pkt_seq;
   bool first = true;
-  for (uint32_t s = since + 1; s <= pkt_seq; s++) {
+  for (uint32_t s = since + 1; s <= last; s++) {
     const Pkt& k = pkts[(s - 1) % kPkts];
     out.printf("%s[%lu,%lu,%u,%u,%u,%u,%u,%u,%d,%d,\"%08lx\",\"", first ? "" : ",", (unsigned long)k.seq,
                (unsigned long)k.t, k.tx, k.type, k.route, k.hops, k.len, k.src, k.snr4, k.rssi,
@@ -182,13 +259,16 @@ void writePackets(Print& out, uint32_t since) {
   out.print("]}");
 }
 
-void writeHistory(Print& out, uint32_t from_t) {
+void writeHistory(Print& out, uint32_t from_i) {
+  // samples are numbered from the oldest kept (0); at most 300 per reply, the page asks for the rest
+  if (!mu || !samples) { out.print("{\"interval\":300,\"count\":0,\"s\":[]}"); return; }
   Lock l;
-  out.print("{\"interval\":300,\"s\":[");
+  out.printf("{\"interval\":300,\"count\":%d,\"s\":[", sample_count);
   bool first = true;
-  for (int i = 0; i < sample_count; i++) {
+  const int start = from_i < (uint32_t)sample_count ? (int)from_i : sample_count;
+  const int end = start + 300 < sample_count ? start + 300 : sample_count;
+  for (int i = start; i < end; i++) {
     const Sample& s = samples[(sample_head - sample_count + i + kSamples) % kSamples];
-    if (s.t < from_t) continue;
     out.printf("%s[%lu,%lu,%d,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%u,%d,%lu,%lu,%lu,%d]", first ? "" : ",",
                (unsigned long)s.t, (unsigned long)s.up, s.noise, (unsigned long)s.tx_ms, (unsigned long)s.rx_ms,
                (unsigned long)s.recv, (unsigned long)s.sent, (unsigned long)s.recv_flood,
@@ -201,10 +281,11 @@ void writeHistory(Print& out, uint32_t from_t) {
 }
 
 void writeNodes(Print& out) {
+  if (!mu) { out.print("{\"nodes\":[],\"nbrs\":[]}"); return; }
   Lock l;
   out.print("{\"nodes\":[");
   bool first = true;
-  for (int i = 0; i < kNodes; i++) {
+  for (int i = 0; nodes && i < kNodes; i++) {
     const Node& n = nodes[i];
     if (!n.seen) continue;
     out.printf("%s{\"id\":\"%02x%02x%02x%02x\",\"type\":%u,\"hops\":%u,\"snr\":%.2f,\"seen\":%lu,", first ? "" : ",",
@@ -225,6 +306,7 @@ void writeNodes(Print& out) {
 }
 
 void writeRaw(Print& out, uint32_t seq) {
+  if (!mu || !pkts || !raws) { out.print("{\"error\":\"gone\"}"); return; }
   Lock l;
   uint32_t lo = pkt_seq > kPkts ? pkt_seq - kPkts : 0;
   if (seq == 0 || seq <= lo || seq > pkt_seq) { out.print("{\"error\":\"gone\"}"); return; }
@@ -237,6 +319,7 @@ void writeRaw(Print& out, uint32_t seq) {
 }
 
 void writeSelf(Print& out) {
+  if (!mu) { out.print("{}"); return; }
   Lock l;
   out.print("{\"name\":");
   jsonStr(out, self_name);

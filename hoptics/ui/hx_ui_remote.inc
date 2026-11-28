@@ -428,7 +428,7 @@ void App::rmAnswer(const char *text)
         toast(b);
     }
     if (c.text == "password" || !strncmp(c.text.c_str(), "password ", 9)) {
-        if (text && !strncmp(text, "password now", 12) && rm->remember)
+        if (text && !strncmp(text, "password now", 12) && rm->remember && c.text.size() > 9) // a bare "password" names no new one
             m.savePassword(rm->key, c.text.c_str() + 9); // keep the new one, as the old one was kept
     }
     rmConsoleChanged();
@@ -515,6 +515,8 @@ void App::onRemoteReply(const uint8_t key[6], const char *text)
     if (rm->busy)
         return rmAnswer(text);
     rm->log.push_back(text); // nothing asked: show it anyway
+    if (rm->log.size() > 60) // the same cap as an answered line, so a chatty repeater can't grow it
+        rm->log.erase(rm->log.begin(), rm->log.begin() + (rm->log.size() - 60));
     rmConsoleChanged();
 }
 

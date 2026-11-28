@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 N=../../hoptics/net
 H=../../hoptics/hal
 B=$(mktemp -d)
-g++ -std=gnu++11 -Wall -fsanitize=address,undefined -g -I$N -I$H parse_test.cpp $N/hx_feed.cpp -o $B/parse_test
+g++ -std=gnu++11 -Wall -fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all -g -I$N -I$H parse_test.cpp $N/hx_feed.cpp -o $B/parse_test
 $B/parse_test
 g++ -std=gnu++11 -Wall -fsanitize=address,undefined -g -DARDUINO_ARCH_ESP32 -Istubs -I$N -I$H main.cpp stubs_impl.cpp $N/hx_feed.cpp -pthread -o $B/ws
 for mode in ok moved refuse overflow huge secure downgrade; do

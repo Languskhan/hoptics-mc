@@ -1539,7 +1539,8 @@ void UITask::feedTick(void)
 // goes), so they are written by a background task and the main loop doesn't stall
 namespace
 {
-SemaphoreHandle_t saveLock = nullptr;
+SemaphoreHandle_t saveLock = nullptr;  // guards toSave
+SemaphoreHandle_t writeLock = nullptr; // one writer at a time: the save task, or the main loop before a restart
 TaskHandle_t saveTask = nullptr;
 std::vector<std::pair<std::string, std::string>> toSave; // name, contents: the newest for each name
 } // namespace
@@ -1547,6 +1548,7 @@ std::vector<std::pair<std::string, std::string>> toSave; // name, contents: the 
 bool UITask::saveData(const char *name, const std::string &data)
 {
     if (!saveLock) {
+        writeLock = xSemaphoreCreateMutex();
         saveLock = xSemaphoreCreateMutex();
         xTaskCreatePinnedToCore(
             [](void *self) {
@@ -1571,11 +1573,14 @@ bool UITask::saveData(const char *name, const std::string &data)
     return true;
 }
 
-// writes what is waiting (the background task, or the main loop before a restart)
+// writes what is waiting (the background task, or the main loop before a restart). Both can call it at once, so
+// writeLock keeps them taking turns: without it, a fresh save for a name already being written could be popped by
+// the other caller, and both would write /hx_<name>.new together. The main loop waits here for a write in progress.
 void UITask::writeSaves(void)
 {
     if (!saveLock)
         return;
+    xSemaphoreTake(writeLock, portMAX_DELAY);
     for (;;) {
         std::pair<std::string, std::string> f;
         xSemaphoreTake(saveLock, portMAX_DELAY);
@@ -1585,9 +1590,10 @@ void UITask::writeSaves(void)
         }
         xSemaphoreGive(saveLock);
         if (f.first.empty())
-            return;
+            break;
         writeData(f.first.c_str(), f.second);
     }
+    xSemaphoreGive(writeLock);
 }
 
 bool UITask::writeData(const char *name, const std::string &data)
@@ -1973,6 +1979,7 @@ void UITask::webRestore(const char *data, size_t len, uint8_t parts, std::string
 // ------------------------------------------------------------------ the web page
 void UITask::webTick(void)
 {
+    hxweb::tick();
     const bool up = wifiOn && WiFi.status() == WL_CONNECTED;
     if (webOn && up && !hxweb::running()) {
         hxweb::setFeed(feed().server); // the feed's server, for the page's policy (the default when none is set)

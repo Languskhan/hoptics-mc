@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>Hoptics M7</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://unpkg.com; connect-src 'self'; form-action 'self'; base-uri 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
 <style>
 :root{--text:#eef3f8;--dim:#9aa7b4;--faint:rgba(255,255,255,.08);--glass:rgba(16,24,34,.52);--glass2:rgba(24,34,46,.62);--edge:rgba(255,255,255,.12);
 --cyan:#3fd6e0;--green:#46e08a;--violet:#a78bfa;--blue:#5b9dff;--amber:#f4b740;--orange:#f0883e;--red:#ff6b6b;--pink:#f778ba}
@@ -113,7 +115,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
   </div>
 </section>
 <section id="t-map">
-  <div class="row glass" style="padding:10px 14px;border-radius:14px"><span class="dim" id="mapnote"></span></div>
+  <div class="row glass" style="padding:10px 14px;border-radius:14px"><label><input type="checkbox" id="showreg" checked> Region nodes (SacMesh)</label><span class="dim" id="mapnote"></span></div>
   <div id="map" class="glass"></div>
 </section>
 <section id="t-nbrs">
@@ -170,7 +172,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 </main>
 </div>
 <div id="modal"><div id="mbox" class="glass"><button class="b" id="mclose">Close</button><div id="mbody2"></div></div></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
@@ -292,7 +294,7 @@ const TYPES=["Request","Response","Direct message","Ack","Advert","Channel messa
 const TCOL=["#a78bfa","#a78bfa","#5b9dff","#7d8a97","#46e08a","#3fd6e0","#3fd6e0","#f0883e","#f4b740","#f778ba","#9aa7b4","#f0883e","#999","#999","#999","#999"];
 const ADV=["Node","Companion","Repeater","Room","Sensor"];
 const ROUTE=["Flood (scoped)","Flood","Direct","Direct (scoped)"];
-const S={stats:null,self:null,nodes:[],nbrs:[],hist:[],pk:[],seq:0,upAt:0,paused:false,repeat:null};
+const S={stats:null,self:null,nodes:[],nbrs:[],hist:[],pk:[],seq:0,upAt:0,paused:false,repeat:null,region:[],regionInfo:null};
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const nowEpoch=()=>Math.floor(Date.now()/1000);
@@ -352,15 +354,20 @@ TYPES.forEach((t,i)=>{if(t){const o=document.createElement("option");o.value=i;o
 
 // ================================================================ data
 const nodeById=id=>S.nodes.find(n=>n.id===id);
-function nodeByPrefix(h2){return S.nodes.filter(n=>n.id.startsWith(h2)).sort((a,b)=>(b.type===2)-(a.type===2)||b.seen-a.seen)[0]}
+function nodeByPrefix(h2){const heard=S.nodes.filter(n=>n.id.startsWith(h2)).sort((a,b)=>(b.type===2)-(a.type===2)||b.seen-a.seen)[0];if(heard)return heard;
+  return S.region.filter(n=>n.id.startsWith(h2)).sort((a,b)=>(b.type===2)-(a.type===2)||b.relays-a.relays)[0]}
 const pfx=b=>b.toString(16).padStart(2,"0");
 async function pollStats(){try{const j=await api("/api/stats");if(j.uptime_s!==undefined)S.stats=j}catch(e){}}
 async function pollSelf(){try{S.self=await api("/api/hx?k=self")}catch(e){}}
 async function pollNodes(){try{const j=await api("/api/hx?k=nodes");S.nodes=j.nodes;S.nbrs=j.nbrs}catch(e){}}
-async function pollHist(){try{const j=await api("/api/hx?k=history");S.hist=j.s;S.rows=deltas(S.hist)}catch(e){}}
+async function pollRegion(){try{let all=[],from=0,info=null;for(let n=0;n<15;n++){const j=await api("/api/hx?k=region&from="+from);info=j;
+    all.push(...j.nodes.map(r=>({id:r[0],type:r[1],lat:r[2],lon:r[3],seen:r[4],relays:r[5],name:r[6],region:1})));from+=j.nodes.length;if(!j.nodes.length||from>=j.count)break}
+  S.region=all;S.regionInfo=info&&{count:info.count,age:info.age,err:info.err};if(mapReady)renderMapNodes(false)}catch(e){}}
+async function pollHist(){try{let all=[],from=0;for(let n=0;n<40;n++){const j=await api("/api/hx?k=history&from="+from);all.push(...j.s);from+=j.s.length;if(!j.s.length||from>=j.count)break}S.hist=all;S.rows=deltas(all)}catch(e){}}
 async function pollPk(){if(S.paused)return;
-  try{const j=await api("/api/hx?k=packets&since="+S.seq);if(j.seq<S.seq)S.pk=[];S.seq=j.seq;S.upAt=Date.now()/1000-j.now;
-    S.pk.push(...j.p);if(S.pk.length>3000)S.pk.splice(0,S.pk.length-3000);if(j.p.length&&mapReady)addMapLines(j.p)}catch(e){}}
+  try{for(let n=0;n<8;n++){const j=await api("/api/hx?k=packets&since="+S.seq);if(j.seq<S.seq){S.pk=[];S.seq=0;continue}
+    S.upAt=Date.now()/1000-j.now;S.pk.push(...j.p);S.seq=j.p.length?j.p[j.p.length-1][0]:j.seq;
+    if(S.pk.length>3000)S.pk.splice(0,S.pk.length-3000);if(j.p.length&&mapReady&&n===0)addMapLines(j.p);if(S.seq>=j.seq)break}}catch(e){}}
 
 // ================================================================ numbers per 5-minute interval, and health
 // history row: t,up,noise,tx_ms,rx_ms,recv,sent,rf,rd,sf,sd,rxerr,uniq,dup,nbr_strong,nbr_snr4,mqtt_ok,mqtt_err,heap,temp
@@ -495,14 +502,15 @@ function decode(b){
     if(T===5&&o.ct.length%16===0)for(const ch of chanKeys()){if(ch.hash!==o.ch)continue;const mac=SHA.hmac(ch.secret,o.ct);if(mac[0]!==o.mac[0]||mac[1]!==o.mac[1])continue;
       const pt=AES.decryptECB(ch.key,o.ct),t=new DataView(pt.buffer).getUint32(0,true),s=utf8(pt.subarray(5)).replace(/\0[\s\S]*$/,""),c=s.indexOf(": ");
       o.msg={ch:ch.name,t,from:c>0?s.slice(0,c):"",text:c>0?s.slice(c+2):s};break}}
-  else if((T<=2||T===8)&&p.length>=4){o.dst=p[0];o.src=p[1];F("To",P0,P0+1,"#f0883e",who(o.dst));F("From",P0+1,P0+2,"#46e08a",who(o.src));F("MAC",P0+2,P0+4,"#7d8a97",hex(p.subarray(2,4)));F("Encrypted",P0+4,b.length,"#5b9dff",(p.length-4)+" bytes")}
-  else if(T===7&&p.length>=35){o.dst=p[0];o.key=hex(p.subarray(1,33));F("To",P0,P0+1,"#f0883e",who(o.dst));F("Sender key",P0+1,P0+33,"#46e08a",o.key.slice(0,16)+"...");F("Encrypted",P0+33,b.length,"#5b9dff",(p.length-33)+" bytes")}
+  else if((T<=2||T===8)&&p.length>=4){o.dst=p[0];o.src=p[1];F("To",P0,P0+1,"#f0883e",whoText(o.dst));F("From",P0+1,P0+2,"#46e08a",whoText(o.src));F("MAC",P0+2,P0+4,"#7d8a97",hex(p.subarray(2,4)));F("Encrypted",P0+4,b.length,"#5b9dff",(p.length-4)+" bytes")}
+  else if(T===7&&p.length>=35){o.dst=p[0];o.key=hex(p.subarray(1,33));F("To",P0,P0+1,"#f0883e",whoText(o.dst));F("Sender key",P0+1,P0+33,"#46e08a",o.key.slice(0,16)+"...");F("Encrypted",P0+33,b.length,"#5b9dff",(p.length-33)+" bytes")}
   else if(T===3&&p.length>=4){F("Checksum",P0,P0+4,"#7d8a97",hex(p.subarray(0,4)))}
   else if(T===9&&p.length>=9){F("Trace tag",P0,P0+4,"#f778ba",hex(p.subarray(0,4)));F("Auth",P0+4,P0+8,"#7d8a97",hex(p.subarray(4,8)));F("Flags",P0+8,P0+9,"#a78bfa",p[8]);
     o.trace=[];for(let k=9;k<p.length;k++)o.trace.push(pfx(p[k]));F("Route to trace",P0+9,b.length,"#f0883e",o.trace.join(" ").toUpperCase())}
   else if(p.length)F("Payload",P0,b.length,"#5b9dff",p.length+" bytes");
   return o}
 function who(b){const n=nodeByPrefix(pfx(b));return(n&&n.name?esc(n.name)+" ":"")+`<span class="mono">${pfx(b).toUpperCase()}</span>`}
+function whoText(b){const n=nodeByPrefix(pfx(b));return(n&&n.name?n.name+" ":"")+pfx(b).toUpperCase()}
 function pathNames(path){return path.map(h=>{const n=nodeByPrefix(h.slice(0,2));return`<span class="pill" title="${h}">${n&&n.name?esc(n.name):h.toUpperCase()}</span>`}).join(" → ")}
 async function openPacket(p){
   modal('<p class="dim">Loading packet...</p>');
@@ -525,7 +533,7 @@ async function openPacket(p){
   if(copies.length>1)html+=`<h3 style="margin-top:16px">Heard ${copies.length} times</h3><p class="dim">Each copy came through a different route. More copies mean more repeaters resent this packet near you.</p>
     <table><thead><tr><th>Time</th><th>SNR</th><th>RSSI</th><th>Hops</th><th>Last relays</th></tr></thead><tbody>${copies.map(q=>`<tr><td>${new Date((S.upAt+q[1])*1000).toLocaleTimeString()}</td><td>${(q[8]/4).toFixed(1)}</td><td>${q[9]}</td><td>${q[5]}</td><td>${(q[11].match(/../g)||[]).map(x=>{const n=nodeByPrefix(x);return n&&n.name?esc(n.name):x.toUpperCase()}).join(" → ")}</td></tr>`).join("")}</tbody></table>`;
   if(d){html+=`<h3 style="margin-top:16px">Bytes</h3><div class="hex mono">`+d.fields.map(f=>`<span style="background:${f.col}26;border-bottom:2px solid ${f.col}" title="${esc(f.name)}">${hex(raw.subarray(f.a,f.z)).toUpperCase()}</span>`).join(" ")+`</div>
-    <table style="margin-top:10px"><thead><tr><th>Field</th><th>Bytes</th><th>Meaning</th></tr></thead><tbody>${d.fields.map(f=>`<tr><td><span style="color:${f.col}">●</span> ${f.name}</td><td>${f.a}-${f.z-1}</td><td style="white-space:normal">${f.txt}</td></tr>`).join("")}</tbody></table>`;
+    <table style="margin-top:10px"><thead><tr><th>Field</th><th>Bytes</th><th>Meaning</th></tr></thead><tbody>${d.fields.map(f=>`<tr><td><span style="color:${f.col}">●</span> ${esc(f.name)}</td><td>${f.a}-${f.z-1}</td><td style="white-space:normal">${esc(f.txt)}</td></tr>`).join("")}</tbody></table>`;
     if(d.path.length&&hasLoc())html+=`<p><button class="b" id="showpath">Show path on map</button></p>`}
   else html+=`<p class="dim">The bytes of this packet are no longer in memory.</p>`;
   modal(html);
@@ -560,7 +568,7 @@ function renderWarnings(){
   if(!hasLoc())W.push(["info","Set this node's location","The map, distances and the too-close check need it. In Console: set lat &lt;latitude&gt; then set lon &lt;longitude&gt;, or use Settings."]);
   if(rep===true&&nb.length>=3)W.push(["warn","This spot may add little coverage",`It hears ${nb.length} repeaters with strong signal. Each repeater that hears a flood packet sends it again, so one more repeater in an already-covered area mostly adds airtime and collisions. Consider observer only (Console: set repeat off), or keep repeating with a longer txdelay (see Advisor).`]);
   if(rep===false&&S.nbrs.length<=1)W.push(["warn","You may be the only link here",`Repeat is off and this node hears ${S.nbrs.length} other repeater${S.nbrs.length===1?"":"s"}. If nothing else covers this area, turning repeat on helps people nearby.`]);
-  if(hasLoc()&&rep!==false){const close=S.nodes.filter(n=>n.type===2&&n.lat!=null&&!S.self.id.startsWith(n.id)&&distTo(n)<1);
+  if(hasLoc()&&rep!==false){const seen=new Set(),close=[...S.nodes,...S.region].filter(n=>n.type===2&&n.lat!=null&&!S.self.id.startsWith(n.id)&&distTo(n)<1&&(!n.region||nowEpoch()-n.seen<7*86400)&&!seen.has(n.id)&&seen.add(n.id));
     if(close.length)W.push(["warn","Another repeater is very close",close.map(n=>esc(n.name||n.id)+" ("+fmtKm(distTo(n))+")").join(", ")+". Two repeaters this close cover nearly the same area; one could switch to observer only."])}
   if(air!=null&&air>25)W.push(["bad","Busy channel",`The radio was busy ${air.toFixed(1)} % of the last hour. Above about 25 % packets start to collide. The Advisor's timing changes help; if other repeaters cover this spot, repeat off helps most.`]);
   if(cp&&cp.per>=4)W.push(["warn","Many copies of each flood",`Each flood packet reaches this node ${cp.per.toFixed(1)} times. Several repeaters around you resend the same packets.`]);
@@ -579,10 +587,14 @@ function initMap(){
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{maxZoom:19,subdomains:"abcd",attribution:"© OpenStreetMap © CARTO"}).addTo(map);
   nodeLayer=L.layerGroup().addTo(map);lineLayer=L.layerGroup().addTo(map);mapReady=true}
 function renderMapNodes(fit){if(!mapReady)return;nodeLayer.clearLayers();const pts=[];
+  if($("showreg").checked){const heardIds=new Set(S.nodes.map(n=>n.id));const now=nowEpoch();
+    S.region.filter(n=>n.lat!=null&&!heardIds.has(n.id)&&(now-n.seen)<14*86400).forEach(n=>{const col=n.type===2?"#46e08a":"#a78bfa";
+      L.circleMarker([n.lat,n.lon],{radius:4,color:col,weight:1,fillColor:col,fillOpacity:.25,opacity:.5}).bindTooltip(`<b>${esc(n.name||n.id)}</b><br>${ADV[n.type]||""} · from SacMesh${n.relays?" · "+n.relays+" relays in 24 h":""}${distTo(n)!=null?" · "+fmtKm(distTo(n)):""}<br><span class="dim">last seen ${ago(now-n.seen)} ago</span>`).addTo(nodeLayer)})}
   S.nodes.filter(n=>n.lat!=null).forEach(n=>{const col=n.type===2?"#46e08a":n.type===3?"#a78bfa":n.type===1?"#5b9dff":"#f4b740";
     L.circleMarker([n.lat,n.lon],{radius:n.type===2?7:5,color:col,weight:2,fillColor:col,fillOpacity:.55}).bindTooltip(`<b>${esc(n.name||n.id)}</b><br>${ADV[n.type]||""} · ${n.hops} hops · ${n.snr} dB${distTo(n)!=null?" · "+fmtKm(distTo(n)):""}`).addTo(nodeLayer);pts.push([n.lat,n.lon])});
   if(hasLoc()){L.circleMarker([S.self.lat,S.self.lon],{radius:10,color:"#3fd6e0",weight:3,fillColor:"#3fd6e0",fillOpacity:.9}).bindTooltip("<b>This node</b>").addTo(nodeLayer);pts.push([S.self.lat,S.self.lon])}
-  $("mapnote").textContent=(hasLoc()?"":"Set this node's location to draw packet lines. ")+pts.length+" nodes with a location. Lines show packets arriving, from the repeater that handed them over (green direct, violet flood).";
+  const ri=S.regionInfo;$("mapnote").textContent=(hasLoc()?"":"Set this node's location to draw packet lines. ")+pts.length+" heard nodes with a location (bright)"+
+    (ri?(ri.count?`, ${ri.count} region nodes from SacMesh (faint, updated ${ago(ri.age)} ago)`:ri.err?`; region list unavailable (${ri.err})`:"; region list loading"):"")+". Lines show packets arriving.";
   if(fit&&pts.length)map.fitBounds(pts,{padding:[40,40],maxZoom:12});else if(fit)map.setView([20,0],2)}
 function fade(ln,o){const t=setInterval(()=>{o-=.04;if(o<=0){clearInterval(t);lineLayer.removeLayer(ln)}else ln.setStyle({opacity:o})},2000)}
 function addMapLines(list){if(!hasLoc())return;const me=[S.self.lat,S.self.lon];
@@ -684,9 +696,13 @@ $("upgo").onclick=()=>{const f=$("upfile").files[0];if(!f){$("upmsg").textConten
   if(/factory/i.test(f.name)){$("upmsg").textContent="Use the .update.bin file, not the factory one.";return}
   const fd=new FormData();fd.append("firmware",f,f.name);const x=new XMLHttpRequest();x.open("POST","/api/hx/update");x.setRequestHeader("X-Hoptics","1");
   $("upgo").disabled=true;$("upmsg").textContent="Uploading...";
-  x.upload.onprogress=e=>{if(e.lengthComputable){$("upbar").style.width=(e.loaded/e.total*100)+"%";$("upmsg").textContent="Uploading "+Math.round(e.loaded/e.total*100)+" %"}};
+  let waiting=false;
+  const comeBack=()=>{if(waiting)return;waiting=true;$("upmsg").textContent="Checking and installing, then restarting...";const t0=Date.now();
+    const poll=async()=>{await sleep(4000);try{const r=await fetch("/hoptics",{cache:"no-store"});if(r.ok&&Date.now()-t0>8000){$("upmsg").textContent="Done. Reloading...";location.reload();return}}catch(e){}
+      if(Date.now()-t0<120000)poll();else $("upmsg").textContent="The node hasn't come back yet. Check its power and network, then reload this page."};poll()};
+  x.upload.onprogress=e=>{if(e.lengthComputable){$("upbar").style.width=(e.loaded/e.total*100)+"%";$("upmsg").textContent="Uploading "+Math.round(e.loaded/e.total*100)+" %";if(e.loaded>=e.total)setTimeout(comeBack,15000)}};
   x.onload=()=>{let j={};try{j=JSON.parse(x.responseText)}catch(e){}
-    if(x.status===200){$("upmsg").textContent="Installed. Restarting; this page reloads in 30 seconds.";setTimeout(()=>location.reload(),30000)}
+    if(x.status===200)comeBack();
     else{$("upmsg").textContent="Update failed: "+(j.error||x.status);$("upgo").disabled=false}};
   x.onerror=()=>{$("upmsg").textContent="Upload interrupted. Check the connection and try again.";$("upgo").disabled=false};x.send(fd)};
 $("reboot").onclick=async()=>{if(!confirm("Restart the node now?"))return;try{await api("/api/reboot",{method:"POST"});$("upmsg").textContent="Restarting...";setTimeout(()=>location.reload(),25000)}catch(e){}};
@@ -707,7 +723,7 @@ async function start(){if(started)return;started=true;
   setInterval(async()=>{await pollStats();if(!$("modal").classList.contains("on"))render()},3000);
   setInterval(pollPk,2000);
   setInterval(async()=>{await pollNodes();await pollSelf();if(mapReady)renderMapNodes(false)},15000);
-  setInterval(pollHist,60000)}
+  setInterval(pollHist,60000);pollRegion();setInterval(pollRegion,1800000);$("showreg").onchange=()=>renderMapNodes(false)}
 (async()=>{try{await api("/api/hx?k=self");$("app").hidden=false;start()}catch(e){if(e.message!=="auth"){$("app").hidden=false;start()}}})();
 </script>
 </body>
