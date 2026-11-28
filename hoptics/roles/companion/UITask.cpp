@@ -4,6 +4,7 @@
 #include "MyMesh.h"
 #include "hx_feed.h"
 #include "hx_web.h"
+#include "hx_tls.h"
 #include "hx_ota.h"
 #include "hx_parse.h"
 #include "hx_sd.h"
@@ -65,11 +66,19 @@ UITask::UITask(mesh::MainBoard *board, MultiSerialInterface *serial) : AbstractU
 
 namespace
 {
-// mbedTLS (HTTPS for the street map, the live feed) takes 40 KB or more per connection, and this Arduino core gives it
-// internal RAM only, which Wi-Fi and Bluetooth need too. Its buffers go to PSRAM instead (internal RAM when there is none).
+// mbedTLS (HTTPS for the street map, the live feed, the web page) takes 40 KB or more per connection, and this Arduino
+// core gives it internal RAM only, which Wi-Fi and Bluetooth need too. Its big buffers (the 16 KB records) go to PSRAM.
+// The small, short-lived pieces of the key maths stay in internal RAM while there is room: in PSRAM a handshake took
+// seconds instead of a fraction of one
 void *tlsCalloc(size_t n, size_t size)
 {
-    void *p = heap_caps_calloc(n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (size && n > SIZE_MAX / size)
+        return nullptr;
+    void *p = nullptr;
+    if (n * size <= 4096 && heap_caps_get_free_size(MALLOC_CAP_INTERNAL) > 64 * 1024)
+        p = heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!p)
+        p = heap_caps_calloc(n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     return p ? p : heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 void tlsFree(void *p) { heap_caps_free(p); }
@@ -1983,9 +1992,17 @@ void UITask::webTick(void)
     const bool up = wifiOn && WiFi.status() == WL_CONNECTED;
     if (webOn && up && !hxweb::running()) {
         hxweb::setFeed(feed().server); // the feed's server, for the page's policy (the default when none is set)
+#if defined(HOPTICS_HTTPS)
+        hxweb::start(80, webHost);
+#else
         hxweb::start(80);
+#endif
         if (!mdnsUp && MDNS.begin(webHost)) { // hoptics-xxxx.local, for phones and computers that look names up that way
+#if defined(HOPTICS_HTTPS)
+            MDNS.addService("https", "tcp", 443);
+#else
             MDNS.addService("http", "tcp", 80);
+#endif
             mdnsUp = true;
         }
     } else if (!webOn && hxweb::running()) {
@@ -2003,7 +2020,7 @@ hx::WebStatus UITask::web() const
     w.on = webOn;
     w.running = hxweb::running() && wifiOn && WiFi.status() == WL_CONNECTED;
     if (w.running)
-        snprintf(w.addr, sizeof(w.addr), "http://%s", WiFi.localIP().toString().c_str());
+        snprintf(w.addr, sizeof(w.addr), "%s://%s", hxtls::ready() ? "https" : "http", WiFi.localIP().toString().c_str());
     snprintf(w.host, sizeof(w.host), "%s.local", webHost);
     memcpy(w.pin, webPin, sizeof(w.pin));
     w.sessions = hxweb::sessions();
@@ -2162,6 +2179,19 @@ void UITask::webExtras(std::string &o, uint32_t histHave) const
              (unsigned)getCpuFrequencyMhz(), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getHeapSize(), (unsigned)ESP.getFreePsram(),
              (unsigned)ESP.getPsramSize(), wifiOn && WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : 0);
     o += b;
+    { // memory low-water marks and the HTTPS sessions, for testing what HTTPS costs
+        const hxtls::Stats t = hxtls::stats();
+        snprintf(b, sizeof(b), ",\"heapMin\":%u,\"heapBig\":%u,\"psramMin\":%u,\"tls\":{\"on\":%s,\"hs\":%u,\"fail\":%u,\"err\":%d,\"lastMs\":%u,\"maxMs\":%u,\"open\":%u}",
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM), hxtls::ready() ? "true" : "false", (unsigned)t.handshakes,
+                 (unsigned)t.failed, t.lastErr, (unsigned)t.lastMs, (unsigned)t.maxMs, (unsigned)t.open);
+        o += b;
+        if (hxtls::ready()) {
+            o += ",\"tlsFp\":\"";
+            o += hxtls::fingerprint();
+            o += "\"";
+        }
+    }
     snprintf(b, sizeof(b), ",\"built\":\"%s %s\",\"slot\":\"%s\",\"trial\":%s,\"update\":\"%s\"", __DATE__, __TIME__,
              hxota::slot(), hxota::trial() ? "true" : "false",
              hxota::waiting() ? "waiting" : hxota::declined() ? "declined" : hxota::failed() ? "failed" : hxota::restartWanted ? "restarting" : "");

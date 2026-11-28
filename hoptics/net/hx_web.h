@@ -27,7 +27,9 @@ struct Query {
     uint8_t parts = 0;
 };
 
-bool start(uint16_t port); // true once serving (again a no-op)
+// true once serving (again a no-op). tlsHost (the mDNS name): HTTPS on 443, with port 80 sending browsers there; the
+// page stays off if HTTPS can't start
+bool start(uint16_t port, const char *tlsHost = nullptr);
 void stop();
 bool running();
 void setPin(const char *pin); // six digits; a new PIN signs every browser out (and clears every wrong-PIN lock)
