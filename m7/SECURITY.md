@@ -12,8 +12,13 @@ as hostile input.
   (`connect-src 'self'`), so even a page bug can't send your data elsewhere.
 - **Third-party code is pinned.** The map library is loaded with Subresource Integrity hashes; a changed file
   is refused by the browser.
-- **Admin only.** Every data endpoint and the firmware upload need the admin session (5 wrong passwords lock
-  login for a while; the session cookie is HttpOnly and SameSite=Lax).
+- **Admin only.** Every data endpoint and the firmware upload need the admin session. The session cookie is
+  HttpOnly and SameSite=Lax and expires after 20 minutes unused.
+- **Password guessing is slowed down.** 5 wrong passwords lock sign-in for 30 s, and each further lockout
+  doubles the wait (up to about an hour). The web page refuses to sign in at all while the admin password is a
+  default (`password`, `hello`) or shorter than 6 characters.
+- **No DNS rebinding.** On your network the node only answers requests addressed to its IP or its own
+  `meshcore-…` name, so a website can't point its own domain at the node and talk to it.
 - **Firmware updates fail closed.** Only the signed-in admin, from the node's own page (Origin checked), one
   upload at a time; the file must be an ESP32-S3 app image; it goes into the spare slot and the node switches
   only if the whole image arrived and its checksum verified. A dropped upload is discarded.

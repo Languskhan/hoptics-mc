@@ -161,10 +161,53 @@ index 782a2f4..d225588 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
    int calcRxDelay(float score, uint32_t air_time) const override;
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..2848616 100644
+index 167e5cd..5ca1592 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
-@@ -735,6 +735,16 @@ void WebConfigServer::registerRoutes() {
+@@ -690,8 +690,42 @@ uint32_t WebConfigServer::handlerRefCount() const {
+   return refs;
+ }
+ 
++#ifdef HOPTICS_M7
++// A web page on another site can point its own domain name at this node's IP (DNS rebinding). Browsers always
++// send the name they used in Host, so in LAN mode anything that isn't an IPv4 address or a meshcore-* local
++// name is refused.
++static bool hxHostOk(AsyncWebServerRequest* req) {
++  if (!req->hasHeader("Host")) return true;
++  String h = req->header("Host");
++  const int colon = h.indexOf(':');
++  if (colon >= 0) h = h.substring(0, colon);
++  h.toLowerCase();
++  if (h.length() == 0 || h.length() > 63) return false;
++  int dots = 0;
++  bool ip = true;
++  for (size_t i = 0; i < h.length(); i++) {
++    if (h[i] == '.') dots++;
++    else if (h[i] < '0' || h[i] > '9') { ip = false; break; }
++  }
++  if (ip && dots == 3) return true;
++  // the node's DHCP name: meshcore-<name>, optionally .local / .lan / .home (names only a local resolver answers)
++  for (const char* sfx : {".local", ".lan", ".home"}) {
++    if (h.endsWith(sfx)) { h = h.substring(0, h.length() - strlen(sfx)); break; }
++  }
++  if (!h.startsWith("meshcore-") || h.length() <= 9) return false;
++  for (size_t i = 0; i < h.length(); i++) {
++    const char c = h[i];
++    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
++  }
++  return true;
++}
++#endif
++
+ void WebConfigServer::dispatchRequest(AsyncWebServerRequest* req, RequestHandler handler) {
+   wcLogReq(req);
++#ifdef HOPTICS_M7
++  if (_active && _active->_mode == MODE_LAN && !hxHostOk(req)) { req->send(421, "text/plain", "wrong host"); return; }
++#endif
+   WebConfigServer* target = NULL;
+   portENTER_CRITICAL(&s_wc_route_mux);
+   if (_active != NULL) {
+@@ -735,6 +769,16 @@ void WebConfigServer::registerRoutes() {
    _server->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleScan); });
    _server->on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleReboot); });
    _server->on("/api/portal/exit", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handlePortalExit); });
@@ -181,7 +224,52 @@ index 167e5cd..2848616 100644
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -1631,3 +1641,114 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -856,7 +900,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+   }
+   uint32_t now = millis();
+   if (_login_lock_until && (int32_t)(now - _login_lock_until) < 0) {
++#ifdef HOPTICS_M7
++    req->send(429, "application/json", "{\"error\":\"too many wrong passwords, try again later\"}");
++#else
+     req->send(429, "application/json", "{\"error\":\"locked, retry in 30s\"}");
++#endif
+     return;
+   }
+   const char* body = (const char*)req->_tempObject;
+@@ -871,7 +919,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+                                                : sizeof(_prefs->password);
+   if (!fixedTimeEquals(pwd, expected, expected_size)) {
+     if (++_login_fails >= 5) {
++#ifdef HOPTICS_M7
++      // 30 s, then 1, 2, 4 ... minutes, up to about an hour, until a correct password
++      const uint8_t n = _login_locks < 7 ? _login_locks : 7;
++      if (_login_locks < 255) _login_locks++;
++      _login_lock_until = now + (30000UL << n);
++#else
+       _login_lock_until = now + 30000;
++#endif
+       if (_login_lock_until == 0) _login_lock_until = 1;
+       _login_fails = 0;
+     }
+@@ -880,6 +935,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+   }
+   _login_fails = 0;
+   _login_lock_until = 0;
++#ifdef HOPTICS_M7
++  _login_locks = 0;
++  if (!_initial_setup && (!strcmp(_prefs->password, "password") || !strcmp(_prefs->password, "hello") ||
++                          strlen(_prefs->password) < 6)) {
++    // anyone on the network could guess these; make the owner pick a real one first
++    req->send(403, "application/json",
++              "{\"error\":\"The admin password is too easy to guess. Set a new one (6+ characters) from the "
++              "MeshCore app or USB: password <new>\"}");
++    return;
++  }
++#endif
+   uint32_t generation;
+   {
+     WCLock lock(_mux);
+@@ -1631,3 +1697,114 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -297,10 +385,20 @@ index 167e5cd..2848616 100644
 +}
 +#endif
 diff --git a/src/helpers/esp32/WebConfigServer.h b/src/helpers/esp32/WebConfigServer.h
-index bdd3e27..0a34c8a 100644
+index bdd3e27..7a815db 100644
 --- a/src/helpers/esp32/WebConfigServer.h
 +++ b/src/helpers/esp32/WebConfigServer.h
-@@ -236,6 +236,12 @@ private:
+@@ -177,6 +177,9 @@ private:
+   uint32_t _session_last_seen = 0;
+   uint32_t _setup_reminder_at = 0;
+   uint8_t _login_fails = 0;
++#ifdef HOPTICS_M7
++  uint8_t _login_locks = 0;  // lockouts in a row: each one doubles the wait
++#endif
+   uint32_t _login_lock_until = 0;
+ 
+   // Once set (via /api/portal/exit), OS captive probes get native "success"
+@@ -236,6 +239,12 @@ private:
    void handleReboot(AsyncWebServerRequest* req);
    void handlePortalExit(AsyncWebServerRequest* req);
    void handleNotFound(AsyncWebServerRequest* req);
@@ -314,7 +412,7 @@ index bdd3e27..0a34c8a 100644
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..5f33ac8 100644
+index 4bd316b..d9de9ac 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
 @@ -290,3 +290,18 @@ lib_deps =
@@ -328,7 +426,7 @@ index 4bd316b..5f33ac8 100644
 +build_flags =
 +  ${env:ThinkNode_M7_repeater_observer_mqtt.build_flags}
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.3.0"'
++  -D HOPTICS_M7_VERSION='"0.3.1"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +  -UADVERT_NAME
 +  -D ADVERT_NAME='"Hoptics M7"'

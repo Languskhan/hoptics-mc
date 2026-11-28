@@ -128,8 +128,9 @@ void regionDone(bool ok, int total, const char* err) {
 }
 
 void writeRegion(Print& out, uint32_t from_i) {
+  if (!mu) { out.print("{\"count\":0,\"age\":-1,\"err\":\"\",\"nodes\":[]}"); return; }
   Lock l;
-  const int count = region_n[0];
+  const int count = region[0] ? region_n[0] : 0;
   out.printf("{\"count\":%d,\"age\":%ld,\"err\":", count,
              region_at ? (long)(millis() / 1000 - region_at) : -1L);
   jsonStr(out, region_err);
@@ -236,6 +237,7 @@ void setNeighbours(const Neighbour* n, int count) {
 }
 
 void writePackets(Print& out, uint32_t since) {
+  if (!mu) { out.print("{\"seq\":0,\"now\":0,\"p\":[]}"); return; }
   Lock l;
   out.printf("{\"seq\":%lu,\"now\":%lu,\"p\":[", (unsigned long)pkt_seq, (unsigned long)(millis() / 1000));
   // (seq is the newest; the page keeps asking with since = its last packet until it reaches seq)
@@ -259,6 +261,7 @@ void writePackets(Print& out, uint32_t since) {
 
 void writeHistory(Print& out, uint32_t from_i) {
   // samples are numbered from the oldest kept (0); at most 300 per reply, the page asks for the rest
+  if (!mu || !samples) { out.print("{\"interval\":300,\"count\":0,\"s\":[]}"); return; }
   Lock l;
   out.printf("{\"interval\":300,\"count\":%d,\"s\":[", sample_count);
   bool first = true;
@@ -278,10 +281,11 @@ void writeHistory(Print& out, uint32_t from_i) {
 }
 
 void writeNodes(Print& out) {
+  if (!mu) { out.print("{\"nodes\":[],\"nbrs\":[]}"); return; }
   Lock l;
   out.print("{\"nodes\":[");
   bool first = true;
-  for (int i = 0; i < kNodes; i++) {
+  for (int i = 0; nodes && i < kNodes; i++) {
     const Node& n = nodes[i];
     if (!n.seen) continue;
     out.printf("%s{\"id\":\"%02x%02x%02x%02x\",\"type\":%u,\"hops\":%u,\"snr\":%.2f,\"seen\":%lu,", first ? "" : ",",
@@ -302,6 +306,7 @@ void writeNodes(Print& out) {
 }
 
 void writeRaw(Print& out, uint32_t seq) {
+  if (!mu || !pkts || !raws) { out.print("{\"error\":\"gone\"}"); return; }
   Lock l;
   uint32_t lo = pkt_seq > kPkts ? pkt_seq - kPkts : 0;
   if (seq == 0 || seq <= lo || seq > pkt_seq) { out.print("{\"error\":\"gone\"}"); return; }
@@ -314,6 +319,7 @@ void writeRaw(Print& out, uint32_t seq) {
 }
 
 void writeSelf(Print& out) {
+  if (!mu) { out.print("{}"); return; }
   Lock l;
   out.print("{\"name\":");
   jsonStr(out, self_name);

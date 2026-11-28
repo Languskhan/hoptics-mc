@@ -20,6 +20,32 @@ extern const uint8_t rootca_crt_bundle_end[] asm("_binary_src_certs_x509_crt_bun
 namespace hx {
 namespace {
 
+// Reads at most `left` bytes from the HTTP body, so a broken or hostile server can't feed the parser forever.
+class CappedStream : public Stream {
+ public:
+  CappedStream(Stream& s, size_t cap) : s_(s), left_(cap) {}
+  int available() override { return left_ ? s_.available() : 0; }
+  int read() override {
+    if (!left_) return -1;
+    int c = s_.read();
+    if (c >= 0) left_--;
+    return c;
+  }
+  int peek() override { return left_ ? s_.peek() : -1; }
+  size_t readBytes(char* buf, size_t n) override {
+    if (n > left_) n = left_;
+    size_t got = s_.readBytes(buf, n);
+    left_ -= got;
+    return got;
+  }
+  size_t write(uint8_t) override { return 0; }
+  bool exhausted() const { return left_ == 0; }
+
+ private:
+  Stream& s_;
+  size_t left_;
+};
+
 constexpr const char* kHost = "https://scope.sacmesh.org/api/nodes";
 constexpr int kPage = 100, kMaxPages = 25;           // at most 2500 nodes per refresh
 constexpr uint32_t kEveryMs = 6UL * 3600UL * 1000UL;  // refresh every 6 hours
@@ -90,10 +116,11 @@ int fetchPage(const char* role, int offset, bool* more, char* err, size_t err_le
   for (const char* k : {"name", "public_key", "role", "lat", "lon", "last_seen", "relay_count_24h"}) f[k] = true;
   filter["has_more"] = true;
   JsonDocument doc;
-  DeserializationError e = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter),
+  CappedStream body(http.getStream(), 512 * 1024);  // a page of 100 nodes is far smaller
+  DeserializationError e = deserializeJson(doc, body, DeserializationOption::Filter(filter),
                                            DeserializationOption::NestingLimit(4));
   http.end();
-  if (e) { snprintf(err, err_len, "bad reply: %s", e.c_str()); return -1; }
+  if (e || body.exhausted()) { snprintf(err, err_len, "bad reply: %s", e ? e.c_str() : "too large"); return -1; }
 
   int added = 0;
   for (JsonObject n : doc["nodes"].as<JsonArray>()) {
@@ -145,7 +172,7 @@ void startRegion() {
   static bool started = false;
   if (started) return;
   started = true;
-  xTaskCreatePinnedToCore(task, "hx_region", 12288, nullptr, 1, nullptr, 1);
+  xTaskCreatePinnedToCore(task, "hx_region", 16384, nullptr, 1, nullptr, 1);
 }
 
 }  // namespace hx
