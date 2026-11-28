@@ -45,6 +45,13 @@ void addRegionNode(const uint8_t* pub, uint8_t type, const char* name, bool has_
 void regionDone(bool ok, int total, const char* err);
 void writeRegion(Print& out, uint32_t from_i);
 
+// Channel chat from the dashboard: the page queues one message, the mesh loop sends it (one at a time,
+// at least 5 s apart). Channel packets heard or sent are served with their bytes so the page can decrypt them.
+constexpr int kChatMax = 140;
+bool queueChannelMsg(const uint8_t key[16], const char* text);
+bool takeChannelMsg(uint8_t key[16], char* text, size_t n);
+void writeGroup(Print& out, uint32_t since);
+
 // Discord alerts (HopticsAlerts.cpp)
 enum : uint8_t { ALERT_SILENT = 1, ALERT_DAILY = 2, ALERT_NEW = 4 };
 void alertsBegin();

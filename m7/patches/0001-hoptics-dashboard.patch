@@ -1,5 +1,5 @@
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index 1324da0..ec12faa 100644
+index 1324da0..cea742e 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
 @@ -1,4 +1,8 @@
@@ -58,7 +58,7 @@ index 1324da0..ec12faa 100644
  #ifdef WITH_WEBCONFIG
    if (_webconfig) {
      _webconfig->tick(millis());
-@@ -2459,3 +2482,87 @@ bool MyMesh::hasPendingWork() const {
+@@ -2459,3 +2482,107 @@ bool MyMesh::hasPendingWork() const {
  #endif
    return _mgr->getOutboundCount(0xFFFFFFFF) > 0;
  }
@@ -70,6 +70,26 @@ index 1324da0..ec12faa 100644
 +  static uint32_t next_nbr = 0, next_sample = 0, next_web = 0;
 +  static bool started = false;
 +  uint32_t now = millis();
++  {  // a channel message typed on the dashboard
++    uint8_t key[16];
++    char text[hx::kChatMax + 1];
++    if (hx::takeChannelMsg(key, text, sizeof(text))) {
++      mesh::GroupChannel ch;
++      memset(ch.secret, 0, sizeof(ch.secret));
++      memcpy(ch.secret, key, 16);
++      mesh::Utils::sha256(ch.hash, sizeof(ch.hash), key, 16);
++      uint8_t temp[5 + sizeof(_prefs.node_name) + 2 + hx::kChatMax + 1];
++      const uint32_t ts = getRTCClock()->getCurrentTimeUnique();
++      memcpy(temp, &ts, 4);
++      temp[4] = 0;  // plain text
++      int len = snprintf((char*)&temp[5], sizeof(temp) - 5, "%s: %s", _prefs.node_name, text);
++      if (len > (int)sizeof(temp) - 6) len = sizeof(temp) - 6;
++      if (len > 0) {
++        mesh::Packet* pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, ch, temp, 5 + len);
++        if (pkt) sendFlood(pkt);
++      }
++    }
++  }
 +  if (!started) {
 +    hx::begin();
 +    started = true;
@@ -161,7 +181,7 @@ index 782a2f4..d225588 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
    int calcRxDelay(float score, uint32_t air_time) const override;
 diff --git a/examples/simple_room_server/MyMesh.cpp b/examples/simple_room_server/MyMesh.cpp
-index 022603f..4b0e9ad 100644
+index 022603f..041a115 100644
 --- a/examples/simple_room_server/MyMesh.cpp
 +++ b/examples/simple_room_server/MyMesh.cpp
 @@ -1,4 +1,8 @@
@@ -220,7 +240,7 @@ index 022603f..4b0e9ad 100644
  #ifdef WITH_WEBCONFIG
    if (_webconfig) {
      _webconfig->tick(millis());
-@@ -2224,3 +2247,87 @@ bool MyMesh::startNeighborDiscover(char* reply, bool periodic) {
+@@ -2224,3 +2247,107 @@ bool MyMesh::startNeighborDiscover(char* reply, bool periodic) {
    return true;
  }
  #endif // WITH_MQTT_NEIGHBORS
@@ -232,6 +252,26 @@ index 022603f..4b0e9ad 100644
 +  static uint32_t next_nbr = 0, next_sample = 0, next_web = 0;
 +  static bool started = false;
 +  uint32_t now = millis();
++  {  // a channel message typed on the dashboard
++    uint8_t key[16];
++    char text[hx::kChatMax + 1];
++    if (hx::takeChannelMsg(key, text, sizeof(text))) {
++      mesh::GroupChannel ch;
++      memset(ch.secret, 0, sizeof(ch.secret));
++      memcpy(ch.secret, key, 16);
++      mesh::Utils::sha256(ch.hash, sizeof(ch.hash), key, 16);
++      uint8_t temp[5 + sizeof(_prefs.node_name) + 2 + hx::kChatMax + 1];
++      const uint32_t ts = getRTCClock()->getCurrentTimeUnique();
++      memcpy(temp, &ts, 4);
++      temp[4] = 0;  // plain text
++      int len = snprintf((char*)&temp[5], sizeof(temp) - 5, "%s: %s", _prefs.node_name, text);
++      if (len > (int)sizeof(temp) - 6) len = sizeof(temp) - 6;
++      if (len > 0) {
++        mesh::Packet* pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, ch, temp, 5 + len);
++        if (pkt) sendFlood(pkt);
++      }
++    }
++  }
 +  if (!started) {
 +    hx::begin();
 +    started = true;
@@ -323,7 +363,7 @@ index cc8600b..d3c67b3 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
  
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..015849b 100644
+index 167e5cd..62f6849 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
 @@ -690,8 +690,42 @@ uint32_t WebConfigServer::handlerRefCount() const {
@@ -369,13 +409,14 @@ index 167e5cd..015849b 100644
    WebConfigServer* target = NULL;
    portENTER_CRITICAL(&s_wc_route_mux);
    if (_active != NULL) {
-@@ -735,6 +769,17 @@ void WebConfigServer::registerRoutes() {
+@@ -735,6 +769,18 @@ void WebConfigServer::registerRoutes() {
    _server->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleScan); });
    _server->on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleReboot); });
    _server->on("/api/portal/exit", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handlePortalExit); });
 +#ifdef HOPTICS_M7
 +  _server->on("/hoptics", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxPage); });
 +  _server->on("/api/hx", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxData); });
++  _server->on("/api/hx/chat", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxChat); });
 +  _server->on("/api/hx/alerts", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxAlerts); });
 +  _server->on("/api/hx/update", HTTP_POST,
 +      [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxUpdateDone); },
@@ -387,7 +428,7 @@ index 167e5cd..015849b 100644
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -856,7 +901,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -856,7 +902,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    uint32_t now = millis();
    if (_login_lock_until && (int32_t)(now - _login_lock_until) < 0) {
@@ -399,7 +440,7 @@ index 167e5cd..015849b 100644
      return;
    }
    const char* body = (const char*)req->_tempObject;
-@@ -871,7 +920,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -871,7 +921,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
                                                 : sizeof(_prefs->password);
    if (!fixedTimeEquals(pwd, expected, expected_size)) {
      if (++_login_fails >= 5) {
@@ -414,7 +455,7 @@ index 167e5cd..015849b 100644
        if (_login_lock_until == 0) _login_lock_until = 1;
        _login_fails = 0;
      }
-@@ -880,6 +936,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -880,6 +937,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    _login_fails = 0;
    _login_lock_until = 0;
@@ -432,7 +473,7 @@ index 167e5cd..015849b 100644
    uint32_t generation;
    {
      WCLock lock(_mux);
-@@ -1631,3 +1698,133 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -1631,3 +1699,157 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -521,6 +562,29 @@ index 167e5cd..015849b 100644
 +  req->send(200, "application/json", "{\"ok\":true}");
 +}
 +
++// Send a channel message: key (32 hex chars, the channel's 16-byte key) and text (1-140 bytes, no control
++// characters). Signed-in admin from this page only; one at a time, 5 s apart.
++void WebConfigServer::handleHxChat(AsyncWebServerRequest* req) {
++  if (_mode != MODE_LAN) { req->send(503); return; }
++  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
++  if (!hxSameOrigin(req)) { req->send(403, "application/json", "{\"error\":\"wrong origin\"}"); return; }
++  if (!req->hasParam("key", true) || !req->hasParam("text", true)) { req->send(400, "application/json", "{\"error\":\"bad request\"}"); return; }
++  const String k = req->getParam("key", true)->value(), t = req->getParam("text", true)->value();
++  if (k.length() != 32 || t.length() < 1 || t.length() > hx::kChatMax) { req->send(400, "application/json", "{\"error\":\"message must be 1-140 bytes\"}"); return; }
++  uint8_t key[16];
++  for (int i = 0; i < 16; i++) {
++    auto hv = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
++    const int a = hv(k[i * 2]), b = hv(k[i * 2 + 1]);
++    if (a < 0 || b < 0) { req->send(400, "application/json", "{\"error\":\"bad key\"}"); return; }
++    key[i] = (uint8_t)(a << 4 | b);
++  }
++  for (size_t i = 0; i < t.length(); i++) {
++    if ((uint8_t)t[i] < 0x20) { req->send(400, "application/json", "{\"error\":\"no control characters\"}"); return; }
++  }
++  if (!hx::queueChannelMsg(key, t.c_str())) { req->send(429, "application/json", "{\"error\":\"wait a few seconds between messages\"}"); return; }
++  req->send(200, "application/json", "{\"ok\":true}");
++}
++
 +// Alert settings: url (blank keeps it, "-" removes it), flags, or test=1. Signed-in admin from this page only.
 +void WebConfigServer::handleHxAlerts(AsyncWebServerRequest* req) {
 +  if (_mode != MODE_LAN) { req->send(503); return; }
@@ -560,6 +624,7 @@ index 167e5cd..015849b 100644
 +  else if (k == "history") hx::writeHistory(*res, req->hasParam("from") ? strtoul(req->getParam("from")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "nodes") hx::writeNodes(*res);
 +  else if (k == "alerts") hx::writeAlerts(*res);
++  else if (k == "grp") hx::writeGroup(*res, req->hasParam("since") ? strtoul(req->getParam("since")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "region") hx::writeRegion(*res, req->hasParam("from") ? strtoul(req->getParam("from")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "raw") hx::writeRaw(*res, req->hasParam("seq") ? strtoul(req->getParam("seq")->value().c_str(), NULL, 10) : 0);
 +  else hx::writeSelf(*res);
@@ -567,7 +632,7 @@ index 167e5cd..015849b 100644
 +}
 +#endif
 diff --git a/src/helpers/esp32/WebConfigServer.h b/src/helpers/esp32/WebConfigServer.h
-index bdd3e27..4a8d754 100644
+index bdd3e27..3d0f1ff 100644
 --- a/src/helpers/esp32/WebConfigServer.h
 +++ b/src/helpers/esp32/WebConfigServer.h
 @@ -177,6 +177,9 @@ private:
@@ -580,7 +645,7 @@ index bdd3e27..4a8d754 100644
    uint32_t _login_lock_until = 0;
  
    // Once set (via /api/portal/exit), OS captive probes get native "success"
-@@ -236,6 +239,13 @@ private:
+@@ -236,6 +239,14 @@ private:
    void handleReboot(AsyncWebServerRequest* req);
    void handlePortalExit(AsyncWebServerRequest* req);
    void handleNotFound(AsyncWebServerRequest* req);
@@ -589,13 +654,14 @@ index bdd3e27..4a8d754 100644
 +  void handleHxData(AsyncWebServerRequest* req);
 +  void handleHxUpdateDone(AsyncWebServerRequest* req);
 +  void handleHxAlerts(AsyncWebServerRequest* req);
++  void handleHxChat(AsyncWebServerRequest* req);
 +  void hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final);
 +#endif
  };
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..08cdbde 100644
+index 4bd316b..e7ac747 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
 @@ -290,3 +290,39 @@ lib_deps =
@@ -607,7 +673,7 @@ index 4bd316b..08cdbde 100644
 +[hoptics_m7]
 +build_flags =
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.3.4"'
++  -D HOPTICS_M7_VERSION='"0.4.0"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +
 +[env:Hoptics_M7_repeater_observer]

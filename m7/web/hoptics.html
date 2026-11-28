@@ -132,6 +132,12 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
   </div>
   <div class="card glass"><div class="scroll"><table><thead><tr><th>Time</th><th>Dir</th><th>Type</th><th>Route</th><th>Hops</th><th>Path</th><th>From / channel</th><th>SNR</th><th>RSSI</th><th>Len</th><th>Copies</th></tr></thead><tbody id="pbody"></tbody></table></div></div>
 </section>
+<section id="t-chat">
+  <div class="card glass"><div class="row"><select id="chsel"></select><span class="dim">Channels you can read: Public, plus hashtags added in Insights.</span></div>
+    <div id="chatlog" class="scroll" style="height:460px;display:flex;flex-direction:column;gap:6px;padding:4px"></div>
+    <div class="row" style="margin-top:10px"><input id="chatin" maxlength="140" placeholder="Message as this node" style="flex:1"><button class="b p" id="chatsend">Send</button></div>
+    <p class="dim" style="font-size:12px" id="chatnote">Messages go out under this node's name. Each one is a flood that every repeater resends, so keep it to what's needed.</p></div>
+</section>
 <section id="t-insights">
   <div class="two">
     <div class="card glass"><h3>Packet types</h3><div id="i-types"></div></div>
@@ -348,7 +354,7 @@ function cli(cmds){
 const val=r=>String(r||"").replace(/^\s*-?>\s*/,"").replace(/^>\s*/,"").trim();
 
 // ================================================================ tabs
-const TABS=[["overview","Overview"],["graphs","Graphs"],["map","Live map"],["nbrs","Neighbours"],["packets","Packets"],["insights","Insights"],["mqtt","MQTT"],["advisor","Advisor"],["console","Console"],["system","System"]];
+const TABS=[["overview","Overview"],["graphs","Graphs"],["map","Live map"],["nbrs","Neighbours"],["packets","Packets"],["chat","Chat"],["insights","Insights"],["mqtt","MQTT"],["advisor","Advisor"],["console","Console"],["system","System"]];
 let tab="overview";
 TABS.forEach(([id,label])=>{const b=document.createElement("button");b.textContent=label;b.onclick=()=>setTab(id);b.id="b-"+id;$("tabs").appendChild(b)});
 function setTab(id){if(!TABS.some(t=>t[0]===id))id="overview";tab=id;TABS.forEach(([t])=>{$("t-"+t).classList.toggle("on",t===id);$("b-"+t).classList.toggle("on",t===id)});
@@ -631,6 +637,31 @@ $("pcsv").onclick=()=>{const head="time,dir,type,route,hops,path,from,snr,rssi,l
   const body=pkRows().map(p=>[new Date((S.upAt+p[1])*1000).toISOString(),p[2]?"TX":"RX",TYPES[p[3]]||p[3],ROUTE[p[4]],p[5],p[11],p[7]?pfx(p[7]):"",p[2]?"":p[8]/4,p[2]?"":p[9],p[6],p[10]].join(",")).join("\n");
   const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([head+body],{type:"text/csv"}));a.download="hoptics-m7-packets.csv";a.click()};
 
+// ================================================================ chat (channels this page has keys for)
+S.chat=new Map();S.gseq=0;
+async function pollChat(){try{for(let n=0;n<6;n++){const j=await api("/api/hx?k=grp&since="+S.gseq);if(j.seq<S.gseq){S.gseq=0;continue}
+    const up=Date.now()/1000-j.now;
+    for(const g of j.g){const d=decode(unhex(g[5]));if(!d.msg)continue;const key=d.msg.ch+"|"+d.msg.t+"|"+d.msg.from+"|"+d.msg.text;
+      const m=S.chat.get(key);if(m){if(!g[2]){m.copies++;m.snr=Math.max(m.snr,g[3]/4)}}
+      else S.chat.set(key,{ch:d.msg.ch,t:d.msg.t||Math.floor(up+g[1]),from:d.msg.from,text:d.msg.text,tx:!!g[2],snr:g[2]?null:g[3]/4,hops:g[4],copies:g[2]?0:1})}
+    S.gseq=j.next;if(j.next>=j.seq)break}
+  if(S.chat.size>800){const k=[...S.chat.keys()].slice(0,S.chat.size-800);k.forEach(x=>S.chat.delete(x))}}catch(e){}}
+function renderChat(){const sel=$("chsel"),names=chanKeys().map(c=>c.name);
+  if(sel.options.length!==names.length){const cur=sel.value;sel.innerHTML=names.map(n=>`<option>${esc(n)}</option>`).join("");if(names.includes(cur))sel.value=cur}
+  const ch=sel.value,me=S.self?S.self.name:"",msgs=[...S.chat.values()].filter(m=>m.ch===ch).sort((a,b)=>a.t-b.t).slice(-300);
+  const log=$("chatlog"),atEnd=log.scrollTop+log.clientHeight>=log.scrollHeight-20;
+  log.innerHTML=msgs.map(m=>{const mine=m.tx||m.from===me;return`<div style="align-self:${mine?"flex-end":"flex-start"};max-width:75%;padding:8px 12px;border-radius:14px;background:${mine?"rgba(63,214,224,.18)":"rgba(255,255,255,.07)"};border:1px solid var(--faint)">
+    <div style="font-size:12px;color:var(--dim)"><b style="color:var(--text)">${esc(m.from||"?")}</b> · ${new Date(m.t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}${m.tx?" · sent":` · ${m.hops} hop${m.hops===1?"":"s"}, ${m.snr!=null?m.snr.toFixed(1)+" dB":""}${m.copies>1?`, heard ${m.copies}×`:""}`}</div>
+    <div style="white-space:pre-wrap;word-break:break-word">${esc(m.text)}</div></div>`}).join("")||'<p class="dim">No messages heard on this channel yet.</p>';
+  if(atEnd)log.scrollTop=1e9}
+$("chsel").onchange=()=>{renderChat();$("chatlog").scrollTop=1e9};
+async function sendChat(){const t=$("chatin").value.trim();if(!t)return;const c=chanKeys().find(x=>x.name===$("chsel").value);if(!c)return;
+  if(new TextEncoder().encode(t).length>140){$("chatnote").textContent="Too long: 140 bytes at most.";return}
+  $("chatsend").disabled=true;try{const r=await fetch("/api/hx/chat",{method:"POST",body:new URLSearchParams({key:hex(c.key),text:t})});const j=await r.json().catch(()=>({}));
+    if(r.ok){$("chatin").value="";$("chatnote").textContent="Sent to "+c.name+".";setTimeout(async()=>{await pollChat();renderChat()},1500)}else $("chatnote").textContent="Not sent: "+(j.error||r.status)}
+  finally{setTimeout(()=>$("chatsend").disabled=false,5000)}}
+$("chatsend").onclick=sendChat;$("chatin").onkeydown=e=>{if(e.key==="Enter")sendChat()};
+
 // ================================================================ insights
 function hbars(id,items,col){const max=Math.max(1,...items.map(x=>x[1]));
   $(id).innerHTML=items.length?items.map(([k,v,c])=>`<div class="hb"><div class="t" title="${esc(String(k).replace(/<[^>]+>/g,""))}">${k}</div><div class="bar"><i style="width:${v/max*100}%;background:${c||col}"></i></div><div class="n">${v}</div></div>`).join(""):'<span class="dim">Not enough packets yet.</span>'}
@@ -784,14 +815,14 @@ $("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
 
 // ================================================================ loop
 function safe(f){try{f()}catch(e){console.error("Hoptics:",e)}}
-function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();S.roleDrawn=1}}}
+function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="chat")safe(renderChat);if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();S.roleDrawn=1}}}
 let started=false;
 async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);
   cli(["get repeat"]).then(r=>{S.repeat=/on/i.test(val(r[0]));render()}).catch(()=>{});
   setTab((location.hash||"#overview").slice(1).replace(/[^a-z]/g,""));
   setInterval(async()=>{await pollStats();if(!$("modal").classList.contains("on"))render()},3000);
-  setInterval(pollPk,2000);
+  setInterval(pollPk,2000);pollChat();setInterval(async()=>{await pollChat();if(tab==="chat")safe(renderChat)},4000);
   setInterval(async()=>{await pollNodes();await pollSelf();if(mapReady)renderMapNodes(false)},15000);
   setInterval(pollHist,60000);pollRegion();setInterval(pollRegion,1800000);$("showreg").onchange=()=>renderMapNodes(false)}
 (async()=>{try{await api("/api/hx?k=self");$("app").hidden=false;start()}catch(e){if(e.message!=="auth"){$("app").hidden=false;start()}}})();

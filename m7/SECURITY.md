@@ -36,6 +36,10 @@ as hostile input.
   last 4 characters. Sending is TLS-verified with redirects refused, limited to one message a minute and 40 a
   day, and node names are stripped of Discord markup with mentions disabled, so a name can't ping anyone.
 
+- **Chat is admin only and paced.** Sending needs the admin session from the node's own page; messages are
+  1-140 bytes with no control characters, one at a time and at least 5 s apart. Channel keys are added in the
+  browser and sent only with the message; the node doesn't store them.
+
 ## Limits to know
 
 - The page is plain HTTP on your LAN, like most device setup pages: someone on the same network could see the

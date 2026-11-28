@@ -427,6 +427,56 @@ void writeNodes(Print& out) {
   out.print("]}");
 }
 
+// ---- channel chat
+namespace {
+bool chat_pending;
+uint8_t chat_key[16];
+char chat_text[kChatMax + 1];
+uint32_t chat_last_ms;
+}
+
+bool queueChannelMsg(const uint8_t key[16], const char* text) {
+  if (!mu) return false;
+  Lock l;
+  if (chat_pending || (chat_last_ms && millis() - chat_last_ms < 5000)) return false;
+  memcpy(chat_key, key, 16);
+  strlcpy(chat_text, text, sizeof(chat_text));
+  chat_pending = true;
+  chat_last_ms = millis();
+  return true;
+}
+
+bool takeChannelMsg(uint8_t key[16], char* text, size_t n) {
+  if (!mu) return false;
+  Lock l;
+  if (!chat_pending) return false;
+  memcpy(key, chat_key, 16);
+  strlcpy(text, chat_text, n);
+  chat_pending = false;
+  return true;
+}
+
+void writeGroup(Print& out, uint32_t since) {
+  if (!mu || !pkts || !raws) { out.print("{\"seq\":0,\"now\":0,\"g\":[]}"); return; }
+  Lock l;
+  const uint32_t lo = pkt_seq > kPkts ? pkt_seq - kPkts : 0;
+  if (since < lo || since > pkt_seq) since = lo;
+  out.printf("{\"seq\":%lu,\"now\":%lu,\"g\":[", (unsigned long)pkt_seq, (unsigned long)(millis() / 1000));
+  int n = 0;
+  uint32_t s = since + 1;
+  for (; s <= pkt_seq && n < 64; s++) {
+    const uint32_t idx = (s - 1) % kPkts;
+    const Pkt& k = pkts[idx];
+    if (k.type != PAYLOAD_TYPE_GRP_TXT) continue;
+    out.printf("%s[%lu,%lu,%u,%d,%u,\"", n ? "," : "", (unsigned long)k.seq, (unsigned long)k.t, k.tx, k.snr4, k.hops);
+    const uint8_t* r = raws + idx * kRaw;
+    for (int i = 0; i < k.raw_len; i++) out.printf("%02x", r[i]);
+    out.print("\"]");
+    n++;
+  }
+  out.printf("],\"next\":%lu}", (unsigned long)(s - 1));
+}
+
 void writeRaw(Print& out, uint32_t seq) {
   if (!mu || !pkts || !raws) { out.print("{\"error\":\"gone\"}"); return; }
   Lock l;
