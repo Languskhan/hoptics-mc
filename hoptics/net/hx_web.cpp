@@ -3,6 +3,7 @@
 #include "hx_log.h"
 #include "hx_ota.h"
 #include "hx_parse.h"
+#include "hx_session.h"
 #include "map/hx_tiles.h"
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -37,22 +38,44 @@ uint8_t fails = 0;
 uint32_t lockUntil = 0;
 
 // the sessions survive a restart (a firmware update over Wi-Fi restarts the node: the page shouldn't have to sign
-// in again): their tokens are kept with the PIN they were made under, and only come back for that PIN
+// in again): their tokens are kept with the PIN they were made under and the time each has left, and only come back
+// for that PIN. millis() starts over at every boot, so the time left is what is kept, and a session that has run out
+// is not kept at all. It is saved when a browser signs in or out and every SNAPSHOT_MS while any is signed in, so a
+// restart finds a session at most that much too generous. The time the node is off is not counted: there is no clock
+// that keeps time through a power cut, so a session comes back with what it had left when the node went down
+constexpr uint32_t SNAPSHOT_MS = 10 * 60 * 1000;
+volatile bool savedLive = false;      // the last save held a session that was still good (or one was just restored)
+SemaphoreHandle_t nvLock = nullptr;   // one save at a time: an older snapshot can't land after a newer one
 void keepSessions()
 {
+    xSemaphoreTake(nvLock, portMAX_DELAY);
     char toks[4][33];
+    uint32_t left[4];
     xSemaphoreTake(lock, portMAX_DELAY);
-    for (int i = 0; i < 4; i++)
-        memcpy(toks[i], ses[i].tok, 33);
+    const uint32_t now = millis();
+    bool live = false;
+    for (int i = 0; i < 4; i++) {
+        left[i] = ses[i].tok[0] ? hxsession::remaining(now, ses[i].last, SESSION_MS) : 0;
+        if (left[i])
+            memcpy(toks[i], ses[i].tok, 33);
+        else
+            memset(toks[i], 0, 33);
+        live = live || left[i];
+    }
     char p[8];
     memcpy(p, pin, sizeof(p));
     xSemaphoreGive(lock);
     Preferences nv;
-    if (!nv.begin("hxweb", false))
-        return;
-    nv.putBytes("ses", toks, sizeof(toks));
-    nv.putString("sespin", p);
-    nv.end();
+    if (nv.begin("hxweb", false)) {
+        // a power cut between these two writes can pair a slot's old token with the new time left, but only in a slot
+        // whose sign-in changed since the last save, and never for longer than SESSION_MS
+        nv.putBytes("sesleft", left, sizeof(left));
+        nv.putBytes("ses", toks, sizeof(toks));
+        nv.putString("sespin", p);
+        nv.end();
+        savedLive = live;
+    }
+    xSemaphoreGive(nvLock);
 }
 volatile bool waiting = false; // read without the lock by the main loop on every pass
 bool taken = false;
@@ -751,6 +774,7 @@ bool start(uint16_t port)
         lock = xSemaphoreCreateMutex();
         one = xSemaphoreCreateMutex();
         ready = xSemaphoreCreateBinary();
+        nvLock = xSemaphoreCreateMutex();
     }
     httpd_config_t c = HTTPD_DEFAULT_CONFIG();
     c.server_port = port;
@@ -811,6 +835,7 @@ void setPin(const char *p)
         lock = xSemaphoreCreateMutex();
         one = xSemaphoreCreateMutex();
         ready = xSemaphoreCreateBinary();
+        nvLock = xSemaphoreCreateMutex();
     }
     const bool first = !pin[0]; // just started: the sessions kept under this same PIN come back
     bool changed = false;
@@ -827,9 +852,12 @@ void setPin(const char *p)
         return;
     Preferences nv;
     char toks[4][33] = {};
+    uint32_t left[4] = {};
     bool restore = false;
     if (first && nv.begin("hxweb", true)) {
-        restore = nv.getString("sespin", "") == String(p) && nv.getBytes("ses", toks, sizeof(toks)) == sizeof(toks);
+        // sessions saved before the time left was kept have no "sesleft": they are dropped, one sign-in after the update
+        restore = nv.getString("sespin", "") == String(p) && nv.getBytes("ses", toks, sizeof(toks)) == sizeof(toks) &&
+                  nv.getBytes("sesleft", left, sizeof(left)) == sizeof(left);
         nv.end();
     }
     if (!restore) {
@@ -840,10 +868,10 @@ void setPin(const char *p)
     xSemaphoreTake(lock, portMAX_DELAY);
     const uint32_t now = millis();
     for (int i = 0; i < 4; i++)
-        if (strspn(toks[i], "0123456789abcdef") == 32) {
+        if (strspn(toks[i], "0123456789abcdef") == 32 && hxsession::restoredLast(now, left[i], SESSION_MS, ses[i].last)) {
             memcpy(ses[i].tok, toks[i], 32);
-            ses[i].tok[32] = 0;
-            ses[i].last = now; // a fresh 12 hours from the restart
+            ses[i].tok[32] = 0; // it has the time it had left when saved, not a new 12 hours
+            savedLive = true;   // the saved copy is still to be brought up to date (or cleared) by tick()
         }
     xSemaphoreGive(lock);
 }
@@ -859,6 +887,18 @@ uint8_t sessions()
         n += s.tok[0] && now - s.last < SESSION_MS;
     xSemaphoreGive(lock);
     return n;
+}
+
+// main loop: keeps the saved time left of the signed-in browsers current (and clears it once the last one runs out)
+void tick()
+{
+    static uint32_t at = 0;
+    const uint32_t now = millis();
+    if (!lock || now - at < SNAPSHOT_MS)
+        return;
+    at = now;
+    if (sessions() || savedLive)
+        keepSessions();
 }
 
 bool take(Query &q)
@@ -895,6 +935,7 @@ void stop() {}
 bool running() { return false; }
 void setPin(const char *) {}
 uint8_t sessions() { return 0; }
+void tick() {}
 bool take(Query &) { return false; }
 void answer(std::string &&) {}
 } // namespace hxweb
