@@ -515,6 +515,8 @@ void App::onRemoteReply(const uint8_t key[6], const char *text)
     if (rm->busy)
         return rmAnswer(text);
     rm->log.push_back(text); // nothing asked: show it anyway
+    if (rm->log.size() > 60) // the same cap as an answered line, so a chatty repeater can't grow it
+        rm->log.erase(rm->log.begin(), rm->log.begin() + (rm->log.size() - 60));
     rmConsoleChanged();
 }
 
