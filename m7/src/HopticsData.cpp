@@ -176,6 +176,14 @@ void addRegionNode(const uint8_t* pub, uint8_t type, const char* name, bool has_
   strlcpy(n.name, name ? name : "", sizeof(n.name));
 }
 
+void regionClear() {   // the source changed: drop the old area's list
+  if (!mu) return;
+  Lock l;
+  region_n[0] = region_n[1] = 0;
+  region_at = 0;
+  region_err[0] = 0;
+}
+
 void regionDone(bool ok, int total, const char* err) {
   if (!mu) return;
   Lock l;
@@ -195,6 +203,10 @@ void writeRegion(Print& out, uint32_t from_i) {
   out.printf("{\"count\":%d,\"age\":%ld,\"err\":", count,
              region_at ? (long)(millis() / 1000 - region_at) : -1L);
   jsonStr(out, region_err);
+  char src[96];
+  regionSource(src, sizeof(src));
+  out.print(",\"src\":");
+  jsonStr(out, src);
   out.print(",\"nodes\":[");
   const int start = from_i < (uint32_t)count ? (int)from_i : count;
   const int end = start + 250 < count ? start + 250 : count;

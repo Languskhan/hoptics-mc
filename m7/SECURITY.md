@@ -26,7 +26,7 @@ as hostile input.
   huge reply in RAM.
 - **Responses** carry `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
 
-- **Outbound data is verified.** The region node list comes from `https://scope.sacmesh.org` over TLS checked
+- **Outbound data is verified.** The region node list comes from the CoreScope site the owner sets (off until set; https and a public host name only, no port, user or query) over TLS checked
   against the built-in CA bundle; redirects are refused, each page is parsed through a filter with a nesting
   limit, keys and coordinates are validated, names are cut to fit, and the number of pages is capped. A failed
   refresh keeps the last good list.

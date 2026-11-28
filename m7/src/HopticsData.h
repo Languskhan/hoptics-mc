@@ -39,7 +39,11 @@ void writeNodes(Print& out);
 void writeSelf(Print& out);
 void writeRaw(Print& out, uint32_t seq);   // one packet's bytes, for the detail view
 
-// Region nodes from SacMesh CoreScope (HopticsRegion.cpp fills them; a refresh builds a new list, then swaps it in)
+// Region nodes from a CoreScope analyzer the owner sets (HopticsRegion.cpp fills them; a refresh builds a new list,
+// then swaps it in). Off until an address is set.
+bool regionConfigure(const char* url, char* err, size_t err_len);
+void regionSource(char* out, size_t n);
+void regionClear();
 void startRegion();
 void regionBegin();
 void addRegionNode(const uint8_t* pub, uint8_t type, const char* name, bool has_loc, int32_t lat, int32_t lon,

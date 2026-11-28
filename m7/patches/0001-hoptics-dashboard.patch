@@ -475,7 +475,7 @@ index cc8600b..d3c67b3 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
  
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..ef39ccd 100644
+index 167e5cd..d45a698 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
 @@ -690,8 +690,42 @@ uint32_t WebConfigServer::handlerRefCount() const {
@@ -521,7 +521,7 @@ index 167e5cd..ef39ccd 100644
    WebConfigServer* target = NULL;
    portENTER_CRITICAL(&s_wc_route_mux);
    if (_active != NULL) {
-@@ -735,6 +769,23 @@ void WebConfigServer::registerRoutes() {
+@@ -735,6 +769,24 @@ void WebConfigServer::registerRoutes() {
    _server->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleScan); });
    _server->on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleReboot); });
    _server->on("/api/portal/exit", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handlePortalExit); });
@@ -534,6 +534,7 @@ index 167e5cd..ef39ccd 100644
 +  _server->on("/api/hx/dm", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxDm); });
 +  _server->on("/api/hx/trace", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxTrace); });
 +  _server->on("/api/hx/room", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxRoom); });
++  _server->on("/api/hx/region-src", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxRegionSrc); });
 +  _server->on("/api/hx/alerts", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxAlerts); });
 +  _server->on("/api/hx/update", HTTP_POST,
 +      [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxUpdateDone); },
@@ -545,7 +546,7 @@ index 167e5cd..ef39ccd 100644
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -856,7 +907,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -856,7 +908,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    uint32_t now = millis();
    if (_login_lock_until && (int32_t)(now - _login_lock_until) < 0) {
@@ -557,7 +558,7 @@ index 167e5cd..ef39ccd 100644
      return;
    }
    const char* body = (const char*)req->_tempObject;
-@@ -871,7 +926,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -871,7 +927,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
                                                 : sizeof(_prefs->password);
    if (!fixedTimeEquals(pwd, expected, expected_size)) {
      if (++_login_fails >= 5) {
@@ -572,7 +573,7 @@ index 167e5cd..ef39ccd 100644
        if (_login_lock_until == 0) _login_lock_until = 1;
        _login_fails = 0;
      }
-@@ -880,6 +942,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -880,6 +943,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    _login_fails = 0;
    _login_lock_until = 0;
@@ -590,7 +591,7 @@ index 167e5cd..ef39ccd 100644
    uint32_t generation;
    {
      WCLock lock(_mux);
-@@ -1631,3 +1704,273 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -1631,3 +1705,287 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -736,6 +737,20 @@ index 167e5cd..ef39ccd 100644
 +  req->send(200, "application/json", "{\"ok\":true}");
 +}
 +
++// Regional analyzer (a CoreScope site) for map names and the new-node alert; "" turns it off. Admin only.
++void WebConfigServer::handleHxRegionSrc(AsyncWebServerRequest* req) {
++  if (_mode != MODE_LAN) { req->send(503); return; }
++  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
++  if (!hxSameOrigin(req)) { req->send(403, "application/json", "{\"error\":\"wrong origin\"}"); return; }
++  const String u = req->hasParam("url", true) ? req->getParam("url", true)->value() : String("");
++  char err[48];
++  if (u.length() > 95 || !hx::regionConfigure(u.c_str(), err, sizeof(err))) {
++    req->send(400, "application/json", String("{\"error\":\"") + (u.length() > 95 ? "too long" : err) + "\"}");
++    return;
++  }
++  req->send(200, "application/json", "{\"ok\":true}");
++}
++
 +// Room post as the room itself (room roles only). Signed-in admin from this page only.
 +void WebConfigServer::handleHxRoom(AsyncWebServerRequest* req) {
 +  if (_mode != MODE_LAN) { req->send(503); return; }
@@ -865,7 +880,7 @@ index 167e5cd..ef39ccd 100644
 +}
 +#endif
 diff --git a/src/helpers/esp32/WebConfigServer.h b/src/helpers/esp32/WebConfigServer.h
-index bdd3e27..c35e9c5 100644
+index bdd3e27..56ae738 100644
 --- a/src/helpers/esp32/WebConfigServer.h
 +++ b/src/helpers/esp32/WebConfigServer.h
 @@ -177,6 +177,9 @@ private:
@@ -878,7 +893,7 @@ index bdd3e27..c35e9c5 100644
    uint32_t _login_lock_until = 0;
  
    // Once set (via /api/portal/exit), OS captive probes get native "success"
-@@ -236,6 +239,19 @@ private:
+@@ -236,6 +239,20 @@ private:
    void handleReboot(AsyncWebServerRequest* req);
    void handlePortalExit(AsyncWebServerRequest* req);
    void handleNotFound(AsyncWebServerRequest* req);
@@ -891,6 +906,7 @@ index bdd3e27..c35e9c5 100644
 +  void handleHxDm(AsyncWebServerRequest* req);
 +  void handleHxTrace(AsyncWebServerRequest* req);
 +  void handleHxRoom(AsyncWebServerRequest* req);
++  void handleHxRegionSrc(AsyncWebServerRequest* req);
 +  void handleHxMetrics(AsyncWebServerRequest* req);
 +  void handleHxStatsToken(AsyncWebServerRequest* req);
 +  void hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final);
@@ -899,7 +915,7 @@ index bdd3e27..c35e9c5 100644
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..18229ba 100644
+index 4bd316b..5ebf76e 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
 @@ -290,3 +290,43 @@ lib_deps =
@@ -911,7 +927,7 @@ index 4bd316b..18229ba 100644
 +[hoptics_m7]
 +build_flags =
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.4.4"'
++  -D HOPTICS_M7_VERSION='"0.4.5"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +
 +[env:Hoptics_M7_repeater_observer]

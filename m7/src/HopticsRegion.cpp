@@ -1,4 +1,4 @@
-// Hoptics M7: the region's repeaters and rooms from SacMesh CoreScope, so the map and the packet paths can name
+// Hoptics M7: the region's repeaters and rooms from a CoreScope analyzer the owner picks (off until set), so the map and the packet paths can name
 // nodes this radio hasn't heard an advert from yet.
 //
 // Everything that comes back is treated as hostile: TLS is verified against the built-in CA bundle, redirects are
@@ -13,6 +13,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <time.h>
+#include <Preferences.h>
 
 extern const uint8_t rootca_crt_bundle_start[] asm("_binary_src_certs_x509_crt_bundle_bin_start") __attribute__((weak));
 extern const uint8_t rootca_crt_bundle_end[] asm("_binary_src_certs_x509_crt_bundle_bin_end") __attribute__((weak));
@@ -46,7 +47,16 @@ class CappedStream : public Stream {
   size_t left_;
 };
 
-constexpr const char* kHost = "https://scope.sacmesh.org/api/nodes";
+// The analyzer's address, e.g. https://scope.example.org. Empty = off. Set from the System tab.
+portMUX_TYPE src_mux = portMUX_INITIALIZER_UNLOCKED;
+char src[96];
+volatile bool src_changed;
+
+void getSrc(char* out, size_t n) {
+  portENTER_CRITICAL(&src_mux);
+  strlcpy(out, src, n);
+  portEXIT_CRITICAL(&src_mux);
+}
 constexpr int kPage = 100, kMaxPages = 25;           // at most 2500 nodes per refresh
 constexpr uint32_t kEveryMs = 6UL * 3600UL * 1000UL;  // refresh every 6 hours
 constexpr uint32_t kRetryMs = 10UL * 60UL * 1000UL;   // or 10 minutes after a failure
@@ -101,8 +111,10 @@ int fetchPage(const char* role, int offset, bool* more, char* err, size_t err_le
 #endif
   tls.setTimeout(15);
   HTTPClient http;
-  char url[128];
-  snprintf(url, sizeof(url), "%s?role=%s&limit=%d&offset=%d", kHost, role, kPage, offset);
+  char base[96], url[192];
+  getSrc(base, sizeof(base));
+  if (!base[0]) { snprintf(err, err_len, "no regional analyzer set"); return -1; }
+  snprintf(url, sizeof(url), "%s/api/nodes?role=%s&limit=%d&offset=%d", base, role, kPage, offset);
   if (!http.begin(tls, url)) { snprintf(err, err_len, "connect"); return -1; }
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
   http.useHTTP10(true);  // plain, unchunked body for the stream parser
@@ -143,7 +155,9 @@ void task(void*) {
   const uint32_t t0 = millis();
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(5000));
+    if (src_changed) { src_changed = false; regionClear(); next = millis() - t0; }
     if ((int32_t)(millis() - t0 - next) < 0) continue;
+    { char b[4]; getSrc(b, sizeof(b)); if (!b[0]) { next = millis() - t0 + 60000; continue; } }   // off
     // needs a network and real time (certificates are checked against the clock)
     if (!activeNetworkLink().isConnected() || time(nullptr) < 1700000000) { next = millis() - t0 + 30000; continue; }
     char err[48] = "";
@@ -172,7 +186,48 @@ void startRegion() {
   static bool started = false;
   if (started) return;
   started = true;
+  Preferences p;
+  if (p.begin("hxregion", true)) { char b[96] = ""; p.getString("url", b, sizeof(b)); p.end(); portENTER_CRITICAL(&src_mux); strlcpy(src, b, sizeof(src)); portEXIT_CRITICAL(&src_mux); }
   xTaskCreatePinnedToCore(task, "hx_region", 16384, nullptr, 1, nullptr, 1);
 }
+
+// https://host[/path], a public name (not an address), no port, user or query; "" turns it off
+bool regionConfigure(const char* url, char* err, size_t err_len) {
+  char b[96];
+  const size_t len = strlen(url);
+  if (len == 0) b[0] = 0;
+  else {
+    if (len >= sizeof(b) || strncmp(url, "https://", 8) != 0) { snprintf(err, err_len, "use https://your.analyzer.site"); return false; }
+    strlcpy(b, url, sizeof(b));
+    size_t n = strlen(b);
+    while (n > 8 && b[n - 1] == '/') b[--n] = 0;
+    const char* host = b + 8;
+    const char* slash = strchr(host, '/');
+    const size_t hl = slash ? (size_t)(slash - host) : strlen(host);
+    bool dot = false, letter = false;
+    for (size_t i = 0; i < hl; i++) {
+      const char c = host[i];
+      if (c == '.') dot = true;
+      else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) letter = true;
+      else if (!(c >= '0' && c <= '9') && c != '-') { snprintf(err, err_len, "bad host name"); return false; }
+    }
+    if (!hl || !dot || !letter || host[0] == '.' || host[0] == '-') { snprintf(err, err_len, "use a public host name"); return false; }
+    for (const char* c = slash; c && *c; c++)
+      if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') || strchr("/-_.", *c))) {
+        snprintf(err, err_len, "bad path"); return false;
+      }
+  }
+  Preferences p;
+  if (!p.begin("hxregion", false)) { snprintf(err, err_len, "storage"); return false; }
+  p.putString("url", b);
+  p.end();
+  portENTER_CRITICAL(&src_mux);
+  strlcpy(src, b, sizeof(src));
+  portEXIT_CRITICAL(&src_mux);
+  src_changed = true;
+  return true;
+}
+
+void regionSource(char* out, size_t n) { getSrc(out, n); }
 
 }  // namespace hx
