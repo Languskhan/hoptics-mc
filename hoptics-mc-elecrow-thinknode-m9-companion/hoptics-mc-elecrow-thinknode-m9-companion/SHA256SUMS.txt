@@ -1,0 +1,2 @@
+924aeeb6adcb515fbb93aa6ef5aea6a3dcfd5c42e9195ac1568194b519882160  hoptics-mc-elecrow-thinknode-m9-companion-0.2.7-https2c.factory.bin
+7fab3109059b32e4753f932acfc829c23bc263514cccc9632a901a88d7b8d720  hoptics-mc-elecrow-thinknode-m9-companion-0.2.7-https2c.update.bin

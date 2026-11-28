@@ -1,0 +1,2 @@
+b4348a32c22fbc6b0ec11fc6ae15790bc642fab6e11cf698f7c413d03bcae6f7  hoptics-mc-heltec-v4-expansion-kit-companion-0.2.7-https2c.factory.bin
+70b520b4524244e799b8ceed60c678ae76cb0ec56c5301c7b79052cf96d8727f  hoptics-mc-heltec-v4-expansion-kit-companion-0.2.7-https2c.update.bin
