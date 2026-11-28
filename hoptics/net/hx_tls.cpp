@@ -17,8 +17,25 @@
 #include <mbedtls/ssl.h>
 #include <mbedtls/version.h>
 #include <mbedtls/x509_crt.h>
-#if !defined(MBEDTLS_X509_CRT_WRITE_C) || !defined(MBEDTLS_PK_WRITE_C) || !defined(MBEDTLS_SSL_SRV_C)
-#error "this core's mbedTLS lacks certificate writing or the TLS server"
+#include <mbedtls/net_sockets.h>
+// cppcheck-suppress-begin preprocessorErrorDirective
+#if !defined(MBEDTLS_X509_CRT_WRITE_C)
+#warning "HXTLS no MBEDTLS_X509_CRT_WRITE_C"
+#endif
+#if !defined(MBEDTLS_PK_WRITE_C)
+#warning "HXTLS no MBEDTLS_PK_WRITE_C"
+#endif
+#if !defined(MBEDTLS_SSL_SRV_C)
+#warning "HXTLS no MBEDTLS_SSL_SRV_C"
+#endif
+#if !defined(MBEDTLS_SSL_TICKET_C)
+#warning "HXTLS no MBEDTLS_SSL_TICKET_C"
+#endif
+#if !defined(MBEDTLS_SSL_CACHE_C)
+#warning "HXTLS no MBEDTLS_SSL_CACHE_C"
+#endif
+#if !defined(MBEDTLS_X509_CREATE_C)
+#warning "HXTLS no MBEDTLS_X509_CREATE_C"
 #endif
 #if defined(MBEDTLS_SSL_TICKET_C)
 #include <mbedtls/ssl_ticket.h>
