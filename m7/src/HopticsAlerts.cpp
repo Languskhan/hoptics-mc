@@ -1,8 +1,8 @@
-// Hoptics M7: Discord alerts through a webhook (off until the owner adds one).
+// Hoptics M7: alerts to a Discord webhook or an ntfy topic (off until the owner adds one).
 //
-// The webhook URL is a secret: it is stored on the node, never sent back to the page in full, and only
-// https://discord.com/api/webhooks/... (or discordapp.com) is accepted, so the node can't be pointed at any
-// other server. Sending is TLS-verified with redirects refused, rate-limited, and text from the air is
+// The link is a secret (anyone with it can post, or read an ntfy topic): it is stored on the node, never sent back
+// to the page in full, and only https://discord.com/api/webhooks/... (or discordapp.com) or https://<public host>/
+// <topic> for ntfy is accepted: no ports, users, queries or addresses, so the node can't be aimed at the LAN. Sending is TLS-verified with redirects refused, rate-limited, and text from the air is
 // stripped of Discord markup and mentions are disabled, so a node name can't ping @everyone or fake a message.
 #include "HopticsData.h"
 #include <helpers/NetworkLink.h>
@@ -38,7 +38,29 @@ struct ALock {
   ~ALock() { xSemaphoreGive(amu); }
 };
 
-bool urlOk(const char* u) {
+// ntfy: https://<public host name>/<topic>, topic 1-64 of A-Z a-z 0-9 - _
+bool ntfyOk(const char* u) {
+  if (strncmp(u, "https://", 8) != 0 || strlen(u) >= sizeof(url)) return false;
+  const char* host = u + 8;
+  const char* slash = strchr(host, '/');
+  if (!slash || slash == host) return false;
+  bool dot = false, letter = false;
+  for (const char* c = host; c < slash; c++) {
+    if (*c == '.') dot = true;
+    else if ((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z')) letter = true;
+    else if (!(*c >= '0' && *c <= '9') && *c != '-') return false;
+  }
+  if (!dot || !letter || host[0] == '.' || host[0] == '-') return false;
+  if ((slash - host == 11 && !strncmp(host, "discord.com", 11)) || (slash - host == 14 && !strncmp(host, "discordapp.com", 14))) return false;
+  int n = 0;
+  for (const char* c = slash + 1; *c; c++, n++)
+    if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') || *c == '-' || *c == '_')) return false;
+  return n >= 1 && n <= 64;
+}
+
+bool isDiscord(const char* u) { return !strncmp(u, "https://discord.com/", 20) || !strncmp(u, "https://discordapp.com/", 23); }
+
+bool discordOk(const char* u) {
   const char* p = nullptr;
   if (!strncmp(u, "https://discord.com/api/webhooks/", 33)) p = u + 33;
   else if (!strncmp(u, "https://discordapp.com/api/webhooks/", 36)) p = u + 36;
@@ -54,6 +76,8 @@ bool urlOk(const char* u) {
   }
   return tok >= 20 && strlen(u) < sizeof(url);
 }
+
+bool urlOk(const char* u) { return isDiscord(u) ? discordOk(u) : ntfyOk(u); }
 
 // plain text for Discord: drop markup and mention characters, cut to fit
 void clean(char* dst, size_t n, const char* src) {
@@ -93,13 +117,22 @@ bool post(const char* text, char* err, size_t err_len) {
   if (!http.begin(tls, u)) { snprintf(err, err_len, "connect"); return false; }
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
   http.setTimeout(15000);
-  http.addHeader("Content-Type", "application/json");
-  String body = "{\"username\":\"Hoptics M7\",\"allowed_mentions\":{\"parse\":[]},\"content\":\"";
-  jsonEsc(body, text);
-  body += "\"}";
-  const int code = http.POST(body);
+  int code;
+  const bool discord = isDiscord(u);
+  if (discord) {
+    http.addHeader("Content-Type", "application/json");
+    String body = "{\"username\":\"Hoptics M7\",\"allowed_mentions\":{\"parse\":[]},\"content\":\"";
+    jsonEsc(body, text);
+    body += "\"}";
+    code = http.POST(body);
+  } else {   // ntfy: the message is the body, plain text (the markup was already stripped)
+    http.addHeader("Content-Type", "text/plain; charset=utf-8");
+    http.addHeader("Title", "Hoptics M7");
+    http.addHeader("Tags", "satellite_antenna");
+    code = http.POST((uint8_t*)text, strlen(text));
+  }
   http.end();
-  if (code < 200 || code > 299) { snprintf(err, err_len, "Discord said %d", code); return false; }
+  if (code < 200 || code > 299) { snprintf(err, err_len, "%s said %d", discord ? "Discord" : "ntfy", code); return false; }
   return true;
 }
 
@@ -175,7 +208,7 @@ bool alertsConfigure(const char* new_url, uint8_t new_flags, char* err, size_t e
   if (!amu) { snprintf(err, err_len, "not ready"); return false; }
   const bool clear = !strcmp(new_url, "-");
   if (!clear && new_url[0] && !urlOk(new_url)) {
-    snprintf(err, err_len, "that isn't a Discord webhook link");
+    snprintf(err, err_len, "use a Discord webhook or an ntfy topic link");
     return false;
   }
   Preferences p;

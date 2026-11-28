@@ -1,5 +1,5 @@
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index 1324da0..87a05f5 100644
+index 1324da0..98ee871 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
 @@ -1,4 +1,8 @@
@@ -58,7 +58,7 @@ index 1324da0..87a05f5 100644
  #ifdef WITH_WEBCONFIG
    if (_webconfig) {
      _webconfig->tick(millis());
-@@ -2459,3 +2482,152 @@ bool MyMesh::hasPendingWork() const {
+@@ -2459,3 +2482,163 @@ bool MyMesh::hasPendingWork() const {
  #endif
    return _mgr->getOutboundCount(0xFFFFFFFF) > 0;
  }
@@ -97,6 +97,17 @@ index 1324da0..87a05f5 100644
 +    next_sample = now + 300000UL;
 +  }
 +  hx::dmTick(*this);  // direct messages typed on the dashboard
++  {  // scheduled weekly restart (off unless the owner set one)
++    static uint32_t next_sched = 0;
++    if ((int32_t)(now - next_sched) >= 0) {
++      next_sched = now + 60000UL;
++      if (hx::schedDue(getRTCClock()->getCurrentTime(), now / 1000)) {
++        Serial.println("Hoptics: scheduled restart");
++        delay(200);
++        ESP.restart();
++      }
++    }
++  }
 +  if ((int32_t)(now - next_nbr) >= 0) {
 +    next_nbr = now + 15000UL;
 +    hx::setSelf(self_id.pub_key, _prefs.node_name, _prefs.node_lat, _prefs.node_lon);
@@ -226,7 +237,7 @@ index 782a2f4..d225588 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
    int calcRxDelay(float score, uint32_t air_time) const override;
 diff --git a/examples/simple_room_server/MyMesh.cpp b/examples/simple_room_server/MyMesh.cpp
-index 022603f..e348038 100644
+index 022603f..dea0514 100644
 --- a/examples/simple_room_server/MyMesh.cpp
 +++ b/examples/simple_room_server/MyMesh.cpp
 @@ -1,4 +1,8 @@
@@ -285,7 +296,7 @@ index 022603f..e348038 100644
  #ifdef WITH_WEBCONFIG
    if (_webconfig) {
      _webconfig->tick(millis());
-@@ -2224,3 +2247,174 @@ bool MyMesh::startNeighborDiscover(char* reply, bool periodic) {
+@@ -2224,3 +2247,185 @@ bool MyMesh::startNeighborDiscover(char* reply, bool periodic) {
    return true;
  }
  #endif // WITH_MQTT_NEIGHBORS
@@ -324,6 +335,17 @@ index 022603f..e348038 100644
 +    next_sample = now + 300000UL;
 +  }
 +  hx::dmTick(*this);  // direct messages typed on the dashboard
++  {  // scheduled weekly restart (off unless the owner set one)
++    static uint32_t next_sched = 0;
++    if ((int32_t)(now - next_sched) >= 0) {
++      next_sched = now + 60000UL;
++      if (hx::schedDue(getRTCClock()->getCurrentTime(), now / 1000)) {
++        Serial.println("Hoptics: scheduled restart");
++        delay(200);
++        ESP.restart();
++      }
++    }
++  }
 +  {  // room posts: post what the dashboard typed (as the room), and mirror the posts for the page every 5 s
 +    char text[hx::kRoomMax + 1];
 +    if (hx::roomTakePost(text, sizeof(text))) addSystemPost(text);
@@ -475,7 +497,7 @@ index cc8600b..d3c67b3 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
  
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..f4bf1b7 100644
+index 167e5cd..fddc8f0 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
 @@ -11,6 +11,7 @@
@@ -529,7 +551,7 @@ index 167e5cd..f4bf1b7 100644
    WebConfigServer* target = NULL;
    portENTER_CRITICAL(&s_wc_route_mux);
    if (_active != NULL) {
-@@ -735,6 +770,28 @@ void WebConfigServer::registerRoutes() {
+@@ -735,6 +770,29 @@ void WebConfigServer::registerRoutes() {
    _server->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleScan); });
    _server->on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleReboot); });
    _server->on("/api/portal/exit", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handlePortalExit); });
@@ -547,6 +569,7 @@ index 167e5cd..f4bf1b7 100644
 +  _server->on("/api/hx/view-login", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxViewLogin); });
 +  _server->on("/api/hx/view-pass", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxViewPass); });
 +  _server->on("/api/hx/view-logout", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxViewLogout); });
++  _server->on("/api/hx/sched", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxSched); });
 +  _server->on("/api/hx/alerts", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxAlerts); });
 +  _server->on("/api/hx/update", HTTP_POST,
 +      [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxUpdateDone); },
@@ -558,7 +581,7 @@ index 167e5cd..f4bf1b7 100644
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -856,7 +913,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -856,7 +914,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    uint32_t now = millis();
    if (_login_lock_until && (int32_t)(now - _login_lock_until) < 0) {
@@ -570,7 +593,7 @@ index 167e5cd..f4bf1b7 100644
      return;
    }
    const char* body = (const char*)req->_tempObject;
-@@ -871,7 +932,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -871,7 +933,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
                                                 : sizeof(_prefs->password);
    if (!fixedTimeEquals(pwd, expected, expected_size)) {
      if (++_login_fails >= 5) {
@@ -585,7 +608,7 @@ index 167e5cd..f4bf1b7 100644
        if (_login_lock_until == 0) _login_lock_until = 1;
        _login_fails = 0;
      }
-@@ -880,6 +948,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -880,6 +949,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    _login_fails = 0;
    _login_lock_until = 0;
@@ -603,7 +626,7 @@ index 167e5cd..f4bf1b7 100644
    uint32_t generation;
    {
      WCLock lock(_mux);
-@@ -1503,9 +1582,36 @@ void WebConfigServer::handleCliResult(AsyncWebServerRequest* req) {
+@@ -1503,9 +1583,36 @@ void WebConfigServer::handleCliResult(AsyncWebServerRequest* req) {
    req->send(res);
  }
  
@@ -640,7 +663,7 @@ index 167e5cd..f4bf1b7 100644
    uint32_t until = millis() + 15000;
    if (until == 0) until = 1;
    _stats_wanted_until = until;  // tick() refreshes the snapshot while polled
-@@ -1631,3 +1737,484 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -1631,3 +1738,496 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -844,6 +867,17 @@ index 167e5cd..f4bf1b7 100644
 +    if ((uint8_t)t[i] < 0x20) { req->send(400, "application/json", "{\"error\":\"no control characters\"}"); return; }
 +  }
 +  if (!hx::queueChannelMsg(key, t.c_str())) { req->send(429, "application/json", "{\"error\":\"wait a few seconds between messages\"}"); return; }
++  req->send(200, "application/json", "{\"ok\":true}");
++}
++
++// Scheduled weekly restart: day -1 (off) or 0-6, hour 0-23, both UTC. Admin only.
++void WebConfigServer::handleHxSched(AsyncWebServerRequest* req) {
++  if (_mode != MODE_LAN) { req->send(503); return; }
++  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
++  if (!hxSameOrigin(req)) { req->send(403, "application/json", "{\"error\":\"wrong origin\"}"); return; }
++  const long d = req->hasParam("day", true) ? req->getParam("day", true)->value().toInt() : -2;
++  const long h = req->hasParam("hour", true) ? req->getParam("hour", true)->value().toInt() : -1;
++  if (!hx::schedSet((int)d, (int)h)) { req->send(400, "application/json", "{\"error\":\"bad day or hour\"}"); return; }
 +  req->send(200, "application/json", "{\"ok\":true}");
 +}
 +
@@ -1114,6 +1148,7 @@ index 167e5cd..f4bf1b7 100644
 +  else if (k == "nodes") hx::writeNodes(*res);
 +  else if (k == "alerts") hx::writeAlerts(*res);
 +  else if (k == "statson") res->print(hx::statsOn() ? "{\"on\":true}" : "{\"on\":false}");
++  else if (k == "sched") hx::writeSched(*res);
 +  else if (k == "admin") hx::writeAdmin(*res);
 +  else if (k == "room") hx::writeRoom(*res);
 +  else if (k == "trace") hx::writeTrace(*res);
@@ -1126,7 +1161,7 @@ index 167e5cd..f4bf1b7 100644
 +}
 +#endif
 diff --git a/src/helpers/esp32/WebConfigServer.h b/src/helpers/esp32/WebConfigServer.h
-index bdd3e27..0977cef 100644
+index bdd3e27..bed2acc 100644
 --- a/src/helpers/esp32/WebConfigServer.h
 +++ b/src/helpers/esp32/WebConfigServer.h
 @@ -177,6 +177,9 @@ private:
@@ -1139,7 +1174,7 @@ index bdd3e27..0977cef 100644
    uint32_t _login_lock_until = 0;
  
    // Once set (via /api/portal/exit), OS captive probes get native "success"
-@@ -236,6 +239,24 @@ private:
+@@ -236,6 +239,25 @@ private:
    void handleReboot(AsyncWebServerRequest* req);
    void handlePortalExit(AsyncWebServerRequest* req);
    void handleNotFound(AsyncWebServerRequest* req);
@@ -1157,6 +1192,7 @@ index bdd3e27..0977cef 100644
 +  void handleHxViewLogin(AsyncWebServerRequest* req);
 +  void handleHxViewPass(AsyncWebServerRequest* req);
 +  void handleHxViewLogout(AsyncWebServerRequest* req);
++  void handleHxSched(AsyncWebServerRequest* req);
 +  void handleHxMetrics(AsyncWebServerRequest* req);
 +  void handleHxStatsToken(AsyncWebServerRequest* req);
 +  void hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final);
@@ -1165,7 +1201,7 @@ index bdd3e27..0977cef 100644
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..44e4f14 100644
+index 4bd316b..1b6f9a8 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
 @@ -290,3 +290,43 @@ lib_deps =
@@ -1177,7 +1213,7 @@ index 4bd316b..44e4f14 100644
 +[hoptics_m7]
 +build_flags =
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.4.8"'
++  -D HOPTICS_M7_VERSION='"0.4.9"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +
 +[env:Hoptics_M7_repeater_observer]

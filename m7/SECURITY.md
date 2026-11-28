@@ -79,3 +79,7 @@ Report problems through GitHub issues.
   alerts and the stats token, stays admin-only. Changing or clearing the password ends every viewer session.
 - **Update images are published whole or not at all.** The build refuses to publish a set missing either
   Hoptics image, so a failed build can't leave the update check pointing at nothing.
+- **ntfy alerts follow the same rules as Discord.** Only https://<public host name>/<topic> is accepted (no
+  ports, users, queries or IP addresses, so the node can't be aimed at the LAN); TLS is verified, redirects are
+  refused, the topic is a secret the page only ever sees the last 4 characters of, and the same pacing applies.
+- **The scheduled restart can't loop.** It never fires within 2 hours of starting or before the clock is set.

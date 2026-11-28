@@ -29,6 +29,8 @@ with the Hoptics dashboard at `http://<node-ip>/hoptics`.
 - Discord alert when the chip runs hot (80 C) and when it cools down
 - Viewer access: a second, read-only password (System tab) so others can watch stats, graphs, map, packets and public channels
 - Update channel: Stable (main) or Beta (the beta branch) in System → Updates
+- Alerts can go to an ntfy topic (ntfy.sh or your own server) as well as a Discord webhook
+- Scheduled weekly restart, set in local time on the System tab (never within 2 hours of starting)
 - Stats feed for Home Assistant / Prometheus (read-only token); automatic rollback after a bad update
 - Web page always on while the network is up; advert at boot
 

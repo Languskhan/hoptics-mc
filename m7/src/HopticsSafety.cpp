@@ -110,3 +110,49 @@ void ledTick(uint8_t state) {
 #endif
 }
 }  // namespace hx
+
+// ---- Scheduled weekly restart (off until set). Day and hour are UTC; the page converts from local time.
+// Never within 2 hours of starting, so a wrong clock can't make it restart over and over.
+namespace hx {
+namespace {
+int8_t sched_day = -1, sched_hour = 0;   // day -1 = off; 0 = Sunday
+bool sched_loaded = false;
+void schedLoad() {
+  if (sched_loaded) return;
+  sched_loaded = true;
+  Preferences p;
+  if (!p.begin("hxsched", true)) return;
+  const int d = p.getChar("day", -1), h = p.getChar("hour", 0);
+  p.end();
+  if (d >= 0 && d <= 6 && h >= 0 && h <= 23) { sched_day = d; sched_hour = h; }
+}
+}  // namespace
+
+bool schedSet(int day, int hour) {
+  if (day < -1 || day > 6 || hour < 0 || hour > 23) return false;
+  Preferences p;
+  if (!p.begin("hxsched", false)) return false;
+  p.putChar("day", (int8_t)day);
+  p.putChar("hour", (int8_t)hour);
+  p.end();
+  sched_day = day;
+  sched_hour = hour;
+  sched_loaded = true;
+  return true;
+}
+
+void writeSched(Print& out) {
+  schedLoad();
+  out.printf("{\"day\":%d,\"hour\":%d}", sched_day, sched_hour);
+}
+
+bool schedDue(uint32_t rtc, uint32_t uptime_s) {
+  schedLoad();
+  if (sched_day < 0 || rtc < 1700000000UL || uptime_s < 7200) return false;
+  const uint32_t days = rtc / 86400UL;
+  const int dow = (int)((days + 4) % 7);   // 1970-01-01 was a Thursday
+  const int hour = (int)((rtc / 3600UL) % 24);
+  const int minute = (int)((rtc / 60UL) % 60);
+  return dow == sched_day && hour == sched_hour && minute < 30;
+}
+}  // namespace hx

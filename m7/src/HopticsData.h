@@ -60,7 +60,11 @@ void writeGroup(Print& out, uint32_t since);
 
 // Rollback and stats feed (HopticsSafety.cpp)
 void markUpdateInstalled();
-void ledTick(uint8_t state);   // 0 offline, 1 online, 2 setup hotspot, 3 button held
+void ledTick(uint8_t state);
+// Scheduled weekly restart: day 0-6 (Sunday = 0) and hour in UTC, day -1 = off
+bool schedSet(int day, int hour);
+void writeSched(Print& out);
+bool schedDue(uint32_t rtc, uint32_t uptime_s);   // 0 offline, 1 online, 2 setup hotspot, 3 button held
 void bootCheck();
 void bootGood();
 void statsBegin();

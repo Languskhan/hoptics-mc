@@ -200,6 +200,10 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 </section>
 <section id="t-system">
   <div class="two">
+    <div class="card glass"><h3>Scheduled restart</h3>
+      <p class="dim" style="margin-top:0">Restart once a week at a quiet time, to clear out any slow memory build-up. Never within 2 hours of starting up. Times are your browser's local time; after a daylight-saving change, save it again.</p>
+      <div class="row"><select id="sday"><option value="-1">Off</option></select><select id="shour"></select><button class="b" id="ssave">Save</button></div>
+      <div id="smsg" class="dim" style="margin-top:8px;font-size:13px"></div></div>
     <div class="card glass"><h3>Viewer access</h3>
       <p class="dim" style="margin-top:0">A second, read-only password so others can watch this dashboard: stats, graphs, map, packets, neighbours and public channels. Viewers never see DMs, room posts, alerts, settings, the console, updates, or this node's address and broker names.</p>
       <div class="row"><input id="vpw" type="password" maxlength="64" autocomplete="new-password" placeholder="Viewer password (8+ characters)" style="flex:1"><button class="b" id="vset">Set</button><button class="b" id="vclr">Turn off</button></div>
@@ -225,7 +229,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
   </div>
   <div class="card glass"><h3>Role</h3><div id="rolecard"><span class="dim">Loading...</span></div></div>
   <div class="card glass"><h3>Updates</h3><div class="row"><select id="chan"><option value="stable">Stable</option><option value="beta">Beta</option></select><button class="b" id="chk">Check for updates</button><span class="dim" id="chkmsg"></span></div></div>
-  <div class="card glass"><h3>Discord alerts</h3><div id="alertcard"><span class="dim">Loading...</span></div></div>
+  <div class="card glass"><h3>Alerts (Discord or ntfy)</h3><div id="alertcard"><span class="dim">Loading...</span></div></div>
   <div class="card glass"><h3>Stats feed (Home Assistant, Grafana)</h3><div id="statscard"><span class="dim">Loading...</span></div></div>
   <div class="card glass"><h3>Restart</h3><div class="row"><button class="b" id="reboot">Restart node</button><span class="dim">History in memory is cleared by a restart.</span></div></div>
 </section>
@@ -422,6 +426,18 @@ let phmRead=false;async function readPhm(){if(phmRead)return;phmRead=true;try{co
 $("phmset").onclick=async()=>{const v=$("phm").value;if(!/^[0-2]$/.test(v))return;
   if(!confirm("Use "+(+v+1)+"-byte path IDs for this node's adverts? Check the rest of your mesh runs MeshCore 1.14 or newer first."))return;
   try{const r=await cli(["set path.hash.mode "+v]);const t=val(r[0]);$("phmmsg").textContent=/ok/i.test(t)?"Set to "+(+v+1)+" byte"+(v==="0"?"":"s")+".":"Not set: "+t}catch(e){$("phmmsg").textContent="Not set: "+e.message}};
+// scheduled restart: the node keeps UTC, the page shows local time
+{const D=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];D.forEach((d,i)=>$("sday").insertAdjacentHTML("beforeend",`<option value="${i}">${d}</option>`));
+  for(let h=0;h<24;h++)$("shour").insertAdjacentHTML("beforeend",`<option value="${h}">${new Date(2026,0,4,h).toLocaleTimeString([],{hour:"numeric"})}</option>`)}
+function localAt(day,hour){const d=new Date();d.setHours(hour,0,0,0);d.setDate(d.getDate()+((day-d.getDay()+7)%7));return d}
+let schedRead=false;async function readSched(){if(schedRead)return;schedRead=true;try{const j=await api("/api/hx?k=sched");
+  if(j.day<0){$("sday").value="-1";$("smsg").textContent="Off.";return}
+  const u=new Date();u.setUTCHours(j.hour,0,0,0);u.setUTCDate(u.getUTCDate()+((j.day-u.getUTCDay()+7)%7));
+  $("sday").value=String(u.getDay());$("shour").value=String(u.getHours());$("smsg").textContent="Restarts every "+u.toLocaleDateString([],{weekday:"long"})+" at "+u.toLocaleTimeString([],{hour:"numeric"})+"."}catch(e){schedRead=false}}
+$("ssave").onclick=async()=>{const day=+$("sday").value,hour=+$("shour").value;let body={day:-1,hour:0};
+  if(day>=0){const t=localAt(day,hour);body={day:t.getUTCDay(),hour:t.getUTCHours()}}
+  const r=await fetch("/api/hx/sched",{method:"POST",body:new URLSearchParams(body)});if(r.status===401){showLogin();return}const j=await r.json().catch(()=>({}));
+  $("smsg").textContent=r.ok?(day<0?"Off.":"Saved: every "+$("sday").selectedOptions[0].text+" at "+$("shour").selectedOptions[0].text+"."):"Not saved: "+(j.error||r.status)};
 // viewer password (admin)
 async function setViewPass(pw){const r=await fetch("/api/hx/view-pass",{method:"POST",body:new URLSearchParams({password:pw})});if(r.status===401){showLogin();return}
   const j=await r.json().catch(()=>({}));$("vmsg").textContent=r.ok?(j.on?"Viewer sign-in is on. Share the password only with people you want watching.":"Viewer sign-in is off."):"Not set: "+(j.error||r.status)}
@@ -1024,19 +1040,20 @@ function renderRole(){const now=roleNow();
       const blob=await fetchBuild(t.env,msg);if(t.repeat!=null)await cli(["set repeat "+(t.repeat?"on":"off")]).catch(()=>{});
       setTab("system");sendFirmware(blob,t.env+".update.bin");msg("Installing; the node restarts in its new role.")}
     catch(e){msg("Didn't switch: "+e.message)}}}
-// ---- Discord alerts (the link is a secret: the node only ever shows its last 4 characters)
+// ---- alerts to Discord or ntfy (the link is a secret: the node only ever shows its last 4 characters)
 async function renderAlerts(){let a;try{a=await api("/api/hx?k=alerts")}catch(e){return}
   const f=a.flags||0,cb=(bit,label)=>`<label style="display:block;margin:4px 0"><input type="checkbox" data-bit="${bit}" ${f&bit?"checked":""}> ${label}</label>`;
-  $("alertcard").innerHTML=`<p class="dim">${a.set?`On: sending to the webhook ending in <code>…${esc(a.hint)}</code>. Sent today: ${a.today}${a.queued?`, ${a.queued} waiting`:""}.`:"Off. Add a Discord webhook link to turn alerts on (Discord: channel settings, Integrations, Webhooks, New Webhook, Copy Webhook URL)."}${a.err?` <span style="color:var(--red)">Last error: ${esc(a.err)}</span>`:""}</p>
+  $("alertcard").innerHTML=`<p class="dim">${a.set?`On: sending to the link ending in <code>…${esc(a.hint)}</code>. Sent today: ${a.today}${a.queued?`, ${a.queued} waiting`:""}.`:"Off. Add a link to turn alerts on: a Discord webhook (channel settings, Integrations, Webhooks, New Webhook, Copy Webhook URL), or an ntfy topic such as https://ntfy.sh/a-long-random-name, then subscribe to that topic in the ntfy app. Anyone who knows an ntfy topic can read it, so make the name long and hard to guess."}${a.err?` <span style="color:var(--red)">Last error: ${esc(a.err)}</span>`:""}</p>
   ${cb(1,"A repeater this node hears directly goes quiet for 6 hours, and when it comes back")}${cb(2,"Daily summary: packets, airtime, noise, nodes heard, MQTT")}${cb(4,"A new node shows up that isn't on your regional map yet (any new node, if no regional map is set)")}${cb(16,"The chip runs hot (80 °C or more), and when it cools down again")}${cb(8,"This spot changes: more repeaters heard well, a busier channel, or a louder noise floor than yesterday")}
-  <div class="row" style="margin-top:8px"><input id="aurl" type="password" autocomplete="off" placeholder="${a.set?"New webhook link (leave empty to keep)":"https://discord.com/api/webhooks/..."}" style="flex:1;min-width:240px">
+  <div class="row" style="margin-top:8px"><input id="aurl" type="password" autocomplete="off" placeholder="${a.set?"New link (leave empty to keep)":"Discord webhook or https://ntfy.sh/your-topic"}" style="flex:1;min-width:240px">
   <button class="b p" id="asave">Save</button>${a.set?'<button class="b" id="atest">Send test</button><button class="b" id="aoff">Remove link</button>':""}</div>
-  <p class="dim" style="font-size:12px">At most one message a minute and 40 a day. Node names are sent as plain text and can't ping anyone.</p><div id="amsg" class="dim"></div>`;
+  <p class="dim" style="font-size:12px">At most one message a minute and 40 a day. Node names are sent as plain text and can't ping anyone on Discord.</p><div id="amsg" class="dim"></div>`;
   const send=async body=>{const r=await fetch("/api/hx/alerts",{method:"POST",body:new URLSearchParams(body)});const j=await r.json().catch(()=>({}));$("amsg").textContent=r.ok?"Saved.":"Not saved: "+(j.error||r.status);if(r.ok)setTimeout(renderAlerts,600)};
   const flags=()=>[...$("alertcard").querySelectorAll("[data-bit]")].reduce((s,c)=>s|(c.checked?+c.dataset.bit:0),0);
-  $("asave").onclick=()=>{const u=$("aurl").value.trim();if(u&&!/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(u)){$("amsg").textContent="That doesn't look like a Discord webhook link.";return}send({url:u,flags:flags()})};
+  $("asave").onclick=()=>{const u=$("aurl").value.trim();if(u&&!/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(u)&&!/^https:\/\/[a-z0-9.-]+\.[a-z0-9-]+\/[\w-]{1,64}$/i.test(u)){$("amsg").textContent="Use a Discord webhook link or an ntfy topic link (https://ntfy.sh/your-topic).";return}
+    if(u&&/ntfy/i.test(u)&&u.split("/").pop().length<12&&!confirm("That ntfy topic name is short, so others could guess it and read your alerts. Use it anyway?"))return;send({url:u,flags:flags()})};
   if(a.set){$("atest").onclick=async()=>{await fetch("/api/hx/alerts",{method:"POST",body:new URLSearchParams({test:1})});$("amsg").textContent="Test queued; it arrives within a minute."};
-    $("aoff").onclick=()=>{if(confirm("Remove the webhook link and stop alerts?"))send({url:"-",flags:flags()})}}}
+    $("aoff").onclick=()=>{if(confirm("Remove the alert link and stop alerts?"))send({url:"-",flags:flags()})}}}
 // ---- read-only stats token
 async function renderStats(token){let on=false;try{on=(await api("/api/hx?k=statson")).on}catch(e){}
   const url=location.origin+"/metrics";
@@ -1079,7 +1096,7 @@ $("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
 
 // ================================================================ loop
 function safe(f){try{f()}catch(e){console.error("Hoptics:",e)}}
-function render(){safe(renderOverview);if(tab==="system"){safe(renderRegSrc);readPhm()}if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs"){safe(renderNbrs);safe(renderAdm)}if(tab==="packets")safe(renderPk);if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();renderStats();S.roleDrawn=1}}}
+function render(){safe(renderOverview);if(tab==="system"){safe(renderRegSrc);readPhm();readSched()}if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs"){safe(renderNbrs);safe(renderAdm)}if(tab==="packets")safe(renderPk);if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();renderStats();S.roleDrawn=1}}}
 let started=false;
 async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);
