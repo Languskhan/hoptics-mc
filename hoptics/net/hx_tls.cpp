@@ -5,6 +5,8 @@
 #if defined(ARDUINO_ARCH_ESP32)
 #include "hx_log.h"
 #include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <Preferences.h>
 #include <esp_http_server.h>
 #include <esp_system.h>
@@ -195,6 +197,17 @@ void freeSess(void *c)
         st.open--;
 }
 
+bool handshakeOver(const mbedtls_ssl_context &ssl)
+{
+#if MBEDTLS_VERSION_NUMBER >= 0x03020000
+    return mbedtls_ssl_is_handshake_over(&ssl);
+#elif MBEDTLS_VERSION_MAJOR >= 3
+    return ssl.MBEDTLS_PRIVATE(state) == MBEDTLS_SSL_HANDSHAKE_OVER;
+#else
+    return ssl.state == MBEDTLS_SSL_HANDSHAKE_OVER;
+#endif
+}
+
 int onRecv(httpd_handle_t hd, int fd, char *buf, size_t len, int)
 {
     Sess *s = (Sess *)httpd_sess_get_transport_ctx(hd, fd);
@@ -322,10 +335,22 @@ int onOpen(void *server, int fd)
     if (!r) {
         mbedtls_ssl_set_bio(&s->ssl, s, bioSend, bioRecv, nullptr);
         const uint32_t t0 = millis();
-        // the socket has the server's receive and send timeouts; a browser that stalls is dropped after 10 s
-        while ((r = mbedtls_ssl_handshake(&s->ssl)) == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE)
-            if (millis() - t0 > 10000)
+        // one step at a time, with a tick for other tasks between steps: a whole handshake is over a second of key maths
+        // (several at 80 MHz, and a browser opens a few connections in a row), and without a break the idle task on
+        // this core starved and the task watchdog restarted the node. The socket has the server's timeouts; a browser
+        // that stalls is dropped after 10 s
+        for (;;) {
+            r = mbedtls_ssl_handshake_step(&s->ssl);
+            if (!r && handshakeOver(s->ssl))
                 break;
+            if (r && r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE)
+                break;
+            if (millis() - t0 > 10000) {
+                r = MBEDTLS_ERR_SSL_TIMEOUT;
+                break;
+            }
+            vTaskDelay(1);
+        }
         const uint32_t ms = millis() - t0;
         if (!r) {
             st.handshakes++;
