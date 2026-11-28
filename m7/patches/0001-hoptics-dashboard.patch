@@ -412,7 +412,7 @@ index bdd3e27..7a815db 100644
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..d9de9ac 100644
+index 4bd316b..9df476f 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
 @@ -290,3 +290,18 @@ lib_deps =
@@ -426,7 +426,7 @@ index 4bd316b..d9de9ac 100644
 +build_flags =
 +  ${env:ThinkNode_M7_repeater_observer_mqtt.build_flags}
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.3.1"'
++  -D HOPTICS_M7_VERSION='"0.3.2"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +  -UADVERT_NAME
 +  -D ADVERT_NAME='"Hoptics M7"'

@@ -8,7 +8,7 @@ with the Hoptics dashboard at `http://<node-ip>/hoptics`.
 - Dashboard: overview with repeater health (0-100), graphs you can click into, live map, neighbours,
   packets with full decoding, insights, MQTT status, settings advisor and console
 - Mesh-impact warnings based on what the node hears at its spot
-- 30 days of 5-minute history in PSRAM
+- 30 days of 5-minute history, kept on flash so it survives restarts and updates
 - Web page always on while the network is up; advert at boot
 
 ## How it is built

@@ -2,6 +2,7 @@
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <SPIFFS.h>
 
 namespace hx {
 namespace {
@@ -79,6 +80,55 @@ void jsonStr(Print& out, const char* s) {
   out.print('"');
 }
 
+// ---- history on flash: two files of up to 15 days each (h0 older, h1 newer). Each starts with a small header;
+// records are whole Sample structs. Writes are skipped if the filesystem is getting full, so the node's keys
+// and settings (same filesystem) always have room.
+constexpr const char* kH0 = "/hx/h0.bin";
+constexpr const char* kH1 = "/hx/h1.bin";
+constexpr uint32_t kMagic = 0x31535848;  // "HXS1"
+constexpr size_t kPerFile = kSamples / 2;
+constexpr size_t kKeepFree = 96 * 1024;
+
+struct FileHead { uint32_t magic; uint16_t rec_size; uint16_t reserved; };
+
+void loadFile(const char* path) {
+  File f = SPIFFS.open(path, "r");
+  if (!f) return;
+  FileHead h{};
+  if (f.read((uint8_t*)&h, sizeof(h)) != sizeof(h) || h.magic != kMagic || h.rec_size != sizeof(Sample)) { f.close(); return; }
+  Sample s;
+  size_t n = 0;
+  while (n < kPerFile && f.read((uint8_t*)&s, sizeof(s)) == sizeof(s)) {  // a half-written last record is ignored
+    samples[sample_head] = s;
+    sample_head = (sample_head + 1) % kSamples;
+    if (sample_count < kSamples) sample_count++;
+    n++;
+  }
+  f.close();
+}
+
+void saveSample(const Sample& s) {
+  if (SPIFFS.totalBytes() - SPIFFS.usedBytes() < kKeepFree) return;
+  size_t size = 0;
+  {
+    File f = SPIFFS.open(kH1, "r");
+    if (f) { size = f.size(); f.close(); }
+  }
+  if (size >= sizeof(FileHead) + kPerFile * sizeof(Sample)) {  // h1 full: it becomes h0, start a new h1
+    SPIFFS.remove(kH0);
+    SPIFFS.rename(kH1, kH0);
+    size = 0;
+  }
+  File f = SPIFFS.open(kH1, size ? "a" : "w");
+  if (!f) return;
+  if (!size) {
+    FileHead h{kMagic, (uint16_t)sizeof(Sample), 0};
+    f.write((const uint8_t*)&h, sizeof(h));
+  }
+  f.write((const uint8_t*)&s, sizeof(s));
+  f.close();
+}
+
 }  // namespace
 
 void begin() {
@@ -90,6 +140,11 @@ void begin() {
   nodes = (Node*)ps(sizeof(Node) * kNodes);
   region[0] = (RNode*)ps(sizeof(RNode) * kRegion);
   region[1] = (RNode*)ps(sizeof(RNode) * kRegion);
+  if (samples) {  // history from before the restart
+    Lock l;
+    loadFile(kH0);
+    loadFile(kH1);
+  }
   startRegion();
 }
 
@@ -221,12 +276,17 @@ void onAdvert(const uint8_t* pub, uint8_t type, const char* name, bool has_loc, 
 
 void addSample(const Sample& s) {
   if (!mu || !samples) return;
-  Lock l;
-  samples[sample_head] = s;
-  samples[sample_head].flood_uniq = flood_uniq;
-  samples[sample_head].flood_dup = flood_dup;
-  sample_head = (sample_head + 1) % kSamples;
-  if (sample_count < kSamples) sample_count++;
+  Sample saved;
+  {
+    Lock l;
+    samples[sample_head] = s;
+    samples[sample_head].flood_uniq = flood_uniq;
+    samples[sample_head].flood_dup = flood_dup;
+    saved = samples[sample_head];
+    sample_head = (sample_head + 1) % kSamples;
+    if (sample_count < kSamples) sample_count++;
+  }
+  saveSample(saved);  // flash write outside the lock, so the web server is never held up by it
 }
 
 void setNeighbours(const Neighbour* n, int count) {
