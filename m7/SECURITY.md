@@ -67,3 +67,7 @@ Report problems through GitHub issues.
   SNMP community and keys; a restore goes through the base firmware's allowlisted settings API.
 - **Trace route and room posts are admin only and paced** like chat: one trace at a time (10 s apart), one post at
   a time (5 s apart).
+- **Remote admin keeps no passwords.** The page sends the other node's password once; the firmware puts it in a
+  single login packet (encrypted to that node, like the phone app) and wipes it straight away. It is never written
+  to flash, logged or sent back to the page. Commands go only to the node signed in to, as admin, one at a time;
+  the page asks before commands that change or restart the remote node.

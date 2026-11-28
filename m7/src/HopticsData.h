@@ -91,8 +91,14 @@ void dmOnAdvert(const uint8_t* pub, uint8_t type, const char* name, uint32_t now
 bool dmQueue(const uint8_t pub[32], const char* text);
 bool dmAdvert();
 bool dmEnable(bool enable, const char* name);
-bool dmSaveContact(const uint8_t pub[32], const char* name, bool keep);
+bool dmSaveContact(const uint8_t pub[32], const char* name, bool keep, uint8_t type);  // type ADV_TYPE_*
 void writeDm(Print& out, uint32_t since);
+// Remote admin of another repeater or room, using the chat identity as the client (needs DMs on).
+// The password is only held until the login packet is built, then wiped; it is never stored or shown.
+int adminLogin(const uint8_t pub[32], const char* pw);
+bool adminCmd(const char* text);
+void adminLogout();
+void writeAdmin(Print& out);
 // Trace route: out along the given repeater IDs and back (the last ID is usually the first one, reversed path)
 constexpr int kTraceMax = 16;
 bool traceStart(const uint8_t* path, int n);

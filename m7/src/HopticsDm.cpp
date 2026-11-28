@@ -11,7 +11,7 @@
 namespace hx {
 namespace {
 
-constexpr int kContacts = 64, kSaved = 16, kMsgs = 128, kSeenDm = 32;
+constexpr int kContacts = 128, kSaved = 16, kMsgs = 128, kSeenDm = 32, kAdmLines = 24;
 constexpr uint32_t kAckDelay = 200;  // same as the companion firmware
 
 struct Contact {
@@ -22,6 +22,7 @@ struct Contact {
   uint8_t path[64];
   int16_t path_len;   // -1: unknown, send by flood
   uint32_t heard;     // RTC seconds, 0 = never
+  uint8_t type;       // ADV_TYPE_*: chat (or added by hand), repeater, room
 };
 
 struct Msg {
@@ -65,6 +66,32 @@ struct Trace {        // one trace route at a time
   int8_t last4;             // what this node heard on the way back
 } tr;
 
+struct Admin {        // one remote-admin session at a time; the password is wiped as soon as it is sent
+  int ci = -1;
+  uint8_t state;      // 0 none, 1 logging in, 2 signed in, 3 refused / no answer
+  bool admin, q_login, q_cmd;
+  uint32_t sent_ms, seq;
+  char pw[16];
+  char cmd[kDmMax + 1];
+  struct Line { uint32_t seq; uint8_t out; char text[161]; } lines[kAdmLines];
+} adm;
+
+void admLine(bool out, const char* text) {
+  auto& L = adm.lines[adm.seq % kAdmLines];
+  L.seq = ++adm.seq;
+  L.out = out;
+  cleanText(L.text, sizeof(L.text), text, sizeof(L.text) - 1);
+}
+
+void admResponse(int ci, const uint8_t* d, int len) {   // a login reply (or another response) from the target
+  if (ci != adm.ci || adm.state != 1 || len < 7) return;
+  if (d[4] == 0) {   // RESP_SERVER_LOGIN_OK
+    adm.state = 2;
+    adm.admin = d[6] != 0;
+    admLine(false, adm.admin ? "Signed in as admin." : "Signed in as guest: commands need the admin password.");
+  }
+}
+
 struct Lock {
   Lock() { xSemaphoreTake(mu, portMAX_DELAY); }
   ~Lock() { xSemaphoreGive(mu); }
@@ -102,6 +129,7 @@ int newSlot() {
   int best = -1;
   for (int i = 0; i < kContacts; i++) {
     const Contact& c = contacts[i];
+    if (i == adm.ci) continue;   // never recycle the node we're signed in to
     if (!c.heard && !c.saved) return i;
     if (!c.saved && (best < 0 || c.heard < contacts[best].heard)) best = i;
   }
@@ -207,25 +235,27 @@ void loadSaved() {
   else on = false;
   memset(key, 0, sizeof(key));
   p.getString("name", my_name, sizeof(my_name));
-  struct Saved { uint8_t pub[32]; char name[24]; } s[kSaved];
+  struct Saved { uint8_t pub[32]; char name[23]; uint8_t type; } s[kSaved];   // 56 bytes, as before (old type byte reads 0 = chat)
   const size_t got = p.getBytes("saved", s, sizeof(s));
   p.end();
   for (size_t i = 0; i < got / sizeof(Saved) && i < (size_t)kSaved; i++) {
     Contact& c = contacts[i];
     memcpy(c.pub, s[i].pub, 32);
     cleanText(c.name, sizeof(c.name), s[i].name, sizeof(s[i].name));
+    c.type = (s[i].type == ADV_TYPE_REPEATER || s[i].type == ADV_TYPE_ROOM) ? s[i].type : ADV_TYPE_CHAT;
     c.saved = true;
     c.path_len = -1;
   }
 }
 
 void storeSaved() {   // only on an owner change, so the flash isn't worn by traffic
-  struct Saved { uint8_t pub[32]; char name[24]; } s[kSaved];
+  struct Saved { uint8_t pub[32]; char name[23]; uint8_t type; } s[kSaved];   // 56 bytes, as before (old type byte reads 0 = chat)
   int n = 0;
   for (int i = 0; i < kContacts && n < kSaved; i++) {
     if (!contacts[i].saved) continue;
     memcpy(s[n].pub, contacts[i].pub, 32);
     strlcpy(s[n].name, contacts[i].name, sizeof(s[n].name));
+    s[n].type = contacts[i].type;
     n++;
   }
   Preferences p;
@@ -261,6 +291,47 @@ void dmTick(mesh::Mesh& m) {
   }
   if (tr.waiting && millis() - tr.sent_ms > 30000UL) tr.waiting = false;   // no answer
   if (!on) return;
+  if (adm.q_login && adm.ci >= 0) {
+    adm.q_login = false;
+    Contact& c = contacts[adm.ci];
+    uint8_t d[24];
+    const uint32_t ts = m.getRTCClock()->getCurrentTimeUnique();
+    memcpy(d, &ts, 4);
+    int n = 4;
+    if (c.type == ADV_TYPE_ROOM) { memset(&d[n], 0, 4); n += 4; }   // rooms: sync_since (no old posts)
+    const size_t pl = strnlen(adm.pw, 15);
+    memcpy(&d[n], adm.pw, pl);
+    n += pl;
+    mesh::Identity target(c.pub);
+    mesh::Packet* p = m.createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, me, target, secretFor(adm.ci), d, n);
+    memset(adm.pw, 0, sizeof(adm.pw));
+    memset(d, 0, sizeof(d));
+    if (p) {
+      if (c.path_len >= 0) m.sendDirect(p, c.path, (uint8_t)c.path_len);
+      else m.sendFlood(p);
+      adm.state = 1;
+      adm.sent_ms = millis();
+    } else { adm.state = 3; admLine(false, "Couldn't send the login."); }
+  }
+  if (adm.state == 1 && millis() - adm.sent_ms > 25000UL) {
+    adm.state = 3;
+    admLine(false, "No answer: wrong password, or the repeater is out of reach.");
+  }
+  if (adm.q_cmd && adm.state == 2) {
+    adm.q_cmd = false;
+    uint8_t d[5 + kDmMax + 1];
+    const uint32_t ts = m.getRTCClock()->getCurrentTimeUnique();
+    memcpy(d, &ts, 4);
+    d[4] = 1 << 2;   // TXT_TYPE_CLI_DATA
+    const size_t tl = strlen(adm.cmd);
+    memcpy(&d[5], adm.cmd, tl);
+    Contact& c = contacts[adm.ci];
+    if (mesh::Packet* p = datagram(PAYLOAD_TYPE_TXT_MSG, adm.ci, d, 5 + tl)) {
+      if (c.path_len >= 0) m.sendDirect(p, c.path, (uint8_t)c.path_len);
+      else m.sendFlood(p);
+      admLine(true, adm.cmd);
+    }
+  }
   if (want_advert) {
     want_advert = false;
     uint8_t app[MAX_ADVERT_DATA_SIZE];
@@ -319,7 +390,7 @@ void dmOnRx(const mesh::Packet* pk) {
     ackMatched(crc);
     return;
   }
-  if (type != PAYLOAD_TYPE_TXT_MSG && type != PAYLOAD_TYPE_PATH) return;
+  if (type != PAYLOAD_TYPE_TXT_MSG && type != PAYLOAD_TYPE_PATH && type != PAYLOAD_TYPE_RESPONSE) return;
   if (pk->payload_len < 2 + CIPHER_MAC_SIZE + 1 || pk->payload[0] != me.pub_key[0]) return;
   Lock l;
   if (seenBefore(pk)) return;
@@ -331,7 +402,11 @@ void dmOnRx(const mesh::Packet* pk) {
     const int len = mesh::Utils::MACThenDecrypt(secretFor(i), d, &pk->payload[2], pk->payload_len - 2);
     if (len <= 0) continue;
     d[len] = 0;
-    if (type == PAYLOAD_TYPE_TXT_MSG) {
+    if (type == PAYLOAD_TYPE_RESPONSE) {
+      admResponse(i, d, len);
+    } else if (type == PAYLOAD_TYPE_TXT_MSG && len > 5 && (d[4] >> 2) == 1) {   // CLI reply from a remote node
+      if (i == adm.ci && adm.state == 2) admLine(false, (const char*)&d[5]);
+    } else if (type == PAYLOAD_TYPE_TXT_MSG) {
       if (len <= 5 || (d[4] >> 2) != 0) return;   // plain text only
       const size_t tl = strnlen((const char*)&d[5], len - 5);
       addMsg(c.pub, false, 0, pk->isRouteFlood() ? pk->getPathHashCount() : 0xFF, (const char*)&d[5]);
@@ -353,6 +428,7 @@ void dmOnRx(const mesh::Packet* pk) {
       memcpy(c.path, &d[1], bytes);
       c.path_len = pl;
       const uint8_t extra_type = d[1 + bytes] & 0x0F;
+      if (extra_type == PAYLOAD_TYPE_RESPONSE) admResponse(i, &d[2 + bytes], len - (2 + bytes));
       if (extra_type == PAYLOAD_TYPE_ACK && len - (2 + bytes) >= 4) {
         uint32_t crc;
         memcpy(&crc, &d[2 + bytes], 4);
@@ -368,7 +444,7 @@ void dmOnRx(const mesh::Packet* pk) {
 
 // chat nodes heard advertising become contacts (not saved to flash)
 void dmOnAdvert(const uint8_t* pub, uint8_t type, const char* name, uint32_t now) {
-  if (!mu || !contacts || type != ADV_TYPE_CHAT) return;
+  if (!mu || !contacts || (type != ADV_TYPE_CHAT && type != ADV_TYPE_REPEATER && type != ADV_TYPE_ROOM)) return;
   Lock l;
   if (on && memcmp(pub, me.pub_key, 32) == 0) return;
   int i = findContact(pub);
@@ -380,6 +456,7 @@ void dmOnAdvert(const uint8_t* pub, uint8_t type, const char* name, uint32_t now
     contacts[i].path_len = -1;
   }
   if (name && *name) cleanText(contacts[i].name, sizeof(contacts[i].name), name, sizeof(contacts[i].name) - 1);
+  contacts[i].type = type;
   contacts[i].heard = now ? now : 1;
 }
 
@@ -437,7 +514,7 @@ bool dmEnable(bool enable, const char* name) {
   return true;
 }
 
-bool dmSaveContact(const uint8_t pub[32], const char* name, bool keep) {
+bool dmSaveContact(const uint8_t pub[32], const char* name, bool keep, uint8_t type) {
   if (!mu || !contacts) return false;
   Lock l;
   int i = findContact(pub);
@@ -456,6 +533,7 @@ bool dmSaveContact(const uint8_t pub[32], const char* name, bool keep) {
       if (saved >= kSaved) return false;
     }
     if (name && *name) cleanText(contacts[i].name, sizeof(contacts[i].name), name, sizeof(contacts[i].name) - 1);
+    if (!contacts[i].heard) contacts[i].type = type;   // a heard advert already says what it is
     contacts[i].saved = true;
   } else {
     if (i < 0) return true;
@@ -463,6 +541,65 @@ bool dmSaveContact(const uint8_t pub[32], const char* name, bool keep) {
   }
   storeSaved();
   return true;
+}
+
+int adminLogin(const uint8_t pub[32], const char* pw) {   // 0 ok, 1 DMs off, 2 unknown node, 3 busy
+  if (!mu) return 1;
+  Lock l;
+  if (!on) return 1;
+  const int i = findContact(pub);
+  if (i < 0 || (contacts[i].type != ADV_TYPE_REPEATER && contacts[i].type != ADV_TYPE_ROOM)) return 2;
+  if (adm.q_login || adm.state == 1) return 3;
+  if (adm.ci != i) { adm.seq = 0; memset(adm.lines, 0, sizeof(adm.lines)); }
+  adm.ci = i;
+  adm.state = 0;
+  adm.admin = false;
+  adm.q_cmd = false;
+  strlcpy(adm.pw, pw, sizeof(adm.pw));
+  adm.q_login = true;
+  return 0;
+}
+
+bool adminCmd(const char* text) {
+  if (!mu) return false;
+  Lock l;
+  if (adm.state != 2 || !adm.admin || adm.q_cmd || millis() - adm.sent_ms < 1500) return false;
+  strlcpy(adm.cmd, text, sizeof(adm.cmd));
+  adm.q_cmd = true;
+  adm.sent_ms = millis();
+  return true;
+}
+
+void adminLogout() {
+  if (!mu) return;
+  Lock l;
+  memset(adm.pw, 0, sizeof(adm.pw));
+  adm.ci = -1;
+  adm.state = 0;
+  adm.admin = adm.q_login = adm.q_cmd = false;
+  adm.seq = 0;
+  memset(adm.lines, 0, sizeof(adm.lines));
+}
+
+void writeAdmin(Print& out) {
+  if (!mu || !contacts) { out.print("{\"state\":0,\"lines\":[]}"); return; }
+  Lock l;
+  out.printf("{\"state\":%u,\"admin\":%s,\"pub\":\"", adm.state, adm.admin ? "true" : "false");
+  if (adm.ci >= 0) hexOut(out, contacts[adm.ci].pub, 32);
+  out.print("\",\"name\":");
+  jstr(out, adm.ci >= 0 ? contacts[adm.ci].name : "");
+  out.print(",\"lines\":[");
+  const uint32_t lo = adm.seq > kAdmLines ? adm.seq - kAdmLines : 0;
+  bool first = true;
+  for (uint32_t q = lo + 1; q <= adm.seq; q++) {
+    const auto& L = adm.lines[(q - 1) % kAdmLines];
+    if (L.seq != q) continue;
+    out.printf("%s[%lu,%u,", first ? "" : ",", (unsigned long)L.seq, L.out);
+    first = false;
+    jstr(out, L.text);
+    out.print(']');
+  }
+  out.print("]}");
 }
 
 bool traceStart(const uint8_t* path, int n) {
@@ -505,7 +642,7 @@ void writeDm(Print& out, uint32_t since) {
     hexOut(out, c.pub, 32);
     out.print("\",");
     jstr(out, c.name);
-    out.printf(",%lu,%d,%d]", (unsigned long)c.heard, c.path_len < 0 ? -1 : (c.path_len & 63), c.saved ? 1 : 0);
+    out.printf(",%lu,%d,%d,%u]", (unsigned long)c.heard, c.path_len < 0 ? -1 : (c.path_len & 63), c.saved ? 1 : 0, c.type);
   }
   out.print("],\"msgs\":[");
   first = true;

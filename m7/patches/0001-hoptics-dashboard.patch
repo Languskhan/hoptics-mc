@@ -475,7 +475,7 @@ index cc8600b..d3c67b3 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
  
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..d45a698 100644
+index 167e5cd..10cb7ac 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
 @@ -690,8 +690,42 @@ uint32_t WebConfigServer::handlerRefCount() const {
@@ -521,7 +521,7 @@ index 167e5cd..d45a698 100644
    WebConfigServer* target = NULL;
    portENTER_CRITICAL(&s_wc_route_mux);
    if (_active != NULL) {
-@@ -735,6 +769,24 @@ void WebConfigServer::registerRoutes() {
+@@ -735,6 +769,25 @@ void WebConfigServer::registerRoutes() {
    _server->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleScan); });
    _server->on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleReboot); });
    _server->on("/api/portal/exit", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handlePortalExit); });
@@ -535,6 +535,7 @@ index 167e5cd..d45a698 100644
 +  _server->on("/api/hx/trace", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxTrace); });
 +  _server->on("/api/hx/room", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxRoom); });
 +  _server->on("/api/hx/region-src", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxRegionSrc); });
++  _server->on("/api/hx/admin", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxAdmin); });
 +  _server->on("/api/hx/alerts", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxAlerts); });
 +  _server->on("/api/hx/update", HTTP_POST,
 +      [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxUpdateDone); },
@@ -546,7 +547,7 @@ index 167e5cd..d45a698 100644
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -856,7 +908,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -856,7 +909,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    uint32_t now = millis();
    if (_login_lock_until && (int32_t)(now - _login_lock_until) < 0) {
@@ -558,7 +559,7 @@ index 167e5cd..d45a698 100644
      return;
    }
    const char* body = (const char*)req->_tempObject;
-@@ -871,7 +927,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -871,7 +928,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
                                                 : sizeof(_prefs->password);
    if (!fixedTimeEquals(pwd, expected, expected_size)) {
      if (++_login_fails >= 5) {
@@ -573,7 +574,7 @@ index 167e5cd..d45a698 100644
        if (_login_lock_until == 0) _login_lock_until = 1;
        _login_fails = 0;
      }
-@@ -880,6 +943,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -880,6 +944,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    _login_fails = 0;
    _login_lock_until = 0;
@@ -591,7 +592,7 @@ index 167e5cd..d45a698 100644
    uint32_t generation;
    {
      WCLock lock(_mux);
-@@ -1631,3 +1705,287 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -1631,3 +1706,326 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -737,6 +738,42 @@ index 167e5cd..d45a698 100644
 +  req->send(200, "application/json", "{\"ok\":true}");
 +}
 +
++// Remote admin of another repeater/room: op=login (pub, password) | cmd (text) | logout. The password goes into
++// one login packet and is wiped; it is never stored or echoed. Signed-in admin from this page only.
++void WebConfigServer::handleHxAdmin(AsyncWebServerRequest* req) {
++  if (_mode != MODE_LAN) { req->send(503); return; }
++  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
++  if (!hxSameOrigin(req)) { req->send(403, "application/json", "{\"error\":\"wrong origin\"}"); return; }
++  const String op = req->hasParam("op", true) ? req->getParam("op", true)->value() : String("");
++  auto bad = [req](int code, const char* e) { req->send(code, "application/json", String("{\"error\":\"") + e + "\"}"); };
++  if (op == "login") {
++    const String h = req->hasParam("pub", true) ? req->getParam("pub", true)->value() : String("");
++    const String pw = req->hasParam("password", true) ? req->getParam("password", true)->value() : String("");
++    uint8_t pub[32];
++    if (h.length() != 64) { bad(400, "bad node"); return; }
++    for (int i = 0; i < 32; i++) {
++      auto hv = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
++      const int a = hv(h[i * 2]), b = hv(h[i * 2 + 1]);
++      if (a < 0 || b < 0) { bad(400, "bad node"); return; }
++      pub[i] = (uint8_t)(a << 4 | b);
++    }
++    if (pw.length() < 1 || pw.length() > 15) { bad(400, "password: 1-15 characters"); return; }
++    for (size_t i = 0; i < pw.length(); i++) if ((uint8_t)pw[i] < 0x20) { bad(400, "password: no control characters"); return; }
++    const int rc = hx::adminLogin(pub, pw.c_str());
++    if (rc == 1) { bad(409, "turn on direct messages first: remote admin signs in with the chat identity"); return; }
++    if (rc == 2) { bad(404, "pick a repeater or room this node has heard, or save its key as one"); return; }
++    if (rc == 3) { bad(429, "a sign-in is already running"); return; }
++  } else if (op == "cmd") {
++    const String t = req->hasParam("text", true) ? req->getParam("text", true)->value() : String("");
++    if (t.length() < 1 || t.length() > hx::kDmMax) { bad(400, "command: 1-150 characters"); return; }
++    for (size_t i = 0; i < t.length(); i++) if ((uint8_t)t[i] < 0x20) { bad(400, "no control characters"); return; }
++    if (!hx::adminCmd(t.c_str())) { bad(429, "not signed in as admin, or wait a moment between commands"); return; }
++  } else if (op == "logout") {
++    hx::adminLogout();
++  } else { bad(400, "bad request"); return; }
++  req->send(200, "application/json", "{\"ok\":true}");
++}
++
 +// Regional analyzer (a CoreScope site) for map names and the new-node alert; "" turns it off. Admin only.
 +void WebConfigServer::handleHxRegionSrc(AsyncWebServerRequest* req) {
 +  if (_mode != MODE_LAN) { req->send(503); return; }
@@ -823,7 +860,9 @@ index 167e5cd..d45a698 100644
 +    const String n = param("name");
 +    if (!pubFrom(param("pub"), pub)) { bad("public key: 64 hex characters"); return; }
 +    if (!nameOk(n)) { bad("name: up to 31 characters, no [ ] \\ : , ? * \""); return; }
-+    if (!hx::dmSaveContact(pub, n.c_str(), op == "save")) { bad("can't save: 16 saved contacts at most"); return; }
++    const String ty = param("type");
++    const uint8_t type = ty == "repeater" ? 2 : ty == "room" ? 3 : 1;
++    if (!hx::dmSaveContact(pub, n.c_str(), op == "save", type)) { bad("can't save: 16 saved contacts at most"); return; }
 +  } else { bad("bad request"); return; }
 +  req->send(200, "application/json", "{\"ok\":true}");
 +}
@@ -869,6 +908,7 @@ index 167e5cd..d45a698 100644
 +  else if (k == "nodes") hx::writeNodes(*res);
 +  else if (k == "alerts") hx::writeAlerts(*res);
 +  else if (k == "statson") res->print(hx::statsOn() ? "{\"on\":true}" : "{\"on\":false}");
++  else if (k == "admin") hx::writeAdmin(*res);
 +  else if (k == "room") hx::writeRoom(*res);
 +  else if (k == "trace") hx::writeTrace(*res);
 +  else if (k == "dm") hx::writeDm(*res, req->hasParam("since") ? strtoul(req->getParam("since")->value().c_str(), NULL, 10) : 0);
@@ -880,7 +920,7 @@ index 167e5cd..d45a698 100644
 +}
 +#endif
 diff --git a/src/helpers/esp32/WebConfigServer.h b/src/helpers/esp32/WebConfigServer.h
-index bdd3e27..56ae738 100644
+index bdd3e27..ee9005b 100644
 --- a/src/helpers/esp32/WebConfigServer.h
 +++ b/src/helpers/esp32/WebConfigServer.h
 @@ -177,6 +177,9 @@ private:
@@ -893,7 +933,7 @@ index bdd3e27..56ae738 100644
    uint32_t _login_lock_until = 0;
  
    // Once set (via /api/portal/exit), OS captive probes get native "success"
-@@ -236,6 +239,20 @@ private:
+@@ -236,6 +239,21 @@ private:
    void handleReboot(AsyncWebServerRequest* req);
    void handlePortalExit(AsyncWebServerRequest* req);
    void handleNotFound(AsyncWebServerRequest* req);
@@ -907,6 +947,7 @@ index bdd3e27..56ae738 100644
 +  void handleHxTrace(AsyncWebServerRequest* req);
 +  void handleHxRoom(AsyncWebServerRequest* req);
 +  void handleHxRegionSrc(AsyncWebServerRequest* req);
++  void handleHxAdmin(AsyncWebServerRequest* req);
 +  void handleHxMetrics(AsyncWebServerRequest* req);
 +  void handleHxStatsToken(AsyncWebServerRequest* req);
 +  void hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final);
@@ -915,7 +956,7 @@ index bdd3e27..56ae738 100644
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..5ebf76e 100644
+index 4bd316b..f56726c 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
 @@ -290,3 +290,43 @@ lib_deps =
@@ -927,7 +968,7 @@ index 4bd316b..5ebf76e 100644
 +[hoptics_m7]
 +build_flags =
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.4.5"'
++  -D HOPTICS_M7_VERSION='"0.4.6"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +
 +[env:Hoptics_M7_repeater_observer]

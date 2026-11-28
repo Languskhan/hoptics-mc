@@ -21,6 +21,7 @@ with the Hoptics dashboard at `http://<node-ip>/hoptics`.
 - Trace route on the Neighbours tab: out through the repeaters you list and back, with the signal at every hop
 - Settings backup and restore on the System tab (no passwords, tokens or keys in the file)
 - Room posts on the Chat tab in the room roles: read the last 32 posts and post as the room
+- Remote admin on the Neighbours tab: sign in to another repeater or room with its password (sent once, never stored) and run commands, with quick buttons for status and stats
 - Stats feed for Home Assistant / Prometheus (read-only token); automatic rollback after a bad update
 - Web page always on while the network is up; advert at boot
 

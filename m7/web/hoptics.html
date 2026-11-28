@@ -121,6 +121,17 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 </section>
 <section id="t-nbrs">
   <div class="row"><button class="b" id="scan">Scan now</button><span class="dim" id="scanmsg">Repeaters this node hears directly (zero hop).</span></div>
+  <div class="card glass"><h3>Remote admin</h3>
+    <div id="admoff" class="dim" hidden>Remote admin signs in with this node's chat identity, so turn on <b>Direct messages</b> on the Chat tab first.</div>
+    <div id="admon">
+      <div class="row"><select id="admsel" style="flex:1;min-width:200px"></select><input id="admpw" type="password" maxlength="15" autocomplete="off" placeholder="Its admin password" style="width:180px"><button class="b p" id="admgo">Sign in</button><button class="b" id="admout">Sign out</button></div>
+      <div id="admstat" class="dim" style="margin:8px 0;font-size:13px">Pick a repeater or room this node has heard. The password goes out in one sign-in packet and is not kept anywhere.</div>
+      <div class="row" style="flex-wrap:wrap;gap:6px" id="admquick"></div>
+      <div id="admlog" class="scroll mono" style="height:260px;margin-top:8px;padding:6px;font-size:12.5px;white-space:pre-wrap"></div>
+      <div class="row" style="margin-top:8px"><input id="admcmd" maxlength="150" placeholder="Command, e.g. get radio" style="flex:1" class="mono" disabled><button class="b p" id="admsend" disabled>Run</button></div>
+      <details style="margin-top:8px"><summary class="dim">Add a repeater or room by public key</summary>
+        <div class="row" style="margin-top:8px"><input id="admapub" maxlength="64" placeholder="64-character public key" style="flex:2" class="mono"><input id="admanm" maxlength="23" placeholder="Name" style="flex:1"><select id="admaty"><option value="repeater">Repeater</option><option value="room">Room</option></select><button class="b" id="admadd">Save</button></div></details>
+    </div></div>
   <div class="card glass"><h3>Trace route</h3>
     <div class="row"><input id="trpath" maxlength="64" placeholder="Repeater IDs, e.g. a1 or a1,b2" style="flex:1" class="mono"><label><input type="checkbox" id="trback" checked> and back</label><button class="b p" id="trgo">Trace</button></div>
     <div id="trout" style="margin-top:8px"><span class="dim" style="font-size:12px">Sends a trace out through the repeaters you list; each one adds the signal it heard. "And back" returns it the same way so you see both directions. Or press Trace on a neighbour below.</span></div></div>
@@ -693,6 +704,32 @@ function renderNbrs(){const now=nowEpoch();
   $("nbody").innerHTML=S.nbrs.slice().sort((a,b)=>b.snr-a.snr).map(n=>{const nd=nodeById(n.id)||{};
     return`<tr><td>${esc(nd.name||"(unknown)")}</td><td class="mono">${n.id.slice(0,2).toUpperCase()}</td><td>${n.snr.toFixed(1)}</td><td>${sigPill(n.snr)}</td><td>${fmtKm(distTo(nd))}</td><td>${ago(now-n.heard)} ago</td><td><button class="b" data-tr="${esc(n.id.slice(0,2))}">Trace</button></td></tr>`}).join("")||'<tr><td colspan="7" class="dim">No neighbours heard yet. Press Scan now, or wait for adverts.</td></tr>';
   $("allbody").innerHTML=S.nodes.slice().sort((a,b)=>b.seen-a.seen).map(n=>`<tr><td>${esc(n.name||"-")}</td><td>${ADV[n.type]||n.type}</td><td class="mono">${n.id.slice(0,2).toUpperCase()}</td><td>${n.hops}</td><td>${n.snr}</td><td>${fmtKm(distTo(n))}</td><td>${ago(now-n.seen)} ago</td></tr>`).join("")||'<tr><td colspan="7" class="dim">No adverts heard yet.</td></tr>'}
+// remote admin (chat identity signs in to another repeater or room)
+S.adm={state:0,lines:[]};const ADMQ=["ver","clock","neighbors","stats-core","stats-radio","stats-packets","get radio","get repeat","get txdelay","get af"];
+const ADM_RISKY=/^\s*(erase|reboot|clkreboot|poweroff|shutdown|password|set |clock sync|advert)/i;
+async function pollAdm(){try{S.adm=await api("/api/hx?k=admin")}catch(e){}}
+function renderAdm(){const D=S.dm,A=S.adm;$("admoff").hidden=!!D.on;$("admon").hidden=!D.on;if(!D.on)return;
+  const now=Date.now()/1000,list=D.contacts.filter(c=>c[5]===2||c[5]===3).sort((a,b)=>b[2]-a[2]),sel=$("admsel"),cur=sel.value||A.pub;
+  const opts=list.map(c=>`<option value="${esc(c[0])}">${esc(c[1]||c[0].slice(0,8))} (${esc(c[0].slice(0,2).toUpperCase())}) · ${c[5]===3?"room":"repeater"} · ${c[2]?ago(now-c[2])+" ago":"saved"}${c[3]>=0?" · "+c[3]+" hops":""}</option>`).join("");
+  if(sel.dataset.o!==opts){sel.innerHTML=opts||'<option value="">No repeaters heard yet</option>';sel.dataset.o=opts;if(cur&&list.some(c=>c[0]===cur))sel.value=cur}
+  const on=A.state===2&&A.admin;$("admcmd").disabled=$("admsend").disabled=!on;$("admquick").innerHTML=on?ADMQ.map(q=>`<button class="b" data-q="${esc(q)}">${esc(q)}</button>`).join(""):"";
+  $("admstat").textContent=A.state===1?"Signing in to "+(A.name||"the node")+"…":A.state===2?(A.admin?"Signed in to "+(A.name||"the node")+" as admin.":"Signed in as guest; commands need the admin password."):A.state===3?"Not signed in. See the log below.":"Pick a repeater or room this node has heard. The password goes out in one sign-in packet and is not kept anywhere.";
+  const log=$("admlog"),atEnd=log.scrollTop+log.clientHeight>=log.scrollHeight-20;
+  log.innerHTML=(A.lines||[]).map(l=>`<div style="color:${l[1]?"#4fe0ea":"var(--text)"}">${l[1]?"&gt; ":""}${esc(l[2])}</div>`).join("")||'<span class="dim">Replies show here.</span>';if(atEnd)log.scrollTop=1e9}
+async function admPost(o){const r=await fetch("/api/hx/admin",{method:"POST",body:new URLSearchParams(o)});if(r.status===401){showLogin();return"sign in again"}const j=await r.json().catch(()=>({}));return r.ok?null:(j.error||String(r.status))}
+async function admRefresh(){await pollAdm();renderAdm()}
+$("admgo").onclick=async()=>{const pub=$("admsel").value,pw=$("admpw").value;$("admpw").value="";if(!pub||!pw){$("admstat").textContent="Pick a node and type its password.";return}
+  const e=await admPost({op:"login",pub,password:pw});if(e){$("admstat").textContent="Not sent: "+e;return}$("admstat").textContent="Signing in…";
+  for(let i=0;i<14;i++){await new Promise(r=>setTimeout(r,2000));await admRefresh();if(S.adm.state!==1)break}};
+$("admout").onclick=async()=>{await admPost({op:"logout"});admRefresh()};
+async function admRun(t){t=(t||"").trim();if(!t)return;if(ADM_RISKY.test(t)&&!confirm("Run \""+t+"\" on "+(S.adm.name||"the remote node")+"? This changes or restarts that node."))return;
+  const e=await admPost({op:"cmd",text:t});if(e){$("admstat").textContent=e;return}$("admcmd").value="";
+  for(let i=0;i<8;i++){await new Promise(r=>setTimeout(r,1500));await admRefresh()}}
+$("admsend").onclick=()=>admRun($("admcmd").value);$("admcmd").onkeydown=e=>{if(e.key==="Enter")admRun($("admcmd").value)};
+$("admquick").onclick=e=>{const b=e.target.closest("[data-q]");if(b)admRun(b.dataset.q)};
+$("admadd").onclick=async()=>{const p=$("admapub").value.trim().toLowerCase();if(!/^[0-9a-f]{64}$/.test(p)){$("admstat").textContent="A public key is 64 characters, 0-9 and a-f.";return}
+  const e=await dmPost({op:"save",pub:p,name:$("admanm").value.trim(),type:$("admaty").value});if(!e){$("admapub").value=$("admanm").value="";await pollDm();$("admsel").dataset.o="";renderAdm();$("admsel").value=p}
+  $("admstat").textContent=e?"Not saved: "+e:"Saved. Pick it above to sign in."};
 // trace route
 function trPath(){const ids=$("trpath").value.toLowerCase().split(/[^0-9a-f]+/).filter(Boolean);if(!ids.length||ids.some(x=>!/^[0-9a-f]{2}$/.test(x)))return null;
   const p=$("trback").checked&&ids.length>1?ids.concat(ids.slice(0,-1).reverse()):ids;return p.length>16?null:p}
@@ -770,7 +807,7 @@ function dmName(pub){const c=S.dm.contacts.find(x=>x[0]===pub);return c&&c[1]?c[
 function renderDm(){const D=S.dm;$("dmoff").hidden=D.on;$("dmon").hidden=!D.on;if(!D.on)return;
   $("dmname").textContent=D.name;$("dmpub").textContent=D.pub.slice(0,16)+"…";
   const last={};for(const m of D.msgs.values())last[m.pub]=Math.max(last[m.pub]||0,m.seq);
-  const now=Date.now()/1000,list=[...D.contacts].sort((a,b)=>(last[b[0]]||0)-(last[a[0]]||0)||b[4]-a[4]||b[2]-a[2]);
+  const now=Date.now()/1000,list=D.contacts.filter(c=>!c[5]||c[5]===1).sort((a,b)=>(last[b[0]]||0)-(last[a[0]]||0)||b[4]-a[4]||b[2]-a[2]);
   for(const p in last)if(!list.find(c=>c[0]===p))list.push([p,"",0,-1,0]);
   $("dmlist").innerHTML=list.map(c=>{const unread=(last[c[0]]||0)>(D.read[c[0]]||0)&&[...D.msgs.values()].some(m=>m.pub===c[0]&&!m.out&&m.seq>(D.read[c[0]]||0));
     return`<div data-k="${esc(c[0])}" style="cursor:pointer;padding:7px 10px;border-radius:10px;border:1px solid ${c[0]===D.sel?"var(--accent,#3fd6e0)":"var(--faint)"};background:${c[0]===D.sel?"rgba(63,214,224,.12)":"rgba(255,255,255,.04)"}">
@@ -994,14 +1031,14 @@ $("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
 
 // ================================================================ loop
 function safe(f){try{f()}catch(e){console.error("Hoptics:",e)}}
-function render(){safe(renderOverview);if(tab==="system")safe(renderRegSrc);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();renderStats();S.roleDrawn=1}}}
+function render(){safe(renderOverview);if(tab==="system")safe(renderRegSrc);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs"){safe(renderNbrs);safe(renderAdm)}if(tab==="packets")safe(renderPk);if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();renderStats();S.roleDrawn=1}}}
 let started=false;
 async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);
   cli(["get repeat"]).then(r=>{S.repeat=/on/i.test(val(r[0]));render()}).catch(()=>{});
   setTab((location.hash||"#overview").slice(1).replace(/[^a-z]/g,""));
   setInterval(async()=>{await pollStats();if(!$("modal").classList.contains("on"))render()},3000);
-  setInterval(pollPk,2000);pollChat();pollDm();setInterval(async()=>{await pollChat();await pollDm();if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}},4000);
+  setInterval(pollPk,2000);pollChat();pollDm();pollRoom();pollAdm();setInterval(async()=>{await pollChat();await pollDm();await pollRoom();if(tab==="nbrs"&&S.adm.state)await pollAdm();if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}if(tab==="nbrs")safe(renderAdm)},4000);
   setInterval(async()=>{await pollNodes();await pollSelf();if(mapReady)renderMapNodes(false)},15000);
   setInterval(pollHist,60000);pollRegion();setInterval(pollRegion,1800000);$("showreg").onchange=()=>renderMapNodes(false)}
 (async()=>{try{await api("/api/hx?k=self");$("app").hidden=false;start()}catch(e){if(e.message!=="auth"){$("app").hidden=false;start()}}})();
