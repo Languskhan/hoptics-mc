@@ -32,8 +32,16 @@ struct Upload {
 };
 bool begin(Upload &u, size_t total, const char *&err);
 bool write(Upload &u, const uint8_t *data, size_t len, const char *&err);
-bool finish(Upload &u, const char *&err); // checks it, and starts it on the next restart
+bool finish(Upload &u, const char *&err); // checks it; it then waits for a tap on the node's own screen
 void abort(Upload &u);
-// set by a finished upload: the main loop restarts (after saving) once the page has its answer
+// a checked upload waits for someone at the node: the web PIN alone can't install firmware. The main loop asks on the
+// screen, then calls accept() (starts it on the next restart) or decline() (keeps the build running now)
+bool waiting();
+unsigned waitingKB(); // its size, for the question
+bool declined(); // the last upload was turned down on the screen, or nobody answered in time
+bool failed();   // Install was tapped but the update couldn't be selected to start
+bool accept(const char *&err);
+void decline();
+// set by accept(): the main loop restarts (after saving)
 extern volatile bool restartWanted;
 } // namespace hxota

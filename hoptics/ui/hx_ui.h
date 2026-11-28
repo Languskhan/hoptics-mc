@@ -53,6 +53,9 @@ class App : public Ui
     enum Tab { T_HOME, T_MAP, T_LIVE, T_NODES, T_CHATS, T_MORE, T_COUNT };
     void selectTab(int t);
     bool screenOn(void) const { return awake; }
+    // a firmware update came in from the web page: asks on the screen before it is installed (Model::updateAnswer)
+    void askUpdate(unsigned kb);
+    void askUpdateGone(void); // nobody answered in time: the question goes
     // the web page's data as JSON: what the page doesn't have yet (contacts version, last packet and message numbers)
     // plus what the node adds (Model::webExtras)
     void webJson(std::string &out, uint32_t contactsHave, uint32_t packetsHave, uint32_t msgsHave, uint32_t histHave);
@@ -185,9 +188,11 @@ class App : public Ui
     int moreOpen = -1;
     lv_obj_t *quickTile[4] = {}, *quickSw[4] = {}; // Wi-Fi, Bluetooth, GPS, Sound: a tap flips, a hold opens the page
     void refreshMoreHub(void);
-    lv_obj_t *askBox = nullptr, *askText = nullptr; // "Apply radio change?"
+    lv_obj_t *askBox = nullptr, *askTitle = nullptr, *askText = nullptr, *askYes = nullptr; // "Apply radio change?", "Install update?"
+    bool askIsUpdate = false;
     Radio askRadio{};
     void askRadioChange(const Radio &rd);
+    void askCancel(void);
     lv_obj_t *setScope = nullptr, *setPin = nullptr;
     // Wi-Fi and the street map (Settings)
     lv_obj_t *wfSwitch = nullptr, *wfStatus = nullptr, *wfList = nullptr, *wfSsid = nullptr, *wfPass = nullptr;
