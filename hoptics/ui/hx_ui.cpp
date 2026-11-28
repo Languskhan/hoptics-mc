@@ -1942,10 +1942,22 @@ void App::onMessage(const Message &msg)
         addLine(c.lines.back());
     } else {
         c.unread++;
-        char b[120];
-        snprintf(b, sizeof(b), "%s %s%s%s: %s", msg.viaNet ? LV_SYMBOL_WIFI : LV_SYMBOL_ENVELOPE, msg.conv.dm ? "" : c.title.c_str(),
-                 msg.conv.dm ? "" : " ", msg.from, l.text.c_str());
-        toast(b);
+        std::string b = msg.viaNet ? LV_SYMBOL_WIFI " " : LV_SYMBOL_ENVELOPE " ";
+        if (!msg.conv.dm)
+            b += c.title + " ";
+        b += msg.from;
+        b += ": ";
+        b += l.text;
+        // a long message is cut between whole characters (a cut through an emoji's bytes showed as a square), with "…"
+        constexpr size_t kToastMax = 160;
+        if (b.size() > kToastMax) {
+            size_t cut = kToastMax - 3; // room for "…" (3 bytes)
+            while (cut && ((uint8_t)b[cut] & 0xC0) == 0x80) // not inside a character's continuation bytes
+                cut--;
+            b.resize(cut);
+            b += "\xE2\x80\xA6";
+        }
+        toast(b.c_str());
         toastIsMsg = true; // a tap on it opens the conversation
         toastConv = msg.conv;
         wake();

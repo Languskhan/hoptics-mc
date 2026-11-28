@@ -39,7 +39,7 @@ $CXX -c harness.cpp -o $B/harness.o
 $CXX -c ../hoptics/ui/map/hx_tiles.cpp -o $B/hx_tiles.o
 for O in land port; do
   $CXX -I$B/boot_$O -c ../hoptics/ui/hx_bootscreen.cpp -o $B/boot_$O.o
-  g++ $B/hx_ui.o $B/harness.o $B/hx_tiles.o $B/boot_$O.o $B/hx_emoji_*.o $B/hx_text_*.o $B/liblvgl.a $B/libpngdec.a -lm -pthread -o $B/harness_$O
+  g++ $B/hx_ui.o $B/harness.o $B/hx_tiles.o $B/boot_$O.o $B/hx_emoji_*.o $B/hx_text_*.o $B/hx_sym_*.o $B/liblvgl.a $B/libpngdec.a -lm -pthread -o $B/harness_$O
 done
 rm -rf $B/tc_land $B/tc_port # saved tiles from the last run
 mkdir -p shots/320x240 shots/240x320

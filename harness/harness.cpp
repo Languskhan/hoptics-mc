@@ -579,6 +579,7 @@ int main(int argc, char **argv)
     msg(true, 0, "Hilltop Base", "Did the new repeater come up?", 200, 0);
     msg(false, 0, "José Müller", "Ça va? Zażółć gęślą jaźń, Ærø, Straße — 5 € „ok“", 150, 1);
     msg(false, 0, "Олена Київ", "Привіт! Як справи? Сәлем, Қазақстан", 120, 2);
+    msg(false, 1, "Relay Bot \xE2\x88\x86", "Path \xE2\x86\x92 3 hops \xE2\x86\x92 SNR \xE2\x89\x88 6 dB \xE2\x9C\x93 \xCE\xA9 \xC2\xB5W \xE2\x98\x85", 950, 1);
     msg(false, 1, "Trail Tracker", "Summit! \xF0\x9F\x8F\x94\xEF\xB8\x8F Signal is great up here \xF0\x9F\x93\xA1\xF0\x9F\x91\x8D\xF0\x9F\x98\x84 \xE2\x9D\xA4\xEF\xB8\x8F\xF0\x9F\x94\xA5", 900, 2);
     pump(4000); // let the message toast go
     app.selectTab(hx::App::T_HOME);
@@ -789,6 +790,36 @@ int main(int argc, char **argv)
         app.key(hx::K_BACK);
         pump(4500); // the toasts go
         printf("update question: install, back and no answer all right\n");
+    }
+    // every text size draws the symbols people put in mesh messages (a bot's arrows, a "∆" in a name, Greek, check
+    // marks) from a real glyph, not LVGL's empty box: through the emoji fonts and the plain text fonts alike
+    {
+        LV_FONT_DECLARE(hx_emoji_12)
+        LV_FONT_DECLARE(hx_emoji_14)
+        LV_FONT_DECLARE(hx_emoji_16)
+        LV_FONT_DECLARE(hx_text_10)
+        LV_FONT_DECLARE(hx_text_20)
+        LV_FONT_DECLARE(hx_text_28)
+        const lv_font_t *all[] = {&hx_text_10, &hx_emoji_12, &hx_emoji_14, &hx_emoji_16, &hx_text_20, &hx_text_28};
+        const uint32_t common[] = {0x2192, 0x2190, 0x2206, 0x03A9, 0x03BC, 0x2248, 0x2264, 0x2713, 0x2605, 'A', 0x00E9, 0x2019};
+        const uint32_t chat[] = {0x221E, 0x2500, 0x25B2, 0x2122, 0x2794, 0x00B2, 0x2082};
+        for (const lv_font_t *f : all)
+            for (uint32_t cp : common) {
+                lv_font_glyph_dsc_t g;
+                if (!lv_font_get_glyph_dsc(f, &g, cp, 0)) {
+                    printf("FAIL no glyph for U+%04X at %d px\n", (unsigned)cp, (int)lv_font_get_line_height(f));
+                    return 1;
+                }
+            }
+        for (const lv_font_t *f : {&hx_emoji_12, &hx_emoji_14, &hx_emoji_16})
+            for (uint32_t cp : chat) {
+                lv_font_glyph_dsc_t g;
+                if (!lv_font_get_glyph_dsc(f, &g, cp, 0)) {
+                    printf("FAIL no glyph for U+%04X in the chat fonts\n", (unsigned)cp);
+                    return 1;
+                }
+            }
+        printf("symbols: arrows, Greek, maths and marks have glyphs at every size\n");
     }
     // emoji in a channel chat
     hx::HarnessAccess::channel(app, 1);
