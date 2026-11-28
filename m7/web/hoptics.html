@@ -104,7 +104,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 <section id="t-graphs">
   <div class="row glass" style="padding:10px 14px;border-radius:14px"><span class="dim">Range</span>
     <select id="range"><option value="3600">1 hour</option><option value="21600">6 hours</option><option value="86400" selected>24 hours</option><option value="604800">7 days</option><option value="2592000">30 days</option></select>
-    <span class="dim" id="gnote"></span><span class="sp"></span><span class="dim">Click any point for the full picture of that 5 minutes.</span></div>
+    <span class="dim" id="gnote"></span><span class="sp"></span><span class="dim">Click any point for the full picture of that 5 minutes.</span><button class="b" id="hcsv">Download history (CSV)</button></div>
   <div class="card glass"><h3>Repeater health (0-100)</h3><div class="chart"><canvas id="g-health2"></canvas><div class="tip"></div></div></div>
   <div class="two">
     <div class="card glass"><h3>Noise floor (dBm)</h3><div class="chart"><canvas id="g-noise"></canvas><div class="tip"></div></div></div>
@@ -178,6 +178,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
   <div class="two">
     <div class="card glass"><h3>Packet types</h3><div id="i-types"></div></div>
     <div class="card glass"><h3>Repeaters that hand packets to this node</h3><div id="i-relay"></div></div>
+    <div class="card glass"><h3>Who carries this node</h3><div id="i-carry"></div><p class="dim" style="font-size:12px;margin-bottom:0" id="i-carrynote"></p></div>
     <div class="card glass"><h3>How far packets travelled (hops)</h3><div id="i-hops"></div></div>
     <div class="card glass"><h3>Signal of packets heard (SNR, dB)</h3><div id="i-snr"></div></div>
     <div class="card glass"><h3>Busiest channels</h3><div id="i-ch"></div></div>
@@ -470,6 +471,12 @@ async function pollPk(){if(S.paused)return;
 
 // ================================================================ numbers per 5-minute interval, and health
 // history row: t,up,noise,tx_ms,rx_ms,recv,sent,rf,rd,sf,sd,rxerr,uniq,dup,nbr_strong,nbr_snr4,mqtt_ok,mqtt_err,heap,temp
+$("hcsv").onclick=()=>{const rows=S.rows||[];if(!rows.length)return;
+  const cols=[["time",r=>new Date(r.t*1000).toISOString()],["health",r=>r.h],["noise_dbm",r=>r.noise],["tx_airtime_pct",r=>r.tx.toFixed(2)],["rx_airtime_pct",r=>r.rx.toFixed(2)],
+    ["packets_heard",r=>r.recv],["packets_sent",r=>r.sent],["flood_in",r=>r.rf],["direct_in",r=>r.rd],["flood_out",r=>r.sf],["direct_out",r=>r.sd],["rx_errors",r=>r.err],
+    ["copies_per_flood",r=>r.copies==null?"":r.copies.toFixed(2)],["strong_neighbours",r=>r.nb],["neighbour_snr",r=>r.nbsnr],["mqtt_ok",r=>r.mok],["mqtt_failed",r=>r.merr],["free_heap",r=>r.heap],["temp_c",r=>r.temp]];
+  const csv=[cols.map(c=>c[0]).join(",")].concat(rows.map(r=>cols.map(c=>{const v=c[1](r);return v==null||Number.isNaN(v)?"":v}).join(","))).join("\n");
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="hoptics-m7-history-"+new Date().toISOString().slice(0,10)+".csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)};
 function deltas(h){const out=[];
   for(let i=1;i<h.length;i++){const a=h[i-1],b=h[i],dt=b[1]-a[1];if(dt<=0||dt>3600)continue;
     const uniq=b[12]-a[12],dup=b[13]-a[13],recv=b[5]-a[5],err=b[11]-a[11],ok=b[16]-a[16],me=b[17]-a[17];
@@ -678,6 +685,8 @@ function renderWarnings(){
   if(air!=null&&air>25)W.push(["bad","Busy channel",`The radio was busy ${air.toFixed(1)} % of the last hour. Above about 25 % packets start to collide. The Advisor's timing changes help; if other repeaters cover this spot, repeat off helps most.`]);
   if(cp&&cp.per>=4)W.push(["warn","Many copies of each flood",`Each flood packet reaches this node ${cp.per.toFixed(1)} times. Several repeaters around you resend the same packets.`]);
   if(S.self){const me=S.self.id.slice(0,2);const same=S.nbrs.filter(n=>n.id.slice(0,2)===me);
+    const nb=new Set(same.map(n=>n.id.slice(0,2))),rclash=(S.region||[]).filter(n=>(n.type===2||n.type===3)&&n.id.slice(0,2)===me&&!S.self.id.startsWith(n.id)&&nowEpoch()-n.seen<30*86400);
+    if(rclash.length&&!same.length)W.push(["info","Short ID shared in the region",`${rclash.slice(0,4).map(n=>esc(n.name||n.id)).join(", ")}${rclash.length>4?" and "+(rclash.length-4)+" more":""} also start${rclash.length===1?"s":""} with ${me.toUpperCase()} on the regional map. Not a problem unless you're in range of each other; 2-byte path IDs (System tab) avoid it.`]);
     if(same.length)W.push(["warn","Same short ID as a neighbour",`${esc((nodeById(same[0].id)||{}).name||same[0].id)} also starts with ${me.toUpperCase()}, so paths and traces can't tell you apart. Change the key only before the node is in use.`])}
   if(S.hist.length&&S.hist[S.hist.length-1][0]<1700000000)W.push(["warn","Clock not set","The node has no network time yet, so times are wrong."]);
   if(hrs<24)W.push(["info","Still learning this spot",`${hrs.toFixed(1)} of 24 hours collected. Suggestions get more reliable after a full day.`]);
@@ -874,6 +883,12 @@ function renderInsights(){
   const rx=S.pk.filter(p=>!p[2]),count=f=>{const m=new Map();rx.forEach(p=>{const k=f(p);if(k!=null)m.set(k,(m.get(k)||0)+1)});return[...m].sort((a,b)=>b[1]-a[1])};
   hbars("i-types",count(p=>p[3]).map(([k,v])=>[TYPES[k]||k,v,TCOL[k]]),"#3fd6e0");
   hbars("i-relay",count(p=>p[5]>0?p[11].slice(-2):null).slice(0,10).map(([k,v])=>{const n=nodeByPrefix(k);return[(n&&n.name?esc(n.name)+" ":"")+`<span class="mono dim">${k.toUpperCase()}</span>`,v]}),"#46e08a");
+  {  // this node's own flood packets heard coming back: who picked them up first, and how far they got
+    const mine=new Set(S.pk.filter(p=>p[2]&&p[4]<2).map(p=>p[10])),echo=rx.filter(p=>mine.has(p[10])&&p[5]>0);
+    const first=new Map();echo.forEach(p=>{if(p[5]<=8){const k=p[11].slice(0,2);first.set(k,(first.get(k)||0)+1)}});
+    hbars("i-carry",[...first].sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,v])=>{const n=nodeByPrefix(k);return[(n&&n.name?esc(n.name)+" ":"")+`<span class="mono dim">${k.toUpperCase()}</span>`,v]}),"#f4b740");
+    const far=echo.length?Math.max(...echo.map(p=>p[5])):0;
+    $("i-carrynote").textContent=mine.size?`${mine.size} flood packets sent; ${new Set(echo.map(p=>p[10])).size} heard coming back, from up to ${far} hop${far===1?"":"s"} out. The first repeater on each echoed path is the one that heard this node.`:"Shows up after this node sends floods (adverts, channel messages)."}
   hbars("i-hops",count(p=>p[4]<2?Math.min(p[5],10):null).sort((a,b)=>a[0]-b[0]).map(([k,v])=>[k===10?"10+ hops":k+" hop"+(k===1?"":"s"),v]),"#a78bfa");
   hbars("i-snr",count(p=>Math.max(-20,Math.min(15,Math.floor(p[8]/4/5)*5))).sort((a,b)=>b[0]-a[0]).map(([k,v])=>[k+" to "+(k+5)+" dB",v,k>=5?"#46e08a":k>=0?"#f4b740":"#ff6b6b"]),"#5b9dff");
   hbars("i-ch",count(p=>p[3]===5||p[3]===6?p[7]:null).slice(0,10).map(([k,v])=>[esc(chanName(k)),v]),"#3fd6e0");
@@ -994,7 +1009,7 @@ function renderRole(){const now=roleNow();
 async function renderAlerts(){let a;try{a=await api("/api/hx?k=alerts")}catch(e){return}
   const f=a.flags||0,cb=(bit,label)=>`<label style="display:block;margin:4px 0"><input type="checkbox" data-bit="${bit}" ${f&bit?"checked":""}> ${label}</label>`;
   $("alertcard").innerHTML=`<p class="dim">${a.set?`On: sending to the webhook ending in <code>…${esc(a.hint)}</code>. Sent today: ${a.today}${a.queued?`, ${a.queued} waiting`:""}.`:"Off. Add a Discord webhook link to turn alerts on (Discord: channel settings, Integrations, Webhooks, New Webhook, Copy Webhook URL)."}${a.err?` <span style="color:var(--red)">Last error: ${esc(a.err)}</span>`:""}</p>
-  ${cb(1,"A repeater this node hears directly goes quiet for 6 hours, and when it comes back")}${cb(2,"Daily summary: packets, airtime, noise, nodes heard, MQTT")}${cb(4,"A new node shows up that isn't on your regional map yet (any new node, if no regional map is set)")}${cb(8,"This spot changes: more repeaters heard well, a busier channel, or a louder noise floor than yesterday")}
+  ${cb(1,"A repeater this node hears directly goes quiet for 6 hours, and when it comes back")}${cb(2,"Daily summary: packets, airtime, noise, nodes heard, MQTT")}${cb(4,"A new node shows up that isn't on your regional map yet (any new node, if no regional map is set)")}${cb(16,"The chip runs hot (80 °C or more), and when it cools down again")}${cb(8,"This spot changes: more repeaters heard well, a busier channel, or a louder noise floor than yesterday")}
   <div class="row" style="margin-top:8px"><input id="aurl" type="password" autocomplete="off" placeholder="${a.set?"New webhook link (leave empty to keep)":"https://discord.com/api/webhooks/..."}" style="flex:1;min-width:240px">
   <button class="b p" id="asave">Save</button>${a.set?'<button class="b" id="atest">Send test</button><button class="b" id="aoff">Remove link</button>':""}</div>
   <p class="dim" style="font-size:12px">At most one message a minute and 40 a day. Node names are sent as plain text and can't ping anyone.</p><div id="amsg" class="dim"></div>`;

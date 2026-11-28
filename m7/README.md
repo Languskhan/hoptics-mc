@@ -23,6 +23,10 @@ with the Hoptics dashboard at `http://<node-ip>/hoptics`.
 - Room posts on the Chat tab in the room roles: read the last 32 posts and post as the room
 - Remote admin on the Neighbours tab: sign in to another repeater or room with its password (sent once, never stored) and run commands, with quick buttons for status and stats
 - Path ID size on the System tab: 1, 2 or 3-byte IDs in this node's adverts (MeshCore 1.14+), kept in settings backups
+- Insights: "Who carries this node", the repeaters that pick up this node's own floods, from the echoes it hears back
+- Mesh check: warns when this node's short ID is shared by a repeater on the regional map
+- Graphs: download the 30-day history as CSV
+- Discord alert when the chip runs hot (80 C) and when it cools down
 - Stats feed for Home Assistant / Prometheus (read-only token); automatic rollback after a bad update
 - Web page always on while the network is up; advert at boot
 

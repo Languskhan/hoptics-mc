@@ -321,6 +321,20 @@ void addSample(const Sample& s) {
   }
   saveSample(saved);  // flash write outside the lock, so the web server is never held up by it
   spotCheck();
+  {  // chip temperature: alert at 80 C, and again once it is back under 70 C
+    static bool hot = false;
+    if (!hot && saved.temp >= 80) {
+      hot = true;
+      char msg[96];
+      snprintf(msg, sizeof(msg), "Running hot: chip at %d C. Check airflow and sun on the box.", saved.temp);
+      alert(ALERT_HOT, msg);
+    } else if (hot && saved.temp < 70) {
+      hot = false;
+      char msg[64];
+      snprintf(msg, sizeof(msg), "Cooled down: chip at %d C.", saved.temp);
+      alert(ALERT_HOT, msg);
+    }
+  }
   static uint32_t n_since = 0;
   if (++n_since >= 288 && alertsWanted(ALERT_DAILY)) {  // every 24 h of samples
     n_since = 0;
