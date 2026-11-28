@@ -310,7 +310,7 @@ esp_err_t onUpdate(httpd_req_t *r)
         snprintf(b, sizeof(b), "{\"error\":\"%s\"}", err);
         return sendJson(r, "400 Bad Request", b);
     }
-    return sendJson(r, "200 OK", "{\"ok\":true}");
+    return sendJson(r, "200 OK", "{\"ok\":true,\"confirm\":true}"); // installed only after a tap on the node's screen
 }
 // a channel message from the page: POST /api/send {"c":<channel>,"text":"..."}. Sent by the main loop, as from
 // the screen, so it shows in the node's chats too.

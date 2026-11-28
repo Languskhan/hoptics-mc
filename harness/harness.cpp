@@ -182,6 +182,8 @@ class Fake : public hx::Model
         rad = r;
         return true;
     }
+    int updateAns = -1; // the last answer to the update question: 1 install, 0 keep this build
+    void updateAnswer(bool install) override { updateAns = install; }
     bool bluetoothEnabled() const override { return bt; }
     uint32_t bluetoothPin() const override { return 482913; }
     bool setBluetooth(bool on) override
@@ -745,6 +747,48 @@ int main(int argc, char **argv)
             printf("FAIL Cancel on the radio question\n");
             return 1;
         }
+    }
+    // a firmware update from the web page asks on the screen: Install and Back answer it, a timeout only closes it
+    {
+        app.askUpdate(1536);
+        pump(100);
+        if (!hx::HarnessAccess::asking(app)) {
+            printf("FAIL the update question must show\n");
+            return 1;
+        }
+        shot("07g_ask_update");
+        hx::HarnessAccess::askApply(app);
+        pump(100);
+        if (hx::HarnessAccess::asking(app) || model.updateAns != 1) {
+            printf("FAIL Install on the update question\n");
+            return 1;
+        }
+        app.askUpdate(1536);
+        pump(100);
+        app.key(hx::K_BACK);
+        pump(100);
+        if (hx::HarnessAccess::asking(app) || model.updateAns != 0) {
+            printf("FAIL Back on the update question\n");
+            return 1;
+        }
+        model.updateAns = -1;
+        app.askUpdate(1536);
+        pump(100);
+        app.askUpdateGone();
+        pump(100);
+        if (hx::HarnessAccess::asking(app) || model.updateAns != -1) {
+            printf("FAIL the update question going unanswered\n");
+            return 1;
+        }
+        // the radio question afterwards is the radio question again
+        hx::HarnessAccess::more(app, hx::App::M_RADIO);
+        lv_dropdown_set_selected(hx::HarnessAccess::preset(app), 6);
+        lv_obj_send_event(hx::HarnessAccess::preset(app), LV_EVENT_VALUE_CHANGED, nullptr);
+        pump(100);
+        shot("07h_settings_ask_radio_again");
+        app.key(hx::K_BACK);
+        pump(4500); // the toasts go
+        printf("update question: install, back and no answer all right\n");
     }
     // emoji in a channel chat
     hx::HarnessAccess::channel(app, 1);

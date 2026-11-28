@@ -2227,6 +2227,7 @@ void App::buildMore(lv_obj_t *p)
     lv_obj_t *ab = card(askBox, "APPLY RADIO CHANGE?");
     lv_obj_set_width(ab, std::min<int32_t>(W() - 24, 300));
     lv_obj_center(ab);
+    askTitle = lv_obj_get_child(ab, 0);
     askText = label(ab, F12, C_TEXT, "");
     wrap(askText);
     lv_obj_t *abr = plain(ab);
@@ -2234,17 +2235,10 @@ void App::buildMore(lv_obj_t *p)
     row(abr, PAD);
     lv_obj_t *ac = button(abr, "Cancel", C_MUTED, LV_PCT(48), 30);
     lv_obj_set_flex_grow(ac, 1);
-    lv_obj_add_event_cb(
-        ac,
-        [](lv_event_t *) {
-            lv_obj_add_flag(self->askBox, LV_OBJ_FLAG_HIDDEN);
-            self->refreshSettings(); // the lists show the radio as it still is
-            self->refocus(self->setPreset);
-        },
-        LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *aa = button(abr, LV_SYMBOL_OK " Apply", C_AMBER, LV_PCT(48), 30);
-    lv_obj_set_flex_grow(aa, 1);
-    lv_obj_add_event_cb(aa, [](lv_event_t *) { self->askApply(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(ac, [](lv_event_t *) { self->askCancel(); }, LV_EVENT_CLICKED, nullptr);
+    askYes = button(abr, LV_SYMBOL_OK " Apply", C_AMBER, LV_PCT(48), 30);
+    lv_obj_set_flex_grow(askYes, 1);
+    lv_obj_add_event_cb(askYes, [](lv_event_t *) { self->askApply(); }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *cd = card(moreSec[M_RADIO], "THIS RADIO");
     lv_obj_t *r = fieldRow(cd, "Name others see");
@@ -2889,14 +2883,64 @@ void App::askRadioChange(const Radio &rd)
     setTextFmt(askText, "%.3f MHz, %g kHz, SF%u, CR 4/%u, %d dBm.\nEveryone on your mesh must use the same settings, or you "
                         "won't hear each other.%s%s",
                rd.freq, rd.bw, (unsigned)rd.sf, (unsigned)rd.cr, (int)rd.txPower, warn.empty() ? "" : "\n\n", warn.c_str());
+    askIsUpdate = false;
+    lv_label_set_text(askTitle, "APPLY RADIO CHANGE?");
+    lv_label_set_text(lv_obj_get_child(askYes, 0), LV_SYMBOL_OK " Apply");
     lv_obj_remove_flag(askBox, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(askBox);
     refocus();
 }
 
+// a firmware update from the web page: whoever has the PIN can send one, only someone holding the node can install it
+void App::askUpdate(unsigned kb)
+{
+    if (askIsUpdate && !lv_obj_has_flag(askBox, LV_OBJ_FLAG_HIDDEN))
+        return;
+    if (!lv_obj_has_flag(askBox, LV_OBJ_FLAG_HIDDEN)) { // a radio change still open is dropped: the update is the more urgent question
+        askCancel();
+        toast("Radio change not applied");
+    }
+    askIsUpdate = true;
+    lv_label_set_text(askTitle, "INSTALL UPDATE?");
+    setTextFmt(askText, "New firmware (%u KB) came from the web page. Install it only if you sent it: the node restarts into it.", kb);
+    lv_label_set_text(lv_obj_get_child(askYes, 0), LV_SYMBOL_DOWNLOAD " Install");
+    wake();
+    lv_obj_remove_flag(askBox, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(askBox);
+    refocus(lv_obj_get_child(lv_obj_get_parent(askYes), 0)); // the cursor starts on Cancel
+}
+
+void App::askUpdateGone(void)
+{
+    if (!askIsUpdate || lv_obj_has_flag(askBox, LV_OBJ_FLAG_HIDDEN))
+        return;
+    lv_obj_add_flag(askBox, LV_OBJ_FLAG_HIDDEN);
+    askIsUpdate = false;
+    toast("Update not installed: nobody answered");
+    refocus();
+}
+
+void App::askCancel(void)
+{
+    lv_obj_add_flag(askBox, LV_OBJ_FLAG_HIDDEN);
+    if (askIsUpdate) {
+        askIsUpdate = false;
+        m.updateAnswer(false);
+        toast("Update not installed");
+        return refocus();
+    }
+    refreshSettings(); // the lists show the radio as it still is
+    refocus(setPreset);
+}
+
 void App::askApply(void)
 {
     lv_obj_add_flag(askBox, LV_OBJ_FLAG_HIDDEN);
+    if (askIsUpdate) {
+        askIsUpdate = false;
+        m.updateAnswer(true);
+        return refocus();
+    }
     const std::string warn = bandWarning(askRadio);
     toast(!m.setRadio(askRadio) ? "Couldn't change the radio settings" : warn.empty() ? LV_SYMBOL_OK " Radio settings saved" : warn.c_str());
     refreshSettings();

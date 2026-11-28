@@ -138,6 +138,20 @@ void UITask::loop()
         kept = true;
         hxota::confirm();
     }
+    static uint32_t askedAt = 0; // a web update waiting for a tap: asked (again if the screen was rebuilt), dropped after two minutes
+    if (!hxota::waiting())
+        askedAt = 0;
+    else if (!askedAt || millis() - askedAt <= 120000) {
+        if (!askedAt)
+            askedAt = millis() | 1;
+        if (app)
+            app->askUpdate(hxota::waitingKB()); // no-op while the question shows
+    } else {
+        hxota::decline();
+        hxlog::line("update: nobody answered on the screen");
+        if (app)
+            app->askUpdateGone();
+    }
     static uint32_t restartAt = 0;
     if (hxota::restartWanted) { // an update came in: restart once the page has its answer
         if (!restartAt)
@@ -1945,6 +1959,16 @@ void UITask::setWeb(bool on)
     lastClockCheck = 0; // start or stop on the next pass
 }
 
+void UITask::updateAnswer(bool install)
+{
+    const char *err = nullptr;
+    if (!install) {
+        hxota::decline();
+        hxlog::line("update: turned down on the screen");
+    } else if (!hxota::accept(err) && app)
+        app->toast(err);
+}
+
 void UITask::newWebPin(void)
 {
     snprintf(webPin, sizeof(webPin), "%06lu", (unsigned long)(esp_random() % 1000000));
@@ -2074,8 +2098,9 @@ void UITask::webExtras(std::string &o, uint32_t histHave) const
              (unsigned)getCpuFrequencyMhz(), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getHeapSize(), (unsigned)ESP.getFreePsram(),
              (unsigned)ESP.getPsramSize(), wifiOn && WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : 0);
     o += b;
-    snprintf(b, sizeof(b), ",\"built\":\"%s %s\",\"slot\":\"%s\",\"trial\":%s", __DATE__, __TIME__,
-             hxota::slot(), hxota::trial() ? "true" : "false");
+    snprintf(b, sizeof(b), ",\"built\":\"%s %s\",\"slot\":\"%s\",\"trial\":%s,\"update\":\"%s\"", __DATE__, __TIME__,
+             hxota::slot(), hxota::trial() ? "true" : "false",
+             hxota::waiting() ? "waiting" : hxota::declined() ? "declined" : hxota::failed() ? "failed" : hxota::restartWanted ? "restarting" : "");
     o += b;
     const hoptics::MapStatus ms = hoptics::TileMap::get().status();
     snprintf(b, sizeof(b), ",\"tiles\":%u,\"tilesKB\":%u,\"tilesCapKB\":%u,\"tilesCard\":%s", (unsigned)ms.savedTiles, (unsigned)ms.savedKB,

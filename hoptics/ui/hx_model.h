@@ -284,6 +284,8 @@ class Model
     virtual WebStatus web() const { return WebStatus(); }
     virtual void setWeb(bool on) { (void)on; }
     virtual void newWebPin() {}
+    // a firmware update sent from the web page, answered on the screen: true installs it, false keeps this build
+    virtual void updateAnswer(bool install) { (void)install; }
     // a channel whose key anyone can work out (Public, or a #hashtag channel whose key comes from its name): its key in
     // hex, for the page to read that channel off the live feed. Private channels' keys never leave the radio
     virtual bool channelWebKey(size_t i, char out[33]) const { (void)i, (void)out; return false; }

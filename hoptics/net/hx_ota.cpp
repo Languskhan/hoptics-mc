@@ -20,7 +20,17 @@ extern "C" __attribute__((used)) const char hxBoardTag[] = "HXBOARD:" HX_BOARD_I
 namespace hxota
 {
 volatile bool restartWanted = false;
-}
+namespace
+{
+enum : uint8_t { NONE, WAITING, DECLINED, FAILED };
+volatile uint8_t ask = NONE; // set by the web server's task, answered on the main loop
+volatile unsigned askKB = 0;
+} // namespace
+bool waiting() { return ask == WAITING; }
+unsigned waitingKB() { return askKB; }
+bool declined() { return ask == DECLINED; }
+bool failed() { return ask == FAILED; }
+} // namespace hxota
 
 #if defined(ARDUINO_ARCH_ESP32)
 #include <Arduino.h>
@@ -42,6 +52,15 @@ namespace hxota
 namespace
 {
 const char *const NS = "hx_ota", *const KEY = "slot0"; // the first slot's build when a web update went to the second
+const char *const HELD = "held"; // a web upload nobody has tapped Install for: never started as a USB flash
+
+// erases the start of the other slot, so a build written there but not installed (refused part way, turned down,
+// unanswered) can't be started later by bootCheck or the bootloader: without its header it is no app at all
+void wipe()
+{
+    if (const esp_partition_t *p = esp_ota_get_next_update_partition(nullptr))
+        esp_partition_erase_range(p, 0, 4096); // one flash sector
+}
 
 bool pendingVerify()
 {
@@ -102,13 +121,16 @@ void bootCheck()
     nvs_handle_t h;
     if (nvs_open(NS, NVS_READONLY, &h) != ESP_OK)
         return;
-    uint8_t was[32];
-    size_t n = sizeof(was);
+    uint8_t was[32], held[32];
+    size_t n = sizeof(was), hn = sizeof(held);
     const bool known = nvs_get_blob(h, KEY, was, &n) == ESP_OK && n == sizeof(was);
+    const bool isHeld = nvs_get_blob(h, HELD, held, &hn) == ESP_OK && hn == sizeof(held);
     nvs_close(h);
     esp_app_desc_t d;
     if (!known || esp_ota_get_partition_description(first, &d) != ESP_OK || !memcmp(d.app_elf_sha256, was, sizeof(was)))
         return;
+    if (isHeld && !memcmp(d.app_elf_sha256, held, sizeof(held)))
+        return; // a web upload that was turned down or never answered, not a USB flash
     hxlog::line("update: a new build was flashed over USB, starting it");
     if (esp_ota_set_boot_partition(first) == ESP_OK)
         esp_restart();
@@ -141,6 +163,11 @@ bool begin(Upload &u, size_t total, const char *&err)
         return err = "That file is too big to be firmware for this board", false;
     if (pendingVerify())
         return err = "The last update is still on trial: wait a minute after it starts", false;
+    if (ask == WAITING)
+        return err = "The last upload is still waiting for a tap on the node's screen", false;
+    if (restartWanted)
+        return err = "The node is restarting into an update", false;
+    ask = NONE;
     u.total = total;
     return true;
 }
@@ -186,8 +213,33 @@ bool finish(Upload &u, const char *&err)
     }
     const esp_ota_handle_t h = (esp_ota_handle_t)u.handle;
     u.open = false;
-    if (esp_ota_end(h) != ESP_OK) // checks the image's own checksum and hash
+    if (esp_ota_end(h) != ESP_OK) { // checks the image's own checksum and hash
+        wipe();
         return err = "The file was damaged on the way: try again", false;
+    }
+    // marked as held before anything else, so a restart before the answer can't start it (bootCheck)
+    esp_app_desc_t d;
+    nvs_handle_t nh;
+    bool held = false;
+    if (esp_ota_get_partition_description(esp_ota_get_next_update_partition(nullptr), &d) == ESP_OK &&
+        nvs_open(NS, NVS_READWRITE, &nh) == ESP_OK) {
+        held = nvs_set_blob(nh, HELD, d.app_elf_sha256, sizeof(d.app_elf_sha256)) == ESP_OK && nvs_commit(nh) == ESP_OK;
+        nvs_close(nh);
+    }
+    if (!held) {
+        wipe();
+        return err = "Couldn't save the update's details: try again", false;
+    }
+    askKB = (unsigned)(u.total / 1024);
+    hxlog::line("update: received and checked, %u KB, waiting for a tap on the screen", askKB);
+    ask = WAITING;
+    return true;
+}
+
+bool accept(const char *&err)
+{
+    if (ask != WAITING)
+        return err = "No update is waiting", false;
     const esp_partition_t *part = esp_ota_get_next_update_partition(nullptr), *run = esp_ota_get_running_partition();
     nvs_handle_t nh;
     if (nvs_open(NS, NVS_READWRITE, &nh) == ESP_OK) { // what the first slot holds now, to notice a USB flash later
@@ -196,21 +248,35 @@ bool finish(Upload &u, const char *&err)
             nvs_set_blob(nh, KEY, d.app_elf_sha256, sizeof(d.app_elf_sha256));
         else
             nvs_erase_key(nh, KEY);
+        nvs_erase_key(nh, HELD); // tapped: no longer held
         nvs_commit(nh);
         nvs_close(nh);
     }
-    if (esp_ota_set_boot_partition(part) != ESP_OK)
+    if (esp_ota_set_boot_partition(part) != ESP_OK) {
+        ask = FAILED;
         return err = "Couldn't select the update to start", false;
-    hxlog::line("update: received and checked, %u KB, starting it on trial", (unsigned)(u.total / 1024));
+    }
+    ask = NONE;
+    hxlog::line("update: accepted on the screen, starting it on trial");
     restartWanted = true;
     return true;
 }
 
 void abort(Upload &u)
 {
-    if (u.open)
+    if (u.open) { // refused part way: what was written must not start later
         esp_ota_abort((esp_ota_handle_t)u.handle);
+        wipe();
+    }
     u.open = false;
+}
+
+void decline()
+{
+    if (ask != WAITING)
+        return;
+    wipe();
+    ask = DECLINED;
 }
 } // namespace hxota
 
@@ -226,7 +292,9 @@ const char *slot() { return "pc"; }
 bool begin(Upload &, size_t, const char *&err) { return err = "No updates on a PC", false; }
 bool write(Upload &, const uint8_t *, size_t, const char *&err) { return err = "No updates on a PC", false; }
 bool finish(Upload &, const char *&err) { return err = "No updates on a PC", false; }
+bool accept(const char *&err) { return err = "No updates on a PC", false; }
 void abort(Upload &) {}
+void decline() {}
 } // namespace hxota
 
 #endif

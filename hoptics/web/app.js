@@ -974,7 +974,7 @@ V.device = {
     sw.append(this.feedBtn, logBtn); net.append(sw);
     const fw = card("Firmware update", "c6", el("span", "dim", "over Wi-Fi, on trial"));
     this.fwInfo = fw.appendChild(el("div", "kvlist"));
-    const note = el("p", "muted", "Choose the file ending in .update.bin for this board. The node checks it, restarts into it and keeps it after a healthy minute; if it doesn't start properly, the node goes back to the build it has now by itself.");
+    const note = el("p", "muted", "Choose the file ending in .update.bin for this board. The node checks it, then asks on its own screen before installing, so someone has to be at the node to tap Install. It then restarts into the update and keeps it after a healthy minute; if it doesn't start properly, the node goes back to the build it has now by itself.");
     note.style.cssText = "margin:10px 0;font-size:12.5px";
     const row = el("div"); row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center";
     const pick = el("input"); pick.type = "file"; pick.accept = ".bin"; pick.style.cssText = "flex:1;min-width:0;font-size:12.5px;color:var(--muted)";
@@ -995,7 +995,8 @@ V.device = {
       Poll.hold = Date.now() + 600000;
       const r = await API.update(f, (p) => { bi.style.width = Math.round(p * 100) + "%"; this.fwMsg.textContent = "Sending " + Math.round(p * 100) + "%"; });
       go.textContent = "Install"; pick.disabled = false;
-      if (r.ok) { this.fwMsg.textContent = "Checked and installed. The node is restarting into it; this page reconnects by itself."; Poll.hold = Date.now() + 12000; toast("Update installed, restarting"); }
+      if (r.ok && r.confirm) { this.fwMsg.textContent = "Checked. Tap Install on the node's screen within two minutes; the node then restarts into it and this page reconnects by itself."; Poll.hold = 0; this.fwAsked = Date.now(); this.fwSlot = me().slot || ""; toast("Confirm the update on the node"); }
+      else if (r.ok) { this.fwMsg.textContent = "Checked and installed. The node is restarting into it; this page reconnects by itself."; Poll.hold = Date.now() + 12000; toast("Update installed, restarting"); }
       else { Poll.hold = 0; go.disabled = false; bar.style.display = "none"; this.fwMsg.textContent = "Not installed: " + r.error; }
     };
     row.append(pick, go); fw.append(note, row, bar, this.fwMsg);
@@ -1113,6 +1114,16 @@ V.device = {
     this.net.append(this.feedBtn.parentNode);
     kv(this.fwInfo, [["Running", (n.fw || "-") + (n.built ? ", built " + n.built : "")], ["App slot", n.slot],
       ["State", n.trial === undefined ? "" : n.trial ? "on trial: kept after a healthy minute" : "kept"]]);
+    // an upload waiting for a tap on the node: judged only on data fetched after the upload's reply (a render can
+    // come from older data), and by the app slot noted at the reply, since an installed build runs from the other
+    const fwDone = (t) => { this.fwAsked = 0; this.fwMsg.textContent = t; };
+    if (this.fwAsked && this.fwSlot && S.polledAt > this.fwAsked) {
+      if (n.update === "declined") fwDone("Not installed: it was turned down on the node's screen, or nobody answered in time.");
+      else if (n.update === "failed") fwDone("Not installed: the node couldn't select the update after Install was tapped. Try sending it again.");
+      else if (n.update === "restarting") { fwDone("Installed on the node's screen. The node is restarting into it; this page reconnects by itself."); Poll.hold = Date.now() + 12000; }
+      else if (!n.update && n.slot && n.slot !== this.fwSlot) fwDone("Installed on the node's screen; the node is running it now.");
+      else if (!n.update && n.slot === this.fwSlot) fwDone("Not installed: the node restarted before it was installed, or the new build didn't start and the node went back to this one.");
+    }
     kv(this.tlInfo, [[n.tilesCard ? "Saved on the card" : "Saved on the node", n.tiles === undefined ? "" : n.tiles + " tiles, " + fmtSize(n.tilesKB * 1024) + " of " + fmtSize(n.tilesCapKB * 1024)]]);
     // the backups on the card, to restore one without downloading it first
     if (n.sd && !this.bkList && !DEMO) {
@@ -1234,6 +1245,7 @@ const Poll = {
       if (was > 3) UI.chips();
       const first = !S.snap;
       takeSnapshot(d);
+      S.polledAt = Date.now(); // (the Firmware update card waits for data fetched after its upload)
       if (first) showApp();
       if (d.feed && d.feed.url) Feed.start(d.feed.url);
       UI.render();
