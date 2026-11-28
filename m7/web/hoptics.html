@@ -198,6 +198,10 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 </section>
 <section id="t-system">
   <div class="two">
+    <div class="card glass"><h3>Path ID size</h3>
+      <p class="dim" style="margin-top:0">How many bytes of this node's key it puts in packet paths when it adverts. Bigger IDs stop two repeaters being mistaken for each other, at the cost of fewer hops a flood can carry. Every size is still forwarded on MeshCore 1.14 and newer; nodes older than that may drop multi-byte paths, so match what your mesh uses.</p>
+      <div class="row"><select id="phm"><option value="0">1 byte: 256 IDs, floods up to 64 hops</option><option value="1">2 bytes: 65,536 IDs, up to 32 hops</option><option value="2">3 bytes: 16.7 million IDs, up to 21 hops</option></select><button class="b" id="phmset">Apply</button></div>
+      <div id="phmmsg" class="dim" style="margin-top:8px;font-size:13px">Reading…</div></div>
     <div class="card glass"><h3>Regional map</h3>
       <p class="dim" style="margin-top:0">The CoreScope analyzer for your area. It names repeaters on the map and in packet paths, and tells the new-node alert who is already known. Leave blank to turn it off.</p>
       <div class="row"><input id="regurl" maxlength="95" placeholder="https://your-area-corescope.example" style="flex:1"><button class="b" id="regsave">Save</button></div>
@@ -398,6 +402,12 @@ function cli(cmds){
   const p=cliChain.then(run,run);cliChain=p.catch(()=>{});return p}
 const val=r=>String(r||"").replace(/^\s*-?>\s*/,"").replace(/^>\s*/,"").trim();
 
+// path ID size (path.hash.mode, through the CLI: it isn't in the base settings page)
+let phmRead=false;async function readPhm(){if(phmRead)return;phmRead=true;try{const r=await cli(["get path.hash.mode"]);const v=val(r[0]);
+  if(/^[0-2]$/.test(v)){$("phm").value=v;$("phmmsg").textContent="Now: "+(+v+1)+" byte"+(v==="0"?"":"s")+"."}else $("phmmsg").textContent="This firmware doesn't report it ("+v+")."}catch(e){phmRead=false;$("phmmsg").textContent="Couldn't read it."}}
+$("phmset").onclick=async()=>{const v=$("phm").value;if(!/^[0-2]$/.test(v))return;
+  if(!confirm("Use "+(+v+1)+"-byte path IDs for this node's adverts? Check the rest of your mesh runs MeshCore 1.14 or newer first."))return;
+  try{const r=await cli(["set path.hash.mode "+v]);const t=val(r[0]);$("phmmsg").textContent=/ok/i.test(t)?"Set to "+(+v+1)+" byte"+(v==="0"?"":"s")+".":"Not set: "+t}catch(e){$("phmmsg").textContent="Not set: "+e.message}};
 // regional map source
 let regShown=null;function renderRegSrc(){const v=regSrc();if(regShown!==v&&document.activeElement!==$("regurl")){$("regurl").value=v;regShown=v}
   const ri=S.regionInfo;$("regmsg").textContent=!v?"Off.":ri&&ri.count?ri.count+" nodes, updated "+ago(ri.age)+" ago.":ri&&ri.err?"Not loaded: "+ri.err:"Loading (takes a minute)…"}
@@ -408,7 +418,8 @@ $("regsave").onclick=async()=>{const u=$("regurl").value.trim().replace(/\/+$/,"
 const BK_KEYS=["name","lat","lon","radio","tx","af","rxdelay","txdelay","cad","radio.rxgain","repeat","advert.interval","flood.advert.interval",
   "flood.max","flood.max.advert","flood.max.unscoped","loop.detect","wifi.ssid","wifi.powersave","wifi.txpower","mqtt.origin","mqtt.iata","mqtt.status",
   "mqtt.packets","mqtt.raw","mqtt.tx","mqtt.rx","mqtt.advert.verify","mqtt.interval","mqtt.neighbors","mqtt.neighbors.interval","mqtt.ntp","mqtt.owner",
-  "mqtt.email","timezone","timezone.offset","snmp"];
+  "mqtt.email","timezone","timezone.offset","snmp","path.hash.mode"];
+const BK_CLI=["path.hash.mode"];   // not in the base settings API: restored with the CLI
 for(let i=1;i<=6;i++)for(const f of["preset","server","port","username","topic","audience","filter","iata","neighbors"])BK_KEYS.push("mqtt"+i+"."+f);
 const bkValOk=v=>typeof v==="string"&&v.length<=120&&!/[\r\n]/.test(v);
 $("bkdl").onclick=async()=>{const m=$("bkmsg");m.textContent="Reading settings…";const out={};
@@ -424,7 +435,9 @@ $("bkfile").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f
   const keys=Object.keys(set);if(!keys.length){m.textContent="Nothing in that file this node can restore.";return}
   if(!confirm("Restore "+keys.length+" settings from "+(j.from||"a backup")+"? This changes the radio and network settings on this node, then you restart it."))return;
   m.textContent="Restoring…";let bad=[];
-  try{for(let i=0;i<keys.length;i+=24){const part={};keys.slice(i,i+24).forEach(k=>part[k]=set[k]);const reqid=hex(crypto.getRandomValues(new Uint8Array(8)));
+  try{for(const k of keys.filter(k=>BK_CLI.includes(k))){if(!/^[0-2]$/.test(set[k])){bad.push(k);continue}const r=await cli(["set "+k+" "+set[k]]);if(!/ok/i.test(val(r[0])))bad.push(k)}
+    const keys2=keys.filter(k=>!BK_CLI.includes(k));
+    for(let i=0;i<keys2.length;i+=24){const part={};keys2.slice(i,i+24).forEach(k=>part[k]=set[k]);const reqid=hex(crypto.getRandomValues(new Uint8Array(8)));
       const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reqid,set:part,reboot:false})});
       if(r.status===401){showLogin();return}if(!r.ok){const x=await r.json().catch(()=>({}));throw new Error(x.error||r.status)}
       for(let t=0;t<120;t++){await sleep(400);const d=await api("/api/config/result?reqid="+reqid);if(d.state==="done"){(d.results||[]).forEach(x=>{if(/^\s*-?>?\s*err/i.test(x.reply||""))bad.push(x.key)});break}}}
@@ -1031,7 +1044,7 @@ $("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
 
 // ================================================================ loop
 function safe(f){try{f()}catch(e){console.error("Hoptics:",e)}}
-function render(){safe(renderOverview);if(tab==="system")safe(renderRegSrc);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs"){safe(renderNbrs);safe(renderAdm)}if(tab==="packets")safe(renderPk);if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();renderStats();S.roleDrawn=1}}}
+function render(){safe(renderOverview);if(tab==="system"){safe(renderRegSrc);readPhm()}if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs"){safe(renderNbrs);safe(renderAdm)}if(tab==="packets")safe(renderPk);if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();renderStats();S.roleDrawn=1}}}
 let started=false;
 async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);

@@ -22,6 +22,7 @@ with the Hoptics dashboard at `http://<node-ip>/hoptics`.
 - Settings backup and restore on the System tab (no passwords, tokens or keys in the file)
 - Room posts on the Chat tab in the room roles: read the last 32 posts and post as the room
 - Remote admin on the Neighbours tab: sign in to another repeater or room with its password (sent once, never stored) and run commands, with quick buttons for status and stats
+- Path ID size on the System tab: 1, 2 or 3-byte IDs in this node's adverts (MeshCore 1.14+), kept in settings backups
 - Stats feed for Home Assistant / Prometheus (read-only token); automatic rollback after a bad update
 - Web page always on while the network is up; advert at boot
 

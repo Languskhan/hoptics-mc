@@ -66,6 +66,8 @@ struct Trace {        // one trace route at a time
   int8_t last4;             // what this node heard on the way back
 } tr;
 
+void cleanText(char* dst, size_t n, const char* src, size_t len);
+
 struct Admin {        // one remote-admin session at a time; the password is wiped as soon as it is sent
   int ci = -1;
   uint8_t state;      // 0 none, 1 logging in, 2 signed in, 3 refused / no answer
