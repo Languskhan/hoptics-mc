@@ -4,3 +4,4 @@ typedef void *SemaphoreHandle_t; typedef void *TaskHandle_t; typedef uint32_t Ti
 #define portMAX_DELAY 0xffffffffu
 #define pdMS_TO_TICKS(x) ((TickType_t)(x))
 #define tskNO_AFFINITY 0x7fffffff
+#define pdPASS 1

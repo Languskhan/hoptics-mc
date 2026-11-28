@@ -166,6 +166,16 @@ struct Busy {
     ~Busy() { busy += micros() - t; }
 };
 bool memWait = false;      // the last try waited for memory: try again soon, without backing off
+bool taskUp = false;       // the feed's task is running (start() and pop() only: the main loop)
+uint32_t upTried = 0;      // when bringUp() last ran
+const char *const NO_MEMORY = "Not enough memory for the feed";
+
+// a buffer from PSRAM when the board has it, else from internal RAM; nullptr when neither has room
+void *bigAlloc(size_t n)
+{
+    void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? p : malloc(n);
+}
 
 void setErr(const char *e)
 {
@@ -178,6 +188,10 @@ void setErr(const char *e)
 void push(const Item &it)
 {
     xSemaphoreTake(lock, portMAX_DELAY);
+    if (!ring) { // nowhere to keep it
+        xSemaphoreGive(lock);
+        return;
+    }
     if (count == RING) { // the main loop is behind: the oldest goes
         head = (head + 1) % RING;
         count--;
@@ -442,14 +456,28 @@ void session(uint32_t gen0, uint8_t *msg)
 
 void task(void *)
 {
-    uint8_t *msg = (uint8_t *)heap_caps_malloc(MSG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!msg)
-        msg = (uint8_t *)malloc(MSG_MAX);
+    uint8_t *msg = nullptr; // one message as it arrives
     uint32_t backoff = 5000;
     for (;;) {
         if (!want) {
             st = State::OFF;
             vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+        if (!msg)
+            msg = (uint8_t *)bigAlloc(MSG_MAX);
+        if (!ring) {
+            Item *r = (Item *)bigAlloc(sizeof(Item) * RING);
+            xSemaphoreTake(lock, portMAX_DELAY);
+            ring = r;
+            xSemaphoreGive(lock);
+        }
+        if (!msg || !ring) { // stay off and say why; try again in 30 s
+            setErr(NO_MEMORY);
+            st = State::FAILED;
+            const uint32_t gen0 = gen;
+            for (int i = 0; i < 120 && gen == gen0 && want; i++)
+                vTaskDelay(pdMS_TO_TICKS(250));
             continue;
         }
         if (WiFi.status() != WL_CONNECTED) {
@@ -479,25 +507,41 @@ void task(void *)
         backoff = backoff < 300000 ? backoff * 2 : 300000; // 5 s, 10 s ... 5 min
     }
 }
+
+// the lock and the task, made once; while there is no memory for them the feed stays off with the reason
+// (pop() tries again every 30 s). The task allocates its own buffers, so it can wait for memory itself.
+void bringUp()
+{
+    upTried = millis();
+    if (!lock)
+        lock = xSemaphoreCreateMutex();
+    if (!lock) { // no task can be running yet, so err is safe to write here
+        snprintf(err, sizeof(err), "%s", NO_MEMORY);
+        st = State::FAILED;
+        return;
+    }
+    if (!taskUp) // TLS needs a deep stack; it stays in internal RAM
+        taskUp = xTaskCreatePinnedToCore(task, "hoptics-feed", 8 * 1024, nullptr, 1, nullptr, tskNO_AFFINITY) == pdPASS;
+    if (!taskUp) {
+        setErr(NO_MEMORY);
+        st = State::FAILED;
+    }
+}
 } // namespace
 
 void start(const char *u, const char *userAgent)
 {
-    if (!lock) {
-        lock = xSemaphoreCreateMutex();
-        ring = (Item *)heap_caps_malloc(sizeof(Item) * RING, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!ring)
-            ring = (Item *)malloc(sizeof(Item) * RING);
-        // TLS needs a deep stack; it stays in internal RAM
-        xTaskCreatePinnedToCore(task, "hoptics-feed", 8 * 1024, nullptr, 1, nullptr, tskNO_AFFINITY);
-    }
-    xSemaphoreTake(lock, portMAX_DELAY);
+    if (!taskUp)
+        bringUp();
+    if (lock) // without one there is no task yet to share these with
+        xSemaphoreTake(lock, portMAX_DELAY);
     strncpy(url, u, sizeof(url) - 1);
     strncpy(ua, userAgent, sizeof(ua) - 1);
     moved[0] = 0;
     count = 0;
     gen++; // under the lock, so a session for the old address can't write moved after it's cleared
-    xSemaphoreGive(lock);
+    if (lock)
+        xSemaphoreGive(lock);
     nPackets = 0;
     want = true;
 }
@@ -510,10 +554,12 @@ void stop()
 
 bool pop(Item &out)
 {
-    if (!lock || !ring)
+    if (want && !taskUp && millis() - upTried >= 30000)
+        bringUp();
+    if (!lock)
         return false;
     xSemaphoreTake(lock, portMAX_DELAY);
-    bool got = count > 0;
+    bool got = ring && count > 0;
     if (got) {
         out = ring[head];
         head = (head + 1) % RING;
