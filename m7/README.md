@@ -16,6 +16,10 @@ with the Hoptics dashboard at `http://<node-ip>/hoptics`.
 - Overview links to this node on SacMesh CoreScope and the MeshCore map (LetsMesh and MeshMapper open their main pages)
 - Discord alert when the spot changes from one day to the next: more repeaters heard well, a busier channel, or a louder noise floor
 - Hold the button 5 s for the setup hotspot (open Wi-Fi, ends after 10 idle minutes); Ethernet first with Wi-Fi as backup comes from the base firmware
+- Status LED (green): short blip every 3 s online, slow blink offline, fast blink while the setup hotspot is on, solid while the button is held
+- Trace route on the Neighbours tab: out through the repeaters you list and back, with the signal at every hop
+- Settings backup and restore on the System tab (no passwords, tokens or keys in the file)
+- Room posts on the Chat tab in the room roles: read the last 32 posts and post as the room
 - Stats feed for Home Assistant / Prometheus (read-only token); automatic rollback after a bad update
 - Web page always on while the network is up; advert at boot
 

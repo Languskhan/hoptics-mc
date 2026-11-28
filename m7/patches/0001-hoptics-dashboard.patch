@@ -1,5 +1,5 @@
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index 1324da0..792d96e 100644
+index 1324da0..87a05f5 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
 @@ -1,4 +1,8 @@
@@ -58,7 +58,7 @@ index 1324da0..792d96e 100644
  #ifdef WITH_WEBCONFIG
    if (_webconfig) {
      _webconfig->tick(millis());
-@@ -2459,3 +2482,144 @@ bool MyMesh::hasPendingWork() const {
+@@ -2459,3 +2482,152 @@ bool MyMesh::hasPendingWork() const {
  #endif
    return _mgr->getOutboundCount(0xFFFFFFFF) > 0;
  }
@@ -186,6 +186,14 @@ index 1324da0..792d96e 100644
 +    startWebConfig(true, r);
 +    Serial.printf("Hoptics: %s\n", r);
 +  }
++  {
++    uint8_t led = activeNetworkLink().isConnected() ? 1 : 0;
++#ifdef WITH_WEBCONFIG
++    if (_webconfig && _webconfig->mode() == WebConfigServer::MODE_SETUP) led = 2;
++#endif
++    if (btn_armed && held_since && now - held_since >= 500UL) led = 3;
++    hx::ledTick(led);
++  }
 +#else
 +  const bool want_ap = false;
 +#endif
@@ -218,7 +226,7 @@ index 782a2f4..d225588 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
    int calcRxDelay(float score, uint32_t air_time) const override;
 diff --git a/examples/simple_room_server/MyMesh.cpp b/examples/simple_room_server/MyMesh.cpp
-index 022603f..9991810 100644
+index 022603f..e348038 100644
 --- a/examples/simple_room_server/MyMesh.cpp
 +++ b/examples/simple_room_server/MyMesh.cpp
 @@ -1,4 +1,8 @@
@@ -277,7 +285,7 @@ index 022603f..9991810 100644
  #ifdef WITH_WEBCONFIG
    if (_webconfig) {
      _webconfig->tick(millis());
-@@ -2224,3 +2247,144 @@ bool MyMesh::startNeighborDiscover(char* reply, bool periodic) {
+@@ -2224,3 +2247,174 @@ bool MyMesh::startNeighborDiscover(char* reply, bool periodic) {
    return true;
  }
  #endif // WITH_MQTT_NEIGHBORS
@@ -316,6 +324,28 @@ index 022603f..9991810 100644
 +    next_sample = now + 300000UL;
 +  }
 +  hx::dmTick(*this);  // direct messages typed on the dashboard
++  {  // room posts: post what the dashboard typed (as the room), and mirror the posts for the page every 5 s
++    char text[hx::kRoomMax + 1];
++    if (hx::roomTakePost(text, sizeof(text))) addSystemPost(text);
++    static uint32_t next_room = 0;
++    if ((int32_t)(now - next_room) >= 0) {
++      next_room = now + 5000UL;
++      static hx::RoomPost list[MAX_UNSYNCED_POSTS];
++      int n = 0;
++      for (int k = 0, idx = next_post_idx; k < MAX_UNSYNCED_POSTS && n < hx::kRoomPosts; k++) {
++        const PostInfo& p = posts[idx];
++        if (p.post_timestamp) {
++          memcpy(list[n].author, p.author.pub_key, 4);
++          list[n].t = p.post_timestamp;
++          list[n].mine = p.author.matches(self_id);
++          strlcpy(list[n].text, p.text, sizeof(list[n].text));
++          n++;
++        }
++        idx = (idx + 1) % MAX_UNSYNCED_POSTS;
++      }
++      hx::roomSetPosts(list, n);
++    }
++  }
 +  if ((int32_t)(now - next_nbr) >= 0) {
 +    next_nbr = now + 15000UL;
 +    hx::setSelf(self_id.pub_key, _prefs.node_name, _prefs.node_lat, _prefs.node_lon);
@@ -405,6 +435,14 @@ index 022603f..9991810 100644
 +    startWebConfig(true, r);
 +    Serial.printf("Hoptics: %s\n", r);
 +  }
++  {
++    uint8_t led = activeNetworkLink().isConnected() ? 1 : 0;
++#ifdef WITH_WEBCONFIG
++    if (_webconfig && _webconfig->mode() == WebConfigServer::MODE_SETUP) led = 2;
++#endif
++    if (btn_armed && held_since && now - held_since >= 500UL) led = 3;
++    hx::ledTick(led);
++  }
 +#else
 +  const bool want_ap = false;
 +#endif
@@ -437,7 +475,7 @@ index cc8600b..d3c67b3 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
  
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..168e397 100644
+index 167e5cd..ef39ccd 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
 @@ -690,8 +690,42 @@ uint32_t WebConfigServer::handlerRefCount() const {
@@ -483,7 +521,7 @@ index 167e5cd..168e397 100644
    WebConfigServer* target = NULL;
    portENTER_CRITICAL(&s_wc_route_mux);
    if (_active != NULL) {
-@@ -735,6 +769,21 @@ void WebConfigServer::registerRoutes() {
+@@ -735,6 +769,23 @@ void WebConfigServer::registerRoutes() {
    _server->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleScan); });
    _server->on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleReboot); });
    _server->on("/api/portal/exit", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handlePortalExit); });
@@ -494,6 +532,8 @@ index 167e5cd..168e397 100644
 +  _server->on("/api/hx/stats-token", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxStatsToken); });
 +  _server->on("/api/hx/chat", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxChat); });
 +  _server->on("/api/hx/dm", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxDm); });
++  _server->on("/api/hx/trace", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxTrace); });
++  _server->on("/api/hx/room", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxRoom); });
 +  _server->on("/api/hx/alerts", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxAlerts); });
 +  _server->on("/api/hx/update", HTTP_POST,
 +      [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxUpdateDone); },
@@ -505,7 +545,7 @@ index 167e5cd..168e397 100644
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -856,7 +905,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -856,7 +907,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    uint32_t now = millis();
    if (_login_lock_until && (int32_t)(now - _login_lock_until) < 0) {
@@ -517,7 +557,7 @@ index 167e5cd..168e397 100644
      return;
    }
    const char* body = (const char*)req->_tempObject;
-@@ -871,7 +924,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -871,7 +926,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
                                                 : sizeof(_prefs->password);
    if (!fixedTimeEquals(pwd, expected, expected_size)) {
      if (++_login_fails >= 5) {
@@ -532,7 +572,7 @@ index 167e5cd..168e397 100644
        if (_login_lock_until == 0) _login_lock_until = 1;
        _login_fails = 0;
      }
-@@ -880,6 +940,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -880,6 +942,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    _login_fails = 0;
    _login_lock_until = 0;
@@ -550,7 +590,7 @@ index 167e5cd..168e397 100644
    uint32_t generation;
    {
      WCLock lock(_mux);
-@@ -1631,3 +1702,238 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -1631,3 +1704,273 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -622,6 +662,7 @@ index 167e5cd..168e397 100644
 +}
 +
 +void WebConfigServer::handleHxUpdateDone(AsyncWebServerRequest* req) {
++  if (_mode != MODE_LAN) { req->send(503); return; }
 +  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"sign in first\"}"); return; }
 +  if (!hxSameOrigin(req)) { req->send(403, "application/json", "{\"error\":\"wrong origin\"}"); return; }
 +  if (s_hx_up_req != req) { req->send(409, "application/json", "{\"error\":\"another update is running\"}"); return; }
@@ -692,6 +733,37 @@ index 167e5cd..168e397 100644
 +    if ((uint8_t)t[i] < 0x20) { req->send(400, "application/json", "{\"error\":\"no control characters\"}"); return; }
 +  }
 +  if (!hx::queueChannelMsg(key, t.c_str())) { req->send(429, "application/json", "{\"error\":\"wait a few seconds between messages\"}"); return; }
++  req->send(200, "application/json", "{\"ok\":true}");
++}
++
++// Room post as the room itself (room roles only). Signed-in admin from this page only.
++void WebConfigServer::handleHxRoom(AsyncWebServerRequest* req) {
++  if (_mode != MODE_LAN) { req->send(503); return; }
++  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
++  if (!hxSameOrigin(req)) { req->send(403, "application/json", "{\"error\":\"wrong origin\"}"); return; }
++  const String t = req->hasParam("text", true) ? req->getParam("text", true)->value() : String("");
++  if (t.length() < 1 || t.length() > hx::kRoomMax) { req->send(400, "application/json", "{\"error\":\"post must be 1-140 bytes\"}"); return; }
++  for (size_t i = 0; i < t.length(); i++) if ((uint8_t)t[i] < 0x20) { req->send(400, "application/json", "{\"error\":\"no control characters\"}"); return; }
++  if (!hx::roomQueuePost(t.c_str())) { req->send(429, "application/json", "{\"error\":\"wait a few seconds (room roles only)\"}"); return; }
++  req->send(200, "application/json", "{\"ok\":true}");
++}
++
++// Trace route: path = repeater IDs as hex, 2 characters each (1 to 16 hops). Signed-in admin from this page only.
++void WebConfigServer::handleHxTrace(AsyncWebServerRequest* req) {
++  if (_mode != MODE_LAN) { req->send(503); return; }
++  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
++  if (!hxSameOrigin(req)) { req->send(403, "application/json", "{\"error\":\"wrong origin\"}"); return; }
++  const String h = req->hasParam("path", true) ? req->getParam("path", true)->value() : String("");
++  uint8_t path[hx::kTraceMax];
++  const int n = h.length() / 2;
++  if (h.length() % 2 || n < 1 || n > hx::kTraceMax) { req->send(400, "application/json", "{\"error\":\"1-16 repeater IDs\"}"); return; }
++  for (int i = 0; i < n; i++) {
++    auto hv = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
++    const int a = hv(h[i * 2]), b = hv(h[i * 2 + 1]);
++    if (a < 0 || b < 0) { req->send(400, "application/json", "{\"error\":\"bad ID\"}"); return; }
++    path[i] = (uint8_t)(a << 4 | b);
++  }
++  if (!hx::traceStart(path, n)) { req->send(429, "application/json", "{\"error\":\"a trace is running, try again in a few seconds\"}"); return; }
 +  req->send(200, "application/json", "{\"ok\":true}");
 +}
 +
@@ -770,7 +842,8 @@ index 167e5cd..168e397 100644
 +
 +// /api/hx?k=packets&since=N | history&from=I | nodes | region&from=I | raw&seq=N | self (signed-in admin only)
 +void WebConfigServer::handleHxData(AsyncWebServerRequest* req) {
-+  if (_mode == MODE_OFF) { req->send(503); return; }
++  // LAN only: the setup hotspot skips sign-in, so it must not serve messages, packets or alert settings
++  if (_mode != MODE_LAN) { req->send(503); return; }
 +  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
 +  String k = req->hasParam("k") ? req->getParam("k")->value() : String("self");
 +  AsyncResponseStream* res = req->beginResponseStream("application/json");
@@ -781,6 +854,8 @@ index 167e5cd..168e397 100644
 +  else if (k == "nodes") hx::writeNodes(*res);
 +  else if (k == "alerts") hx::writeAlerts(*res);
 +  else if (k == "statson") res->print(hx::statsOn() ? "{\"on\":true}" : "{\"on\":false}");
++  else if (k == "room") hx::writeRoom(*res);
++  else if (k == "trace") hx::writeTrace(*res);
 +  else if (k == "dm") hx::writeDm(*res, req->hasParam("since") ? strtoul(req->getParam("since")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "grp") hx::writeGroup(*res, req->hasParam("since") ? strtoul(req->getParam("since")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "region") hx::writeRegion(*res, req->hasParam("from") ? strtoul(req->getParam("from")->value().c_str(), NULL, 10) : 0);
@@ -790,7 +865,7 @@ index 167e5cd..168e397 100644
 +}
 +#endif
 diff --git a/src/helpers/esp32/WebConfigServer.h b/src/helpers/esp32/WebConfigServer.h
-index bdd3e27..a90fe14 100644
+index bdd3e27..c35e9c5 100644
 --- a/src/helpers/esp32/WebConfigServer.h
 +++ b/src/helpers/esp32/WebConfigServer.h
 @@ -177,6 +177,9 @@ private:
@@ -803,7 +878,7 @@ index bdd3e27..a90fe14 100644
    uint32_t _login_lock_until = 0;
  
    // Once set (via /api/portal/exit), OS captive probes get native "success"
-@@ -236,6 +239,17 @@ private:
+@@ -236,6 +239,19 @@ private:
    void handleReboot(AsyncWebServerRequest* req);
    void handlePortalExit(AsyncWebServerRequest* req);
    void handleNotFound(AsyncWebServerRequest* req);
@@ -814,6 +889,8 @@ index bdd3e27..a90fe14 100644
 +  void handleHxAlerts(AsyncWebServerRequest* req);
 +  void handleHxChat(AsyncWebServerRequest* req);
 +  void handleHxDm(AsyncWebServerRequest* req);
++  void handleHxTrace(AsyncWebServerRequest* req);
++  void handleHxRoom(AsyncWebServerRequest* req);
 +  void handleHxMetrics(AsyncWebServerRequest* req);
 +  void handleHxStatsToken(AsyncWebServerRequest* req);
 +  void hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final);
@@ -822,7 +899,7 @@ index bdd3e27..a90fe14 100644
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..e4057f5 100644
+index 4bd316b..18229ba 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
 @@ -290,3 +290,43 @@ lib_deps =
@@ -834,7 +911,7 @@ index 4bd316b..e4057f5 100644
 +[hoptics_m7]
 +build_flags =
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.4.3"'
++  -D HOPTICS_M7_VERSION='"0.4.4"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +
 +[env:Hoptics_M7_repeater_observer]

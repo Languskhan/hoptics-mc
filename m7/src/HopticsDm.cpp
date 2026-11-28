@@ -57,6 +57,14 @@ uint32_t last_send_ms, last_advert_ms;
 uint8_t seen[kSeenDm][MAX_HASH_SIZE];
 int seen_head;
 
+struct Trace {        // one trace route at a time
+  uint8_t path[kTraceMax], n;
+  uint32_t tag, sent_ms;
+  bool queued, waiting, done;
+  int8_t snr4[kTraceMax];   // what each hop heard (x4)
+  int8_t last4;             // what this node heard on the way back
+} tr;
+
 struct Lock {
   Lock() { xSemaphoreTake(mu, portMAX_DELAY); }
   ~Lock() { xSemaphoreGive(mu); }
@@ -243,6 +251,15 @@ void dmTick(mesh::Mesh& m) {
   if (!mu || !contacts || !msgs) return;
   the_mesh = &m;
   Lock l;
+  if (tr.queued) {
+    tr.queued = false;
+    if (mesh::Packet* p = m.createTrace(tr.tag, 0, 0)) {
+      m.sendDirect(p, tr.path, tr.n);
+      tr.waiting = true;
+      tr.sent_ms = millis();
+    }
+  }
+  if (tr.waiting && millis() - tr.sent_ms > 30000UL) tr.waiting = false;   // no answer
   if (!on) return;
   if (want_advert) {
     want_advert = false;
@@ -278,7 +295,20 @@ void dmTick(mesh::Mesh& m) {
 // every packet heard (before the repeater handles it). Only packets whose last hop is this node and whose
 // destination byte is the chat identity get looked at; the rest cost one compare.
 void dmOnRx(const mesh::Packet* pk) {
-  if (!mu || !on || !the_mesh || !contacts) return;
+  if (!mu) return;
+  if (pk->getPayloadType() == PAYLOAD_TYPE_TRACE && pk->isRouteDirect() && pk->payload_len >= 9) {
+    uint32_t tag;
+    memcpy(&tag, pk->payload, 4);
+    Lock l;
+    const int hashes = pk->payload_len - 9;
+    if (!tr.waiting || tag != tr.tag || (pk->payload[8] & 3) != 0 || hashes != tr.n || pk->path_len < hashes) return;
+    for (int i = 0; i < hashes; i++) tr.snr4[i] = (int8_t)pk->path[i];
+    tr.last4 = (int8_t)(pk->getSNR() * 4);
+    tr.waiting = false;
+    tr.done = true;
+    return;
+  }
+  if (!on || !the_mesh || !contacts) return;
   const uint8_t type = pk->getPayloadType();
   if (pk->isRouteDirect() && pk->getPathHashCount() > 0) return;   // still on its way to someone else
   if (type == PAYLOAD_TYPE_ACK) {
@@ -435,6 +465,29 @@ bool dmSaveContact(const uint8_t pub[32], const char* name, bool keep) {
   return true;
 }
 
+bool traceStart(const uint8_t* path, int n) {
+  if (!mu || n < 1 || n > kTraceMax || !the_mesh) return false;
+  Lock l;
+  if (tr.queued || (tr.waiting && millis() - tr.sent_ms < 10000UL)) return false;
+  memcpy(tr.path, path, n);
+  tr.n = n;
+  the_mesh->getRNG()->random((uint8_t*)&tr.tag, 4);
+  tr.queued = true;
+  tr.waiting = tr.done = false;
+  return true;
+}
+
+void writeTrace(Print& out) {
+  if (!mu) { out.print("{}"); return; }
+  Lock l;
+  out.printf("{\"busy\":%s,\"done\":%s,\"ago\":%lu,\"path\":[", (tr.queued || tr.waiting) ? "true" : "false",
+             tr.done ? "true" : "false", (unsigned long)((millis() - tr.sent_ms) / 1000));
+  for (int i = 0; i < tr.n; i++) out.printf("%s\"%02x\"", i ? "," : "", tr.path[i]);
+  out.print("],\"snr\":[");
+  for (int i = 0; tr.done && i < tr.n; i++) out.printf("%s%.2f", i ? "," : "", tr.snr4[i] / 4.0f);
+  out.printf("],\"back\":%.2f}", tr.done ? tr.last4 / 4.0f : 0.0f);
+}
+
 void writeDm(Print& out, uint32_t since) {
   if (!mu || !contacts || !msgs) { out.print("{\"on\":false,\"contacts\":[],\"msgs\":[]}"); return; }
   Lock l;
@@ -456,7 +509,7 @@ void writeDm(Print& out, uint32_t since) {
   }
   out.print("],\"msgs\":[");
   first = true;
-  const uint32_t lo = msg_seq > kMsgs ? msg_seq - kMsgs : 0;
+  const uint32_t lo = msg_seq > 48 ? msg_seq - 48 : 0;   // newest 48 at most, so a reply stays small
   for (uint32_t s = (since > lo ? since : lo) + 1; s <= msg_seq; s++) {
     const Msg* m = findMsg(s);
     if (!m) continue;
@@ -470,4 +523,70 @@ void writeDm(Print& out, uint32_t since) {
   out.print("]}");
 }
 
+}  // namespace hx
+
+// ---- room posts (room roles only): the mesh loop mirrors the room's posts here every few seconds, and posts
+// what the page typed as the room itself (addSystemPost), one at a time.
+namespace hx {
+namespace {
+SemaphoreHandle_t room_mu;
+bool room_on;
+RoomPost* room_posts;
+int room_n;
+char room_q[kRoomMax + 1];
+bool room_q_full;
+uint32_t room_last_ms;
+struct RLock {
+  RLock() { xSemaphoreTake(room_mu, portMAX_DELAY); }
+  ~RLock() { xSemaphoreGive(room_mu); }
+};
+}  // namespace
+
+void roomSetPosts(const RoomPost* p, int n) {
+  if (!room_mu) {
+    room_mu = xSemaphoreCreateMutex();
+    room_posts = (RoomPost*)heap_caps_calloc(kRoomPosts, sizeof(RoomPost), MALLOC_CAP_SPIRAM);
+  }
+  if (!room_mu || !room_posts) return;
+  RLock l;
+  room_on = true;
+  room_n = n > kRoomPosts ? kRoomPosts : n;
+  for (int i = 0; i < room_n; i++) {
+    room_posts[i] = p[i];
+    cleanText(room_posts[i].text, sizeof(room_posts[i].text), p[i].text, sizeof(p[i].text) - 1);
+  }
+}
+
+bool roomQueuePost(const char* text) {
+  if (!room_mu) return false;
+  RLock l;
+  if (!room_on || room_q_full || millis() - room_last_ms < 5000) return false;
+  strlcpy(room_q, text, sizeof(room_q));
+  room_q_full = true;
+  room_last_ms = millis();
+  return true;
+}
+
+bool roomTakePost(char* out, size_t n) {
+  if (!room_mu) return false;
+  RLock l;
+  if (!room_q_full) return false;
+  strlcpy(out, room_q, n);
+  room_q_full = false;
+  return true;
+}
+
+void writeRoom(Print& out) {
+  if (!room_mu || !room_posts) { out.print("{\"on\":false,\"posts\":[]}"); return; }
+  RLock l;
+  out.print("{\"on\":true,\"posts\":[");
+  for (int i = 0; i < room_n; i++) {
+    const RoomPost& p = room_posts[i];
+    out.printf("%s[\"%02x%02x%02x%02x\",%lu,%d,", i ? "," : "", p.author[0], p.author[1], p.author[2], p.author[3],
+               (unsigned long)p.t, p.mine ? 1 : 0);
+    jstr(out, p.text);
+    out.print(']');
+  }
+  out.print("]}");
+}
 }  // namespace hx

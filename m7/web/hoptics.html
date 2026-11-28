@@ -121,7 +121,10 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 </section>
 <section id="t-nbrs">
   <div class="row"><button class="b" id="scan">Scan now</button><span class="dim" id="scanmsg">Repeaters this node hears directly (zero hop).</span></div>
-  <div class="card glass"><h3>Neighbours</h3><div class="scroll"><table><thead><tr><th>Name</th><th>ID</th><th>SNR (dB)</th><th>Signal</th><th>Distance</th><th>Last heard</th></tr></thead><tbody id="nbody"></tbody></table></div></div>
+  <div class="card glass"><h3>Trace route</h3>
+    <div class="row"><input id="trpath" maxlength="64" placeholder="Repeater IDs, e.g. a1 or a1,b2" style="flex:1" class="mono"><label><input type="checkbox" id="trback" checked> and back</label><button class="b p" id="trgo">Trace</button></div>
+    <div id="trout" style="margin-top:8px"><span class="dim" style="font-size:12px">Sends a trace out through the repeaters you list; each one adds the signal it heard. "And back" returns it the same way so you see both directions. Or press Trace on a neighbour below.</span></div></div>
+  <div class="card glass"><h3>Neighbours</h3><div class="scroll"><table><thead><tr><th>Name</th><th>ID</th><th>SNR (dB)</th><th>Signal</th><th>Distance</th><th>Last heard</th><th></th></tr></thead><tbody id="nbody"></tbody></table></div></div>
   <div class="card glass"><h3>All nodes heard (adverts)</h3><div class="scroll"><table><thead><tr><th>Name</th><th>Type</th><th>ID</th><th>Hops</th><th>SNR (dB)</th><th>Distance</th><th>Seen</th></tr></thead><tbody id="allbody"></tbody></table></div></div>
 </section>
 <section id="t-packets">
@@ -155,6 +158,10 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
         <div class="row" style="margin-top:8px"><input id="dmapub" maxlength="64" placeholder="64-character public key" style="flex:2"><input id="dmanm" maxlength="31" placeholder="Name" style="flex:1"><button class="b" id="dmadd">Save</button></div></details>
     </div>
     <p class="dim" style="font-size:12px" id="dmnote">Contacts appear when their adverts are heard. A message goes direct once a path is known, otherwise by flood, and is retried twice. Saved contacts (16 at most) stay after a restart.</p></div>
+  <div class="card glass" id="roomcard" hidden><h3>Room posts</h3>
+    <div id="roomlog" class="scroll" style="height:360px;display:flex;flex-direction:column;gap:6px;padding:4px"></div>
+    <div class="row" style="margin-top:8px"><input id="roomin" maxlength="140" placeholder="Post to the room as the room" style="flex:1"><button class="b p" id="roomsend">Post</button></div>
+    <p class="dim" style="font-size:12px" id="roomnote">The last 32 posts in this room. Your posts go out under the room's own name to everyone logged in.</p></div>
 </section>
 <section id="t-insights">
   <div class="two">
@@ -180,6 +187,10 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 </section>
 <section id="t-system">
   <div class="two">
+    <div class="card glass"><h3>Settings backup</h3>
+      <p class="dim" style="margin-top:0">Saves name, location, radio, timing, repeat, adverts, Wi-Fi name, MQTT brokers and observer settings to a file. Passwords, MQTT tokens and keys are never put in it, so after restoring onto a new node you type those again.</p>
+      <div class="row"><button class="b" id="bkdl">Download backup</button><label class="b" style="cursor:pointer">Restore from file<input type="file" id="bkfile" accept=".json,application/json" hidden></label></div>
+      <div id="bkmsg" class="dim" style="margin-top:8px;font-size:13px"></div></div>
     <div class="card glass"><h3>Firmware</h3><div id="sysinfo"></div></div>
     <div class="card glass"><h3>Update</h3>
       <p class="dim">Choose a Hoptics M7 <b>.update.bin</b> file. Settings, keys and MQTT servers are kept. The node restarts when it's done.</p>
@@ -323,7 +334,7 @@ const TCOL=["#a78bfa","#a78bfa","#5b9dff","#7d8a97","#46e08a","#3fd6e0","#3fd6e0
 const ADV=["Node","Companion","Repeater","Room","Sensor"];
 const ROUTE=["Flood (scoped)","Flood","Direct","Direct (scoped)"];
 const S={stats:null,self:null,nodes:[],nbrs:[],hist:[],pk:[],seq:0,upAt:0,paused:false,repeat:null,region:[],regionInfo:null};
-const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const nowEpoch=()=>Math.floor(Date.now()/1000);
 function ago(sec){if(sec==null||sec<0||!isFinite(sec))return"-";if(sec<60)return Math.round(sec)+" s";if(sec<3600)return Math.round(sec/60)+" min";if(sec<86400)return(sec/3600).toFixed(1)+" h";return(sec/86400).toFixed(1)+" d"}
@@ -371,6 +382,32 @@ function cli(cmds){
     return out};
   const p=cliChain.then(run,run);cliChain=p.catch(()=>{});return p}
 const val=r=>String(r||"").replace(/^\s*-?>\s*/,"").replace(/^>\s*/,"").trim();
+
+// ================================================================ settings backup (allowlisted keys only, no secrets)
+const BK_KEYS=["name","lat","lon","radio","tx","af","rxdelay","txdelay","cad","radio.rxgain","repeat","advert.interval","flood.advert.interval",
+  "flood.max","flood.max.advert","flood.max.unscoped","loop.detect","wifi.ssid","wifi.powersave","wifi.txpower","mqtt.origin","mqtt.iata","mqtt.status",
+  "mqtt.packets","mqtt.raw","mqtt.tx","mqtt.rx","mqtt.advert.verify","mqtt.interval","mqtt.neighbors","mqtt.neighbors.interval","mqtt.ntp","mqtt.owner",
+  "mqtt.email","timezone","timezone.offset","snmp"];
+for(let i=1;i<=6;i++)for(const f of["preset","server","port","username","topic","audience","filter","iata","neighbors"])BK_KEYS.push("mqtt"+i+"."+f);
+const bkValOk=v=>typeof v==="string"&&v.length<=120&&!/[\r\n]/.test(v);
+$("bkdl").onclick=async()=>{const m=$("bkmsg");m.textContent="Reading settings…";const out={};
+  try{for(let i=0;i<BK_KEYS.length;i+=24){const ks=BK_KEYS.slice(i,i+24),r=await cli(ks.map(k=>"get "+k));
+      ks.forEach((k,j)=>{const v=val(r[j]);if(r[j]!=null&&v&&!/^(err|unknown|\?)/i.test(v)&&bkValOk(v))out[k]=v})}
+    const blob=new Blob([JSON.stringify({hoptics_backup:1,from:S.self?S.self.name:"",at:new Date().toISOString(),settings:out},null,1)],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="hoptics-m7-settings-"+new Date().toISOString().slice(0,10)+".json";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    m.textContent="Saved "+Object.keys(out).length+" settings. The file has no passwords or keys."}catch(e){m.textContent="Backup failed: "+e.message}};
+$("bkfile").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;const m=$("bkmsg");
+  let j;try{if(f.size>65536)throw 0;j=JSON.parse(await f.text())}catch(x){m.textContent="That isn't a Hoptics settings backup.";return}
+  if(!j||j.hoptics_backup!==1||typeof j.settings!=="object"){m.textContent="That isn't a Hoptics settings backup.";return}
+  const set={};for(const [k,v] of Object.entries(j.settings))if(BK_KEYS.includes(k)&&bkValOk(v))set[k]=v;
+  const keys=Object.keys(set);if(!keys.length){m.textContent="Nothing in that file this node can restore.";return}
+  if(!confirm("Restore "+keys.length+" settings from "+(j.from||"a backup")+"? This changes the radio and network settings on this node, then you restart it."))return;
+  m.textContent="Restoring…";let bad=[];
+  try{for(let i=0;i<keys.length;i+=24){const part={};keys.slice(i,i+24).forEach(k=>part[k]=set[k]);const reqid=hex(crypto.getRandomValues(new Uint8Array(8)));
+      const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reqid,set:part,reboot:false})});
+      if(r.status===401){showLogin();return}if(!r.ok){const x=await r.json().catch(()=>({}));throw new Error(x.error||r.status)}
+      for(let t=0;t<120;t++){await sleep(400);const d=await api("/api/config/result?reqid="+reqid);if(d.state==="done"){(d.results||[]).forEach(x=>{if(/^\s*-?>?\s*err/i.test(x.reply||""))bad.push(x.key)});break}}}
+    m.textContent=bad.length?"Restored, except: "+bad.join(", ")+". Restart to use the new settings.":"Restored "+keys.length+" settings. Restart the node (button below) to use them."}catch(x){m.textContent="Restore stopped: "+x.message}};
 
 // ================================================================ tabs
 const TABS=[["overview","Overview"],["graphs","Graphs"],["map","Live map"],["nbrs","Neighbours"],["packets","Packets"],["chat","Chat"],["insights","Insights"],["mqtt","MQTT"],["advisor","Advisor"],["console","Console"],["system","System"]];
@@ -642,8 +679,24 @@ function drawPath(path){if(!mapReady)return;const pts=path.map(h=>nodeByPrefix(h
 function sigPill(snr){return snr>=5?'<span class="pill ok">strong</span>':snr>=0?'<span class="pill mid">good</span>':'<span class="pill bad">weak</span>'}
 function renderNbrs(){const now=nowEpoch();
   $("nbody").innerHTML=S.nbrs.slice().sort((a,b)=>b.snr-a.snr).map(n=>{const nd=nodeById(n.id)||{};
-    return`<tr><td>${esc(nd.name||"(unknown)")}</td><td class="mono">${n.id.slice(0,2).toUpperCase()}</td><td>${n.snr.toFixed(1)}</td><td>${sigPill(n.snr)}</td><td>${fmtKm(distTo(nd))}</td><td>${ago(now-n.heard)} ago</td></tr>`}).join("")||'<tr><td colspan="6" class="dim">No neighbours heard yet. Press Scan now, or wait for adverts.</td></tr>';
+    return`<tr><td>${esc(nd.name||"(unknown)")}</td><td class="mono">${n.id.slice(0,2).toUpperCase()}</td><td>${n.snr.toFixed(1)}</td><td>${sigPill(n.snr)}</td><td>${fmtKm(distTo(nd))}</td><td>${ago(now-n.heard)} ago</td><td><button class="b" data-tr="${esc(n.id.slice(0,2))}">Trace</button></td></tr>`}).join("")||'<tr><td colspan="7" class="dim">No neighbours heard yet. Press Scan now, or wait for adverts.</td></tr>';
   $("allbody").innerHTML=S.nodes.slice().sort((a,b)=>b.seen-a.seen).map(n=>`<tr><td>${esc(n.name||"-")}</td><td>${ADV[n.type]||n.type}</td><td class="mono">${n.id.slice(0,2).toUpperCase()}</td><td>${n.hops}</td><td>${n.snr}</td><td>${fmtKm(distTo(n))}</td><td>${ago(now-n.seen)} ago</td></tr>`).join("")||'<tr><td colspan="7" class="dim">No adverts heard yet.</td></tr>'}
+// trace route
+function trPath(){const ids=$("trpath").value.toLowerCase().split(/[^0-9a-f]+/).filter(Boolean);if(!ids.length||ids.some(x=>!/^[0-9a-f]{2}$/.test(x)))return null;
+  const p=$("trback").checked&&ids.length>1?ids.concat(ids.slice(0,-1).reverse()):ids;return p.length>16?null:p}
+async function trace(){const p=trPath();if(!p){$("trout").textContent="List 1 to 8 repeater IDs, 2 characters each (16 hops in all).";return}
+  $("trgo").disabled=true;const r=await fetch("/api/hx/trace",{method:"POST",body:new URLSearchParams({path:p.join("")})});const j=await r.json().catch(()=>({}));
+  if(!r.ok){$("trout").textContent="Not sent: "+(j.error||r.status);$("trgo").disabled=false;return}
+  $("trout").textContent="Tracing "+p.join(" → ").toUpperCase()+"…";const t0=Date.now();
+  const poll=async()=>{let t;try{t=await api("/api/hx?k=trace")}catch(e){$("trgo").disabled=false;return}
+    if(t.done){const name=h=>{const n=nodeByPrefix(h);return n&&n.name?n.name:h.toUpperCase()};
+      const hop=(a,b,snr)=>`<tr><td>${esc(a)}</td><td>→</td><td>${esc(b)}</td><td>${snr.toFixed(2)} dB</td><td>${sigPill(snr)}</td></tr>`;
+      let rows="",prev="This node";t.path.forEach((h,i)=>{rows+=hop(prev,name(h),t.snr[i]);prev=name(h)});rows+=hop(prev,"This node",t.back);
+      $("trout").innerHTML=`<table><thead><tr><th>From</th><th></th><th>To</th><th>Heard at</th><th>Signal</th></tr></thead><tbody>${rows}</tbody></table>`;$("trgo").disabled=false}
+    else if(!t.busy||Date.now()-t0>32000){$("trout").textContent="No answer. A repeater on the path may be out of range, or an ID is wrong.";$("trgo").disabled=false}
+    else setTimeout(poll,1500)};setTimeout(poll,1500)}
+$("trgo").onclick=trace;$("trpath").onkeydown=e=>{if(e.key==="Enter")trace()};
+$("nbody").onclick=e=>{const b=e.target.closest("[data-tr]");if(!b)return;$("trpath").value=b.dataset.tr;trace()};
 $("scan").onclick=async()=>{$("scanmsg").textContent="Scanning, about 30 seconds...";
   try{const r=await cli(["discover.neighbors"]);$("scanmsg").textContent=val(r[0])||"Scan sent.";setTimeout(pollNodes,30000)}catch(e){$("scanmsg").textContent="Scan failed: "+e.message}};
 
@@ -736,6 +789,20 @@ async function sendDm(){const t=$("dmin").value.trim(),to=S.dm.sel;if(!t||!to)re
   if(new TextEncoder().encode(t).length>150){$("dmnote").textContent="Too long: 150 bytes at most.";return}
   $("dmsend").disabled=true;const e=await dmPost({op:"send",to,text:t});if(!e)$("dmin").value="";
   await dmDone(e,"Sending… it says delivered when their phone confirms.");setTimeout(async()=>{await pollDm();if(tab==="chat")renderDm()},1500)}
+// room posts (room roles)
+S.room={on:false,posts:[]};
+async function pollRoom(){try{const j=await api("/api/hx?k=room");S.room={on:j.on,posts:j.posts}}catch(e){}}
+function renderRoom(){$("roomcard").hidden=!S.room.on;if(!S.room.on)return;const log=$("roomlog"),atEnd=log.scrollTop+log.clientHeight>=log.scrollHeight-20;
+  const posts=S.room.posts.slice().sort((a,b)=>a[1]-b[1]);
+  log.innerHTML=posts.map(p=>{const n=nodeByPrefix(p[0].slice(0,2)),who=p[2]?(S.self?S.self.name:"This room"):(n&&n.id.startsWith(p[0])&&n.name?n.name:p[0].toUpperCase());
+    return`<div style="align-self:${p[2]?"flex-end":"flex-start"};max-width:75%;padding:8px 12px;border-radius:14px;background:${p[2]?"rgba(63,214,224,.18)":"rgba(255,255,255,.07)"};border:1px solid var(--faint)">
+    <div style="font-size:12px;color:var(--dim)"><b style="color:var(--text)">${esc(who)}</b> · ${new Date(p[1]*1000).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+    <div style="white-space:pre-wrap;word-break:break-word">${esc(p[3])}</div></div>`}).join("")||'<p class="dim">No posts yet.</p>';if(atEnd)log.scrollTop=1e9}
+async function sendRoom(){const t=$("roomin").value.trim();if(!t)return;if(new TextEncoder().encode(t).length>140){$("roomnote").textContent="Too long: 140 bytes at most.";return}
+  $("roomsend").disabled=true;try{const r=await fetch("/api/hx/room",{method:"POST",body:new URLSearchParams({text:t})});if(r.status===401){showLogin();return}const j=await r.json().catch(()=>({}));
+    if(r.ok){$("roomin").value="";$("roomnote").textContent="Posted.";setTimeout(async()=>{await pollRoom();renderRoom()},6000)}else $("roomnote").textContent="Not posted: "+(j.error||r.status)}
+  finally{setTimeout(()=>$("roomsend").disabled=false,5000)}}
+$("roomsend").onclick=sendRoom;$("roomin").onkeydown=e=>{if(e.key==="Enter")sendRoom()};
 $("dmsend").onclick=sendDm;$("dmin").onkeydown=e=>{if(e.key==="Enter")sendDm()};
 
 // ================================================================ insights
@@ -915,14 +982,14 @@ $("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
 
 // ================================================================ loop
 function safe(f){try{f()}catch(e){console.error("Hoptics:",e)}}
-function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="chat"){safe(renderChat);safe(renderDm)}if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();renderStats();S.roleDrawn=1}}}
+function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();renderStats();S.roleDrawn=1}}}
 let started=false;
 async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);
   cli(["get repeat"]).then(r=>{S.repeat=/on/i.test(val(r[0]));render()}).catch(()=>{});
   setTab((location.hash||"#overview").slice(1).replace(/[^a-z]/g,""));
   setInterval(async()=>{await pollStats();if(!$("modal").classList.contains("on"))render()},3000);
-  setInterval(pollPk,2000);pollChat();pollDm();setInterval(async()=>{await pollChat();await pollDm();if(tab==="chat"){safe(renderChat);safe(renderDm)}},4000);
+  setInterval(pollPk,2000);pollChat();pollDm();setInterval(async()=>{await pollChat();await pollDm();if(tab==="chat"){safe(renderChat);safe(renderDm);safe(renderRoom)}},4000);
   setInterval(async()=>{await pollNodes();await pollSelf();if(mapReady)renderMapNodes(false)},15000);
   setInterval(pollHist,60000);pollRegion();setInterval(pollRegion,1800000);$("showreg").onchange=()=>renderMapNodes(false)}
 (async()=>{try{await api("/api/hx?k=self");$("app").hidden=false;start()}catch(e){if(e.message!=="auth"){$("app").hidden=false;start()}}})();

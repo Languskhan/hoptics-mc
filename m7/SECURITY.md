@@ -60,3 +60,10 @@ as hostile input.
 - Firmware images are not cryptographically signed; the admin password is what protects updates.
 
 Report problems through GitHub issues.
+- **The setup hotspot gets none of the Hoptics data.** Holding the button 5 s starts the base firmware's setup
+  hotspot, which is open and skips sign-in (hands on the box, like USB; it ends after 10 idle minutes). Every
+  Hoptics route answers only in LAN mode, so messages, packets and alert settings are never served there.
+- **Backups hold no secrets.** The page reads an allowlist of settings and leaves out passwords, MQTT tokens, the
+  SNMP community and keys; a restore goes through the base firmware's allowlisted settings API.
+- **Trace route and room posts are admin only and paced** like chat: one trace at a time (10 s apart), one post at
+  a time (5 s apart).

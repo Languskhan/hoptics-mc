@@ -56,6 +56,7 @@ void writeGroup(Print& out, uint32_t since);
 
 // Rollback and stats feed (HopticsSafety.cpp)
 void markUpdateInstalled();
+void ledTick(uint8_t state);   // 0 offline, 1 online, 2 setup hotspot, 3 button held
 void bootCheck();
 void bootGood();
 void statsBegin();
@@ -88,5 +89,16 @@ bool dmAdvert();
 bool dmEnable(bool enable, const char* name);
 bool dmSaveContact(const uint8_t pub[32], const char* name, bool keep);
 void writeDm(Print& out, uint32_t since);
+// Trace route: out along the given repeater IDs and back (the last ID is usually the first one, reversed path)
+constexpr int kTraceMax = 16;
+bool traceStart(const uint8_t* path, int n);
+void writeTrace(Print& out);
+// Room posts (room roles): mirrored by the mesh loop; the page can post as the room
+constexpr int kRoomPosts = 32, kRoomMax = 140;
+struct RoomPost { uint8_t author[4]; uint32_t t; bool mine; char text[152]; };
+void roomSetPosts(const RoomPost* p, int n);
+bool roomQueuePost(const char* text);
+bool roomTakePost(char* out, size_t n);
+void writeRoom(Print& out);
 
 }  // namespace hx

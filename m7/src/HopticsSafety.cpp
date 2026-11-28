@@ -88,3 +88,25 @@ const char* statsNewToken(bool off) {
 bool statsOn() { return token[0] != 0; }
 
 }  // namespace hx
+
+namespace hx {
+// Green status LED: 0 no network (slow blink), 1 online (short blip every 3 s), 2 setup hotspot (fast blink),
+// 3 button held (solid).
+void ledTick(uint8_t state) {
+#ifdef PIN_STATUS_LED
+  static bool init = false;
+  if (!init) { pinMode(PIN_STATUS_LED, OUTPUT); init = true; }
+  const uint32_t t = millis();
+  bool lit;
+  switch (state) {
+    case 0: lit = (t % 2000) < 1000; break;
+    case 2: lit = (t % 250) < 125; break;
+    case 3: lit = true; break;
+    default: lit = (t % 3000) < 60; break;
+  }
+  digitalWrite(PIN_STATUS_LED, lit ? LED_STATE_ON : !LED_STATE_ON);
+#else
+  (void)state;
+#endif
+}
+}  // namespace hx
