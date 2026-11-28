@@ -1,0 +1,2 @@
+fc172bc1344f94137c56313948e7560aa50a8598c3339b47e0964ec9f6e9a521  hoptics-mc-lilygo-t-deck-plus-companion-0.2.7-https-test.factory.bin
+6df7967ecc337d30868ae805227df9ab7c806062bc6a1a3419d7f9cb0a1e5799  hoptics-mc-lilygo-t-deck-plus-companion-0.2.7-https-test.update.bin
