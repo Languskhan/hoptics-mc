@@ -24,7 +24,7 @@ int hexVal(char c)
     return -1;
 }
 
-// the text after "key": (skipping spaces), or nullptr
+// the text after "key": (skipping whitespace), or nullptr
 const char *field(const char *s, const char *end, const char *key)
 {
     size_t kn = strlen(key);
@@ -32,16 +32,18 @@ const char *field(const char *s, const char *end, const char *key)
         if (*p != '"' || memcmp(p + 1, key, kn) != 0 || p[kn + 1] != '"')
             continue;
         const char *q = p + kn + 2;
-        while (q < end && (*q == ' ' || *q == ':'))
+        while (q < end && (*q == ' ' || *q == ':' || *q == '\t' || *q == '\r' || *q == '\n'))
             q++;
         return q < end ? q : nullptr;
     }
     return nullptr;
 }
 
-// a JSON string value into out (escapes kept simple: \x -> x, \uXXXX -> '?'); false when it is not a string
+// a JSON string value into out (escapes kept simple: \x -> x, \uXXXX -> '?'); false, with out left empty, when it is
+// not a string or the message ends before its closing quote
 bool str(const char *v, const char *end, char *out, size_t n)
 {
+    out[0] = 0;
     if (!v || *v != '"')
         return false;
     size_t o = 0;
@@ -54,6 +56,8 @@ bool str(const char *v, const char *end, char *out, size_t n)
         if (c == '\\' && p + 1 < end) {
             c = *++p;
             if (c == 'u') {
+                if (end - p <= 4)
+                    break;
                 p += 4;
                 c = '?';
             }
@@ -61,7 +65,21 @@ bool str(const char *v, const char *end, char *out, size_t n)
         if (o + 1 < n)
             out[o++] = c;
     }
+    out[0] = 0;
     return false;
+}
+
+// a JSON number into SNR * 4, held to what an int8_t can carry. The number is copied out first: the message is not
+// terminated, so strtod on it could read past the end.
+int8_t snr4(const char *v, const char *end)
+{
+    char num[24];
+    size_t k = 0;
+    while (v + k < end && k + 1 < sizeof(num) && v[k] && strchr("0123456789+-.eE", v[k]))
+        num[k] = v[k], k++;
+    num[k] = 0;
+    double s = strtod(num, nullptr) * 4;
+    return s >= 127 ? 127 : s <= -128 ? -128 : (int8_t)s;
 }
 } // namespace
 
@@ -82,13 +100,21 @@ bool parse(const char *json, size_t n, Item &out)
         return false;
     memset(out.obsKey, 0, sizeof(out.obsKey));
     char id[16];
-    if (str(field(json, end, "observer_id"), end, id, sizeof(id)) && strlen(id) >= 12)
-        for (int i = 0; i < 6; i++)
-            out.obsKey[i] = (uint8_t)(hexVal(id[2 * i]) << 4 | hexVal(id[2 * i + 1]));
-    out.obsName[0] = 0;
-    str(field(json, end, "observer_name"), end, out.obsName, sizeof(out.obsName));
+    if (str(field(json, end, "observer_id"), end, id, sizeof(id)) && strlen(id) >= 12) {
+        uint8_t key[6];
+        bool hex = true;
+        for (int i = 0; i < 6 && hex; i++) {
+            int a = hexVal(id[2 * i]), b = hexVal(id[2 * i + 1]);
+            hex = a >= 0 && b >= 0;
+            if (hex)
+                key[i] = (uint8_t)(a << 4 | b);
+        }
+        if (hex) // a key with a non-hex digit stays all zero, as if the message had none
+            memcpy(out.obsKey, key, sizeof(key));
+    }
+    str(field(json, end, "observer_name"), end, out.obsName, sizeof(out.obsName)); // empty unless a whole string
     v = field(json, end, "snr");
-    out.snr4 = (v && *v != 'n') ? (int8_t)(atof(v) * 4) : 0;
+    out.snr4 = (v && *v != 'n') ? snr4(v, end) : 0;
     return true;
 }
 
