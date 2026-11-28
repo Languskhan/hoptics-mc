@@ -2840,6 +2840,8 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
  *  PUBLIC FONT
  *----------------*/
 
+LV_FONT_DECLARE(hx_sym_10)
+
 /*Initialize a public general font descriptor*/
 #if LV_VERSION_CHECK(8, 0, 0)
 const lv_font_t hx_text_10 = {
@@ -2857,7 +2859,7 @@ lv_font_t hx_text_10 = {
     .underline_position = -1,
     .underline_thickness = 1,
 #endif
-    .fallback = &lv_font_montserrat_10, /*ASCII and LVGL symbols*/
+    .fallback = &hx_sym_10, /*arrows, Greek, maths and other symbols, then Montserrat for ASCII*/
     .dsc = &font_dsc           /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */
 };
 
