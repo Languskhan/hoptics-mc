@@ -160,6 +160,168 @@ index 782a2f4..d225588 100644
    void logTx(mesh::Packet* pkt, int len) override;
    void logTxFail(mesh::Packet* pkt, int len) override;
    int calcRxDelay(float score, uint32_t air_time) const override;
+diff --git a/examples/simple_room_server/MyMesh.cpp b/examples/simple_room_server/MyMesh.cpp
+index 022603f..4b0e9ad 100644
+--- a/examples/simple_room_server/MyMesh.cpp
++++ b/examples/simple_room_server/MyMesh.cpp
+@@ -1,4 +1,8 @@
+ #include "MyMesh.h"
++#ifdef HOPTICS_M7
++#include <helpers/esp32/HopticsData.h>
++#include <helpers/esp32/HttpPort80Lease.h>
++#endif
+ #include <algorithm>
+ #include <climits>
+ #include <helpers/RxReservePacketManager.h>
+@@ -250,6 +254,9 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+ }
+ 
+ void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
++#ifdef HOPTICS_M7
++  hx::onPacket(false, pkt, len, pkt->getSNR(), _radio->getLastRSSI(), score, _radio->getEstAirtimeFor(len));
++#endif
+ #ifdef DISPLAY_ACTIVITY_DASHBOARD
+   // Valid parsed RF packet: the only event the dashboard's window counts.
+   _activity.recordPacket(millis(), (uint16_t)len, _radio->getEstAirtimeFor(len),
+@@ -279,6 +286,9 @@ void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
+   }
+ }
+ void MyMesh::logTx(mesh::Packet *pkt, int len) {
++#ifdef HOPTICS_M7
++  hx::onPacket(true, pkt, len, 0, 0, 0, _radio->getEstAirtimeFor(len));
++#endif
+ #if defined(WITH_MQTT_NEIGHBORS)
+   if (neighbor_discover_active && pkt == neighbor_discover_request
+       && neighbor_discover_next < neighbor_discover_count) {
+@@ -777,6 +787,15 @@ static bool isShare(const mesh::Packet *packet) {
+ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32_t timestamp,
+                           const uint8_t *app_data, size_t app_data_len) {
+   mesh::Mesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len); // chain to super impl
++#ifdef HOPTICS_M7
++  {
++    AdvertDataParser hp(app_data, app_data_len);
++    if (hp.isValid()) {
++      hx::onAdvert(id.pub_key, hp.getType(), hp.hasName() ? hp.getName() : "", hp.hasLatLon(), hp.getIntLat(),
++                   hp.getIntLon(), packet->getSNR(), packet->getPathHashCount(), getRTCClock()->getCurrentTime());
++    }
++  }
++#endif
+ 
+   // if this a zero hop advert (and not via 'Share'), add it to neighbours
+   if (packet->getPathHashCount() == 0 && !isShare(packet)) {
+@@ -1633,6 +1652,10 @@ void MyMesh::loop() {
+     MESH_DEBUG_PRINTLN("Radio params restored");
+   }
+ 
++#ifdef HOPTICS_M7
++  hopticsTick();
++#endif
++
+ #ifdef WITH_WEBCONFIG
+   if (_webconfig) {
+     _webconfig->tick(millis());
+@@ -2224,3 +2247,87 @@ bool MyMesh::startNeighborDiscover(char* reply, bool periodic) {
+   return true;
+ }
+ #endif // WITH_MQTT_NEIGHBORS
++
++#ifdef HOPTICS_M7
++// Hoptics dashboard data: neighbours every 15 s, a sample every 5 minutes, and the web page kept running whenever
++// the network is up (it is the node's main screen).
++void MyMesh::hopticsTick() {
++  static uint32_t next_nbr = 0, next_sample = 0, next_web = 0;
++  static bool started = false;
++  uint32_t now = millis();
++  if (!started) {
++    hx::begin();
++    started = true;
++    next_sample = now + 300000UL;
++  }
++  if ((int32_t)(now - next_nbr) >= 0) {
++    next_nbr = now + 15000UL;
++    hx::setSelf(self_id.pub_key, _prefs.node_name, _prefs.node_lat, _prefs.node_lon);
++#if MAX_NEIGHBOURS
++    hx::Neighbour list[MAX_NEIGHBOURS];
++    int n = 0;
++    for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++      if (neighbours[i].heard_timestamp == 0) continue;
++      memcpy(list[n].pub, neighbours[i].id.pub_key, 4);
++      list[n].snr4 = neighbours[i].snr;
++      list[n].heard = neighbours[i].heard_timestamp;
++      list[n].advert = neighbours[i].advert_timestamp;
++      n++;
++    }
++    hx::setNeighbours(list, n);
++#endif
++  }
++  if ((int32_t)(now - next_sample) >= 0) {
++    next_sample += 300000UL;
++    hx::Sample s;
++    s.t = getRTCClock()->getCurrentTime();
++    s.up = uptime_millis / 1000;
++    s.noise = (int16_t)_radio->getNoiseFloor();
++    s.tx_ms = getTotalAirTime();
++    s.rx_ms = getReceiveAirTime();
++    s.recv = radio_driver.getPacketsRecv();
++    s.sent = radio_driver.getPacketsSent();
++    s.recv_flood = getNumRecvFlood();
++    s.recv_direct = getNumRecvDirect();
++    s.sent_flood = getNumSentFlood();
++    s.sent_direct = getNumSentDirect();
++    s.rx_err = radio_driver.getPacketsRecvErrors();
++    s.nbr_strong = 0;
++    int snr_sum = 0;
++#if MAX_NEIGHBOURS
++    const uint32_t rtc = getRTCClock()->getCurrentTime();
++    for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++      const NeighbourInfo& nb = neighbours[i];
++      if (nb.heard_timestamp == 0 || nb.snr < 0 || rtc - nb.heard_timestamp > 86400) continue;
++      s.nbr_strong++;
++      snr_sum += nb.snr;
++    }
++#endif
++    s.nbr_snr4 = s.nbr_strong ? snr_sum / s.nbr_strong : 0;
++    s.mqtt_ok = s.mqtt_err = 0;
++#ifdef WITH_MQTT_BRIDGE
++    for (int i = 0; i < RUNTIME_MQTT_SLOTS; i++) {
++      MQTTBridge::SlotStatusSnapshot ss;
++      if (!MQTTBridge::getSlotStatusSnapshot(i, &ss)) continue;
++      s.mqtt_ok += ss.publish_ok;
++      s.mqtt_err += ss.publish_err;
++    }
++#endif
++    s.heap = ESP.getFreeHeap();
++    s.temp = (int16_t)temperatureRead();
++    hx::addSample(s);
++  }
++#ifdef WITH_WEBCONFIG
++  if ((int32_t)(now - next_web) >= 0) {
++    next_web = now + 10000UL;
++    // leave port 80 alone while `start ota` holds it
++    if (!_webconfig && activeNetworkLink().isConnected() &&
++        HttpPort80Lease::current().load() == HttpPort80Lease::Owner::None) {
++      char reply[160];
++      startWebConfig(false, reply);
++      Serial.printf("Hoptics: %s\n", reply);
++    }
++  }
++#endif
++}
++#endif
+diff --git a/examples/simple_room_server/MyMesh.h b/examples/simple_room_server/MyMesh.h
+index cc8600b..d3c67b3 100644
+--- a/examples/simple_room_server/MyMesh.h
++++ b/examples/simple_room_server/MyMesh.h
+@@ -242,6 +242,9 @@ protected:
+ 
+   void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override;
+   void logRx(mesh::Packet* pkt, int len, float score) override;
++#ifdef HOPTICS_M7
++  void hopticsTick();
++#endif
+   void logTx(mesh::Packet* pkt, int len) override;
+   void logTxFail(mesh::Packet* pkt, int len) override;
+ 
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
 index 167e5cd..5ca1592 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
@@ -412,25 +574,44 @@ index bdd3e27..7a815db 100644
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..9df476f 100644
+index 4bd316b..d0abf80 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
-@@ -290,3 +290,18 @@ lib_deps =
+@@ -290,3 +290,37 @@ lib_deps =
    JChristensen/Timezone
    paulstoffregen/Time@1.6.1
    0neblock/SNMP_Agent
 +
-+; ---------------------------------------------------------------- Hoptics M7 (observer + repeater, dashboard)
++; ---------------------------------------------------------------- Hoptics M7 (dashboard builds)
++[hoptics_m7]
++build_flags =
++  -D HOPTICS_M7
++  -D HOPTICS_M7_VERSION='"0.3.3"'
++  -D ENABLE_ADVERT_ON_BOOT=1
++
 +[env:Hoptics_M7_repeater_observer]
 +extends = env:ThinkNode_M7_repeater_observer_mqtt
 +build_flags =
 +  ${env:ThinkNode_M7_repeater_observer_mqtt.build_flags}
-+  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.3.2"'
-+  -D ENABLE_ADVERT_ON_BOOT=1
++  ${hoptics_m7.build_flags}
++  -D HOPTICS_M7_ROLE='"repeater"'
 +  -UADVERT_NAME
 +  -D ADVERT_NAME='"Hoptics M7"'
 +build_src_filter =
 +  ${env:ThinkNode_M7_repeater_observer_mqtt.build_src_filter}
++  +<helpers/esp32/HopticsData.cpp>
++  +<helpers/esp32/HopticsRegion.cpp>
++
++; ---------------------------------------------------------------- Hoptics M7 (observer + room server, dashboard)
++[env:Hoptics_M7_room_observer]
++extends = env:ThinkNode_M7_room_server_observer_mqtt
++build_flags =
++  ${env:ThinkNode_M7_room_server_observer_mqtt.build_flags}
++  ${hoptics_m7.build_flags}
++  -D HOPTICS_M7_ROLE='"room"'
++  -UADVERT_NAME
++  -D ADVERT_NAME='"Hoptics M7 Room"'
++build_src_filter =
++  ${env:ThinkNode_M7_room_server_observer_mqtt.build_src_filter}
 +  +<helpers/esp32/HopticsData.cpp>
 +  +<helpers/esp32/HopticsRegion.cpp>

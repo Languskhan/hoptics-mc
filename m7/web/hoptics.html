@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>Hoptics M7</title>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://unpkg.com; connect-src 'self'; form-action 'self'; base-uri 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://unpkg.com; connect-src 'self' https://raw.githubusercontent.com; form-action 'self'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
 <style>
@@ -163,6 +163,8 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
       <div class="bar" style="margin:8px 0"><i id="upbar" style="width:0"></i></div><div id="upmsg" class="dim"></div>
       <p class="dim">New builds: <a href="https://github.com/Languskhan/hoptics-mc/tree/m7-builds/Hoptics_M7_repeater_observer" target="_blank" rel="noopener">Hoptics M7 downloads ↗</a></p></div>
   </div>
+  <div class="card glass"><h3>Role</h3><div id="rolecard"><span class="dim">Loading...</span></div></div>
+  <div class="card glass"><h3>Updates</h3><div class="row"><button class="b" id="chk">Check for updates</button><span class="dim" id="chkmsg"></span></div></div>
   <div class="card glass"><h3>Restart</h3><div class="row"><button class="b" id="reboot">Restart node</button><span class="dim">History in memory is cleared by a restart.</span></div></div>
 </section>
 <section id="t-console">
@@ -694,7 +696,9 @@ function renderSystem(){const st=S.stats,sf=S.self;if(!st||!sf)return;
 $("upgo").onclick=()=>{const f=$("upfile").files[0];if(!f){$("upmsg").textContent="Choose a file first.";return}
   if(!/\.bin$/i.test(f.name)||f.size<500000||f.size>3300000){$("upmsg").textContent="That doesn't look like a firmware .update.bin file.";return}
   if(/factory/i.test(f.name)){$("upmsg").textContent="Use the .update.bin file, not the factory one.";return}
-  const fd=new FormData();fd.append("firmware",f,f.name);const x=new XMLHttpRequest();x.open("POST","/api/hx/update");
+  sendFirmware(f,f.name)};
+function sendFirmware(blob,name){
+  const fd=new FormData();fd.append("firmware",blob,name);const x=new XMLHttpRequest();x.open("POST","/api/hx/update");
   $("upgo").disabled=true;$("upmsg").textContent="Uploading...";
   let waiting=false;
   const comeBack=()=>{if(waiting)return;waiting=true;$("upmsg").textContent="Checking and installing, then restarting...";const t0=Date.now();
@@ -704,7 +708,59 @@ $("upgo").onclick=()=>{const f=$("upfile").files[0];if(!f){$("upmsg").textConten
   x.onload=()=>{let j={};try{j=JSON.parse(x.responseText)}catch(e){}
     if(x.status===200)comeBack();
     else{$("upmsg").textContent="Update failed: "+(j.error||x.status);$("upgo").disabled=false}};
-  x.onerror=()=>{$("upmsg").textContent="Upload interrupted. Check the connection and try again.";$("upgo").disabled=false};x.send(fd)};
+  x.onerror=()=>{$("upmsg").textContent="Upload interrupted. Check the connection and try again.";$("upgo").disabled=false};x.send(fd)}
+
+// ---- builds on GitHub: the browser downloads them over HTTPS, checks the SHA-256 against the published list,
+// then hands them to the node, which checks the image again before switching to it.
+const BUILDS="https://raw.githubusercontent.com/Languskhan/hoptics-mc/m7-builds/";
+const ROLES=[
+ {id:"observer",env:"Hoptics_M7_repeater_observer",name:"Observer only",dash:1,repeat:false,desc:"Listens and uploads to MQTT; doesn't resend anything. The safest choice where repeaters already cover the area."},
+ {id:"repeater",env:"Hoptics_M7_repeater_observer",name:"Observer + repeater",dash:1,repeat:true,desc:"Uploads to MQTT and resends packets for others. Helps where coverage is thin."},
+ {id:"room",env:"Hoptics_M7_room_observer",name:"Observer + room server",dash:1,desc:"Uploads to MQTT and hosts a message board people can log in to."},
+ {id:"comp_eth",env:"ThinkNode_M7_companion_radio_ethernet",name:"Companion (Ethernet)",desc:"Your own radio for the MeshCore app, over the network (port 5000)."},
+ {id:"comp_ble",env:"ThinkNode_M7_companion_radio_ble",name:"Companion (Bluetooth)",desc:"Your own radio for the MeshCore app, over Bluetooth."},
+ {id:"comp_usb",env:"ThinkNode_M7_companion_radio_usb",name:"Companion (USB)",desc:"Your own radio for the MeshCore app or a computer, over USB."},
+ {id:"kiss",env:"ThinkNode_M7_kiss_modem",name:"KISS modem",desc:"A plain radio modem for other software (no mesh logic)."}];
+async function fetchBuild(env,msg){
+  msg("Downloading the "+env+" build...");
+  const sums=await (await fetch(BUILDS+env+"/SHA256SUMS.txt",{cache:"no-store"})).text();
+  const m=sums.match(new RegExp("^([0-9a-f]{64})\\s+\\*?"+env+"\\.update\\.bin$","m"));if(!m)throw new Error("no checksum published for this build");
+  const r=await fetch(BUILDS+env+"/"+env+".update.bin",{cache:"no-store"});if(!r.ok)throw new Error("download failed ("+r.status+")");
+  const b=new Uint8Array(await r.arrayBuffer());if(b.length<500000||b.length>3300000)throw new Error("unexpected size");
+  msg("Checking the download...");await sleep(30);
+  if(hex(SHA.sha256(b))!==m[1])throw new Error("checksum doesn't match: not installing");
+  return new Blob([b])}
+function roleNow(){const r=S.self&&S.self.role;if(r==="room")return"room";return S.repeat===false?"observer":"repeater"}
+function roleImpact(t){const nb=strongNbrs().length,air=airLastHour(),W=[];
+  if(t.repeat===true){if(nb>=3)W.push(["warn",`This spot already hears ${nb} repeaters with strong signal; another one here mostly adds airtime and collisions.`]);
+    if(air!=null&&air>25)W.push(["bad",`The channel is busy (${air.toFixed(0)} % airtime). Repeating adds to it.`]);
+    if(!W.length)W.push(["ok","Nothing here suggests repeating would crowd the channel."])}
+  if(t.repeat===false){if(S.nbrs.length<=1)W.push(["warn",`This node hears ${S.nbrs.length} other repeater${S.nbrs.length===1?"":"s"} directly. If nothing else covers this area, people nearby lose a link.`]);
+    else W.push(["ok","Other repeaters are heard here, so turning repeat off shouldn't leave anyone stranded."])}
+  if(t.id==="room")W.push(["info","MeshCore advises running a room server and a busy repeater on separate devices. This build keeps the observer; check repeat stays off in a crowded spot."]);
+  if(!t.dash)W.push(["bad","This build has no Hoptics dashboard and no web update. It stops uploading to MQTT. Coming back to Hoptics needs a USB cable and the install page."]);
+  W.push(["info","Keeps: the node's key (same ID on the mesh), name, radio settings and passwords. Builds are downloaded from GitHub and checked before installing."]);
+  return W.map(([c,t])=>`<div class="msg ${c==="warn"?"":c}"><div class="why" style="margin:0">${t}</div></div>`).join("")}
+function renderRole(){const now=roleNow();
+  $("rolecard").innerHTML=`<p>Now: <b>${esc((ROLES.find(r=>r.id===now)||{}).name||now)}</b></p><div class="row"><select id="rolesel">${ROLES.map(r=>`<option value="${r.id}" ${r.id===now?"selected":""}>${esc(r.name)}${r.dash?"":" (no dashboard)"}</option>`).join("")}</select><button class="b p" id="rolego">Switch</button></div><div id="roledesc"></div><div id="rolemsg" class="dim"></div>`;
+  const show=()=>{const t=ROLES.find(r=>r.id===$("rolesel").value);$("roledesc").innerHTML=`<p class="dim">${esc(t.desc)}</p>`+(t.id===now?"":roleImpact(t))};
+  $("rolesel").onchange=show;show();
+  $("rolego").onclick=async()=>{const t=ROLES.find(r=>r.id===$("rolesel").value);if(t.id===now)return;const msg=x=>$("rolemsg").textContent=x;
+    if(!t.dash&&!confirm(t.name+" has no dashboard. You'll need USB to come back to Hoptics. Continue?"))return;
+    if(!confirm("Switch this node to "+t.name+"?"))return;
+    try{const sameImage=(S.self.role!=="room")===(t.env==="Hoptics_M7_repeater_observer");
+      if(sameImage&&t.repeat!=null){msg("Applying...");const r=await cli(["set repeat "+(t.repeat?"on":"off")]);S.repeat=t.repeat;msg(val(r[0])||"Done");setTimeout(renderRole,800);return}
+      const blob=await fetchBuild(t.env,msg);if(t.repeat!=null)await cli(["set repeat "+(t.repeat?"on":"off")]).catch(()=>{});
+      setTab("system");sendFirmware(blob,t.env+".update.bin");msg("Installing; the node restarts in its new role.")}
+    catch(e){msg("Didn't switch: "+e.message)}}}
+$("chk").onclick=async()=>{const env=S.self&&S.self.role==="room"?"Hoptics_M7_room_observer":"Hoptics_M7_repeater_observer";const msg=x=>$("chkmsg").innerHTML=x;
+  msg("Checking...");try{const v=(await (await fetch(BUILDS+env+"/version.txt",{cache:"no-store"})).text()).trim();
+    if(!/^[0-9.]+$/.test(v))throw new Error("no version published");
+    const newer=v.split(".").map(Number).some((n,i,a)=>{const c=(S.self.version||"0").split(".").map(Number);for(let k=0;k<a.length;k++){if((a[k]||0)!==(c[k]||0))return(a[k]||0)>(c[k]||0)}return false});
+    if(!newer){msg("Up to date (v"+esc(S.self.version)+").");return}
+    msg(`Version ${esc(v)} is available. <button class="b p" id="instnew">Install</button>`);
+    $("instnew").onclick=async()=>{try{const blob=await fetchBuild(env,x=>msg(esc(x)));sendFirmware(blob,env+".update.bin");msg("Installing...")}catch(e){msg("Didn't install: "+esc(e.message))}}}
+  catch(e){msg("Couldn't check: "+esc(e.message))}};
 $("reboot").onclick=async()=>{if(!confirm("Restart the node now?"))return;try{await api("/api/reboot",{method:"POST"});$("upmsg").textContent="Restarting...";setTimeout(()=>location.reload(),25000)}catch(e){}};
 
 // ================================================================ console
@@ -714,7 +770,7 @@ $("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
 
 // ================================================================ loop
 function safe(f){try{f()}catch(e){console.error("Hoptics:",e)}}
-function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system")safe(renderSystem)}
+function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!$("rolesel")||document.activeElement!==$("rolesel")&&!S.roleDrawn){safe(renderRole);S.roleDrawn=1}}}
 let started=false;
 async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);

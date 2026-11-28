@@ -19,6 +19,7 @@ jobs:
       matrix:
         env:
           - Hoptics_M7_repeater_observer
+          - Hoptics_M7_room_observer
           - ThinkNode_M7_repeater_observer_mqtt
           - ThinkNode_M7_room_server_observer_mqtt
           - ThinkNode_M7_repeater
@@ -70,6 +71,8 @@ jobs:
           [ -f $B/firmware-merged.bin ] && cp $B/firmware-merged.bin $OUT/${{ matrix.env }}.factory.bin
           cp $B/partitions.bin $OUT/ 2>/dev/null || true
           (cd $OUT && sha256sum *.bin > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          # the dashboard reads this to offer updates and role changes
+          grep -o "HOPTICS_M7_VERSION='\"[0-9.]*\"'" mc/variants/thinknode_m7/platformio.ini | head -1 | grep -o '[0-9][0-9.]*' > $OUT/version.txt || true
 
       - uses: actions/upload-artifact@v4
         with:

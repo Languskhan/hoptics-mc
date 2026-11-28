@@ -385,7 +385,13 @@ void writeSelf(Print& out) {
   jsonStr(out, self_name);
   out.print(",\"id\":\"");
   for (int i = 0; i < 32; i++) out.printf("%02x", self_pub[i]);
-  out.printf("\",\"lat\":%.6f,\"lon\":%.6f,\"uptime\":%lu,\"psram\":%u,\"version\":\"%s\"}", self_lat, self_lon,
+  out.printf("\",\"role\":\"%s\",\"lat\":%.6f,\"lon\":%.6f,\"uptime\":%lu,\"psram\":%u,\"version\":\"%s\"}",
+#ifdef HOPTICS_M7_ROLE
+             HOPTICS_M7_ROLE,
+#else
+             "repeater",
+#endif
+             self_lat, self_lon,
              (unsigned long)(millis() / 1000), (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
 #ifdef HOPTICS_M7_VERSION
              HOPTICS_M7_VERSION
