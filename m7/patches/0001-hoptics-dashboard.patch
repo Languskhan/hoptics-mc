@@ -306,7 +306,7 @@ index 167e5cd..5ca1592 100644
 +void WebConfigServer::hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final) {
 +  if (index == 0) {
 +    if (s_hx_up_req && s_hx_up_req != req) return;  // another upload is running; this one gets 409
-+    if (_mode != MODE_LAN || !checkAuth(req) || !hxSameOrigin(req)) return;
++    if (_mode != MODE_LAN || !checkAuth(req) || !hxSameOrigin(req) || !req->hasHeader("X-Hoptics")) return;  // the dashboard alone sends it
 +    if (len < 16 || data[0] != 0xE9 || data[12] != 0x09 || data[13] != 0x00) {  // image magic, chip id ESP32-S3
 +      s_hx_up_req = req;
 +      s_hx_up_ok = false;

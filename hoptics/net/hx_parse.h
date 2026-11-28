@@ -31,9 +31,17 @@ const char *value(const char *p, const char *end, Value &v);
 bool is(const Value &key, const char *name); // a key (as read, escapes not undone) is this name
 bool text(const Value &v, char *out, size_t n); // a string, decoded to UTF-8; false: not a string, or too long
 double number(const Value &v, double def);      // a number (def if it isn't one)
+// a whole number in [lo, hi]: def when it isn't a number, isn't finite or is out of range (a cast of 1e30 to an int is
+// undefined in C++, so a backup file can't set a field to whatever that cast happens to give)
+long integer(const Value &v, long lo, long hi, long def);
 bool hex(const Value &v, uint8_t *out, size_t n); // a string of exactly 2n hex digits
+// a Host header that names this node on the local network: an IP address, a one-word name, or a name under .local,
+// .lan, .home, .home.arpa, .internal or .localdomain (the port ignored). Anything else is a name on the internet: a
+// website pointing its own name at the node (DNS rebinding) to try PINs from a visitor's browser. No header: true
+bool localHost(const char *host);
 // the JSON string whose opening quote is just before p, decoded to UTF-8 (\n, \t and control characters become
-// spaces, \uXXXX and surrogate pairs become UTF-8). False: too long for out, or it never ends
+// spaces, \uXXXX and surrogate pairs become UTF-8, half a pair becomes U+FFFD). False: too long for out, it never ends, or a
+// \u isn't followed by four hex digits
 bool jsonText(const char *p, char *out, size_t n);
 // s as a JSON string. Text from the radio is strangers' text: quotes, backslashes, control characters and <>& are
 // escaped, so it can only ever be a string in the page

@@ -14,8 +14,8 @@ permissions:
 
 jobs:
   # quick checks on a PC, beside the firmware builds: static analysis, the web page's crypto and decoder, the web
-  # server's path and JSON checks and the feed parser under ASan/UBSan, and every screen rendered (the screenshots
-  # are kept for review)
+  # server's path and JSON checks and the feed parser under ASan/UBSan, the same parsers fuzzed, and every screen
+  # rendered (the screenshots are kept for review)
   checks:
     runs-on: ubuntu-latest
     steps:
@@ -40,6 +40,12 @@ jobs:
       - name: Feed parser and WebSocket client (ASan/UBSan)
         timeout-minutes: 5
         run: bash harness/feed/run.sh
+
+      - name: Fuzz the parsers that read strangers' input (libFuzzer, ASan/UBSan)
+        timeout-minutes: 8
+        run: |
+          sudo apt-get install -y -qq clang libclang-rt-18-dev > /dev/null
+          bash harness/fuzz/run.sh 90
 
       - uses: actions/cache@v4
         with:

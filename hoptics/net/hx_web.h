@@ -23,14 +23,16 @@ struct Query {
     // once taken and frees it (free()) when done
     char *data = nullptr;
     size_t len = 0;
-    enum Part : uint8_t { CONTACTS = 1, CHANNELS = 2, SETTINGS = 4 };
+    enum Part : uint8_t { CONTACTS = 1, CHANNELS = 2, SETTINGS = 4, KEYS = 8 }; // KEYS: BACKUP with private channel keys
     uint8_t parts = 0;
 };
 
 bool start(uint16_t port); // true once serving (again a no-op)
 void stop();
 bool running();
-void setPin(const char *pin); // six digits; a new PIN signs every browser out
+void setPin(const char *pin); // six digits; a new PIN signs every browser out (and clears every wrong-PIN lock)
+// the live feed's server, as set on the node: the page may open a WebSocket to it and to nowhere else (its CSP)
+void setFeed(const char *url);
 uint8_t sessions();           // browsers signed in now
 void tick();                  // main loop: now and then, saves how long each sign-in has left (it survives a restart)
 

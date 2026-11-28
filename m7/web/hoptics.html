@@ -694,7 +694,7 @@ function renderSystem(){const st=S.stats,sf=S.self;if(!st||!sf)return;
 $("upgo").onclick=()=>{const f=$("upfile").files[0];if(!f){$("upmsg").textContent="Choose a file first.";return}
   if(!/\.bin$/i.test(f.name)||f.size<500000||f.size>3300000){$("upmsg").textContent="That doesn't look like a firmware .update.bin file.";return}
   if(/factory/i.test(f.name)){$("upmsg").textContent="Use the .update.bin file, not the factory one.";return}
-  const fd=new FormData();fd.append("firmware",f,f.name);const x=new XMLHttpRequest();x.open("POST","/api/hx/update");
+  const fd=new FormData();fd.append("firmware",f,f.name);const x=new XMLHttpRequest();x.open("POST","/api/hx/update");x.setRequestHeader("X-Hoptics","1");
   $("upgo").disabled=true;$("upmsg").textContent="Uploading...";
   let waiting=false;
   const comeBack=()=>{if(waiting)return;waiting=true;$("upmsg").textContent="Checking and installing, then restarting...";const t0=Date.now();
