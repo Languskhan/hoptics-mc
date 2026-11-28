@@ -152,6 +152,17 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 <section id="t-advisor">
   <div class="card glass"><h3>Settings advisor</h3><div id="adv"><span class="dim">Loading...</span></div></div>
 </section>
+<section id="t-system">
+  <div class="two">
+    <div class="card glass"><h3>Firmware</h3><div id="sysinfo"></div></div>
+    <div class="card glass"><h3>Update</h3>
+      <p class="dim">Choose a Hoptics M7 <b>.update.bin</b> file. Settings, keys and MQTT servers are kept. The node restarts when it's done.</p>
+      <div class="row"><input type="file" id="upfile" accept=".bin"><button class="b p" id="upgo">Update</button></div>
+      <div class="bar" style="margin:8px 0"><i id="upbar" style="width:0"></i></div><div id="upmsg" class="dim"></div>
+      <p class="dim">New builds: <a href="https://github.com/Languskhan/hoptics-mc/tree/m7-builds/Hoptics_M7_repeater_observer" target="_blank" rel="noopener">Hoptics M7 downloads ↗</a></p></div>
+  </div>
+  <div class="card glass"><h3>Restart</h3><div class="row"><button class="b" id="reboot">Restart node</button><span class="dim">History in memory is cleared by a restart.</span></div></div>
+</section>
 <section id="t-console">
   <div class="card glass"><div class="row"><input id="cmd" style="flex:1" placeholder="Command, e.g. get txdelay"><button class="b p" id="run">Run</button></div>
   <pre id="cout"></pre></div>
@@ -332,11 +343,11 @@ function cli(cmds){
 const val=r=>String(r||"").replace(/^\s*-?>\s*/,"").replace(/^>\s*/,"").trim();
 
 // ================================================================ tabs
-const TABS=[["overview","Overview"],["graphs","Graphs"],["map","Live map"],["nbrs","Neighbours"],["packets","Packets"],["insights","Insights"],["mqtt","MQTT"],["advisor","Advisor"],["console","Console"]];
+const TABS=[["overview","Overview"],["graphs","Graphs"],["map","Live map"],["nbrs","Neighbours"],["packets","Packets"],["insights","Insights"],["mqtt","MQTT"],["advisor","Advisor"],["console","Console"],["system","System"]];
 let tab="overview";
 TABS.forEach(([id,label])=>{const b=document.createElement("button");b.textContent=label;b.onclick=()=>setTab(id);b.id="b-"+id;$("tabs").appendChild(b)});
 function setTab(id){if(!TABS.some(t=>t[0]===id))id="overview";tab=id;TABS.forEach(([t])=>{$("t-"+t).classList.toggle("on",t===id);$("b-"+t).classList.toggle("on",t===id)});
-  if(id==="map")initMap();if(id==="advisor")loadAdvisor();history.replaceState(null,"","#"+id);render()}
+  if(id==="map"){initMap();if(mapReady)setTimeout(()=>{map.invalidateSize();renderMapNodes(!S.mapFit);S.mapFit=1},60)}if(id==="advisor")loadAdvisor();history.replaceState(null,"","#"+id);render()}
 TYPES.forEach((t,i)=>{if(t){const o=document.createElement("option");o.value=i;o.textContent=t;$("pf").appendChild(o)}});
 
 // ================================================================ data
@@ -397,7 +408,7 @@ const scoreCol=s=>s==null?"#7d8a97":s>=80?"#46e08a":s>=60?"#f4b740":"#ff6b6b";
 // ================================================================ charts: sharp on any screen, hover read-out, click for details
 function chart(cv,series,opt){
   const box=cv.parentElement,tip=box.querySelector(".tip");
-  const dpr=Math.min(devicePixelRatio||1,3),w=cv.clientWidth,h=cv.clientHeight;cv.width=w*dpr;cv.height=h*dpr;
+  const dpr=Math.min(devicePixelRatio||1,3),w=cv.clientWidth,h=cv.clientHeight;if(w<40||h<40)return;cv.width=w*dpr;cv.height=h*dpr;
   const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
   const pts=series.flatMap(s=>s.d.filter(p=>p[1]!=null));
   if(!pts.length){c.fillStyle="#9aa7b4";c.font="13px -apple-system,Segoe UI,sans-serif";c.fillText("No data yet: a point is added every 5 minutes.",12,24);cv.onmousemove=cv.onclick=null;return}
@@ -522,7 +533,7 @@ async function openPacket(p){
 
 // ================================================================ overview
 function tile(k,v,s,col){return`<div class="tile glass"><div class="k">${k}</div><div class="v" style="${col?"color:"+col:""}">${v}</div><div class="s">${s||""}</div></div>`}
-function ring(cv,v){const dpr=Math.min(devicePixelRatio||1,3),w=cv.clientWidth,h=cv.clientHeight;cv.width=w*dpr;cv.height=h*dpr;const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);
+function ring(cv,v){const dpr=Math.min(devicePixelRatio||1,3),w=cv.clientWidth,h=cv.clientHeight;if(w<20||h<20)return;cv.width=w*dpr;cv.height=h*dpr;const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);
   const r=Math.min(w,h)/2-8;c.lineWidth=10;c.lineCap="round";c.strokeStyle="rgba(255,255,255,.08)";c.beginPath();c.arc(w/2,h/2,r,0,6.283);c.stroke();
   if(v!=null){const g=c.createLinearGradient(0,0,w,h);g.addColorStop(0,scoreCol(v));g.addColorStop(1,"#3fd6e0");c.strokeStyle=g;c.beginPath();c.arc(w/2,h/2,r,-1.571,-1.571+6.283*v/100);c.stroke()}}
 function renderOverview(){
@@ -566,7 +577,7 @@ function initMap(){
   if(mapReady)return;if(!window.L){$("mapnote").textContent="The map needs an internet connection on this computer.";return}
   map=L.map("map",{zoomControl:true});
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{maxZoom:19,subdomains:"abcd",attribution:"© OpenStreetMap © CARTO"}).addTo(map);
-  nodeLayer=L.layerGroup().addTo(map);lineLayer=L.layerGroup().addTo(map);mapReady=true;renderMapNodes(true)}
+  nodeLayer=L.layerGroup().addTo(map);lineLayer=L.layerGroup().addTo(map);mapReady=true}
 function renderMapNodes(fit){if(!mapReady)return;nodeLayer.clearLayers();const pts=[];
   S.nodes.filter(n=>n.lat!=null).forEach(n=>{const col=n.type===2?"#46e08a":n.type===3?"#a78bfa":n.type===1?"#5b9dff":"#f4b740";
     L.circleMarker([n.lat,n.lon],{radius:n.type===2?7:5,color:col,weight:2,fillColor:col,fillOpacity:.55}).bindTooltip(`<b>${esc(n.name||n.id)}</b><br>${ADV[n.type]||""} · ${n.hops} hops · ${n.snr} dB${distTo(n)!=null?" · "+fmtKm(distTo(n)):""}`).addTo(nodeLayer);pts.push([n.lat,n.lon])});
@@ -664,13 +675,30 @@ async function loadAdvisor(){
   $("adv").querySelectorAll("[data-set]").forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent="Applying...";
     try{const r=await cli(["set "+b.dataset.set]);b.textContent=val(r[0]).slice(0,30)||"Done"}catch(e){b.textContent="Failed"}setTimeout(loadAdvisor,1500)})}
 
+// ================================================================ system
+function renderSystem(){const st=S.stats,sf=S.self;if(!st||!sf)return;
+  $("sysinfo").innerHTML=kv([["Version","Hoptics M7 "+esc(sf.version)],["Name",esc(sf.name)],["Uptime",dur(st.uptime_s)],["Network",esc(st.network_medium)+" "+esc(st.ip)],
+    ["Free memory",Math.round(st.heap_free/1024)+" KB (lowest "+Math.round(st.heap_min/1024)+" KB)"],["Free PSRAM",Math.round(sf.psram/1024)+" KB"],["Public key",`<code style="word-break:break-all">${esc(sf.id)}</code>`]])}
+$("upgo").onclick=()=>{const f=$("upfile").files[0];if(!f){$("upmsg").textContent="Choose a file first.";return}
+  if(!/\.bin$/i.test(f.name)||f.size<500000||f.size>3300000){$("upmsg").textContent="That doesn't look like a firmware .update.bin file.";return}
+  if(/factory/i.test(f.name)){$("upmsg").textContent="Use the .update.bin file, not the factory one.";return}
+  const fd=new FormData();fd.append("firmware",f,f.name);const x=new XMLHttpRequest();x.open("POST","/api/hx/update");
+  $("upgo").disabled=true;$("upmsg").textContent="Uploading...";
+  x.upload.onprogress=e=>{if(e.lengthComputable){$("upbar").style.width=(e.loaded/e.total*100)+"%";$("upmsg").textContent="Uploading "+Math.round(e.loaded/e.total*100)+" %"}};
+  x.onload=()=>{let j={};try{j=JSON.parse(x.responseText)}catch(e){}
+    if(x.status===200){$("upmsg").textContent="Installed. Restarting; this page reloads in 30 seconds.";setTimeout(()=>location.reload(),30000)}
+    else{$("upmsg").textContent="Update failed: "+(j.error||x.status);$("upgo").disabled=false}};
+  x.onerror=()=>{$("upmsg").textContent="Upload interrupted. Check the connection and try again.";$("upgo").disabled=false};x.send(fd)};
+$("reboot").onclick=async()=>{if(!confirm("Restart the node now?"))return;try{await api("/api/reboot",{method:"POST"});$("upmsg").textContent="Restarting...";setTimeout(()=>location.reload(),25000)}catch(e){}};
+
 // ================================================================ console
 async function runCmd(){const c=$("cmd").value.trim();if(!c)return;$("cmd").value="";$("cout").textContent+="> "+c+"\n";
   try{const r=await cli([c]);$("cout").textContent+=(r[0]||"(no reply)")+"\n"}catch(e){$("cout").textContent+="Error: "+e.message+"\n"}$("cout").scrollTop=1e9}
 $("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
 
 // ================================================================ loop
-function render(){renderOverview();if(tab==="graphs")drawGraphs();if(tab==="nbrs")renderNbrs();if(tab==="packets")renderPk();if(tab==="insights")renderInsights();if(tab==="mqtt")renderMqtt()}
+function safe(f){try{f()}catch(e){console.error("Hoptics:",e)}}
+function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system")safe(renderSystem)}
 let started=false;
 async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);

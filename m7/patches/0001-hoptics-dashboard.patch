@@ -1,16 +1,17 @@
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index 1324da0..92c847a 100644
+index 1324da0..ec12faa 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
-@@ -1,4 +1,7 @@
+@@ -1,4 +1,8 @@
  #include "MyMesh.h"
 +#ifdef HOPTICS_M7
 +#include <helpers/esp32/HopticsData.h>
++#include <helpers/esp32/HttpPort80Lease.h>
 +#endif
  #include <algorithm>
  #include <climits>
  #include <stdlib.h>  // for qsort()
-@@ -586,6 +589,9 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+@@ -586,6 +590,9 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
  }
  
  void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
@@ -20,7 +21,7 @@ index 1324da0..92c847a 100644
  #ifdef DISPLAY_ACTIVITY_DASHBOARD
    // Valid parsed RF packet: the only event the dashboard's window counts.
    _activity.recordPacket(millis(), (uint16_t)len, _radio->getEstAirtimeFor(len),
-@@ -621,6 +627,9 @@ void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
+@@ -621,6 +628,9 @@ void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
  }
  
  void MyMesh::logTx(mesh::Packet *pkt, int len) {
@@ -30,7 +31,7 @@ index 1324da0..92c847a 100644
  #if defined(WITH_MQTT_NEIGHBORS)
    if (neighbor_discover_active && pkt == neighbor_discover_request
        && neighbor_discover_next < neighbor_discover_count) {
-@@ -822,6 +831,15 @@ static bool isShare(const mesh::Packet *packet) {
+@@ -822,6 +832,15 @@ static bool isShare(const mesh::Packet *packet) {
  void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32_t timestamp,
                            const uint8_t *app_data, size_t app_data_len) {
    mesh::Mesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len); // chain to super impl
@@ -46,7 +47,7 @@ index 1324da0..92c847a 100644
  
    // if this a zero hop advert (and not via 'Share'), add it to neighbours
    if (packet->getPathHashCount() == 0 && !isShare(packet)) {
-@@ -1870,6 +1888,10 @@ void MyMesh::loop() {
+@@ -1870,6 +1889,10 @@ void MyMesh::loop() {
    }
  #endif
  
@@ -57,7 +58,7 @@ index 1324da0..92c847a 100644
  #ifdef WITH_WEBCONFIG
    if (_webconfig) {
      _webconfig->tick(millis());
-@@ -2459,3 +2481,85 @@ bool MyMesh::hasPendingWork() const {
+@@ -2459,3 +2482,87 @@ bool MyMesh::hasPendingWork() const {
  #endif
    return _mgr->getOutboundCount(0xFFFFFFFF) > 0;
  }
@@ -134,7 +135,9 @@ index 1324da0..92c847a 100644
 +#ifdef WITH_WEBCONFIG
 +  if ((int32_t)(now - next_web) >= 0) {
 +    next_web = now + 10000UL;
-+    if (!_webconfig && activeNetworkLink().isConnected()) {
++    // leave port 80 alone while `start ota` holds it
++    if (!_webconfig && activeNetworkLink().isConnected() &&
++        HttpPort80Lease::current().load() == HttpPort80Lease::Owner::None) {
 +      char reply[160];
 +      startWebConfig(false, reply);
 +      Serial.printf("Hoptics: %s\n", reply);
@@ -158,21 +161,27 @@ index 782a2f4..d225588 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
    int calcRxDelay(float score, uint32_t air_time) const override;
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..97154e0 100644
+index 167e5cd..9874fd5 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
-@@ -735,6 +735,10 @@ void WebConfigServer::registerRoutes() {
+@@ -735,6 +735,16 @@ void WebConfigServer::registerRoutes() {
    _server->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleScan); });
    _server->on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleReboot); });
    _server->on("/api/portal/exit", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handlePortalExit); });
 +#ifdef HOPTICS_M7
 +  _server->on("/hoptics", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxPage); });
 +  _server->on("/api/hx", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxData); });
++  _server->on("/api/hx/update", HTTP_POST,
++      [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxUpdateDone); },
++      [](AsyncWebServerRequest* r, String, size_t index, uint8_t* data, size_t len, bool final) {
++        WebConfigServer* w = _active;
++        if (w) w->hxUpload(r, index, data, len, final);
++      });
 +#endif
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -1631,3 +1635,30 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -1631,3 +1641,65 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -180,6 +189,41 @@ index 167e5cd..97154e0 100644
 +#ifdef HOPTICS_M7
 +#include "HopticsData.h"
 +#include "HopticsPage.h"  // HX_PAGE_GZ / HX_PAGE_GZ_LEN: the dashboard, gzipped at build time
++#include <Update.h>
++
++// Firmware update from the dashboard: the .update.bin is streamed into the spare app slot; the node restarts
++// on the new image only if the whole file arrived and verified.
++void WebConfigServer::hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final) {
++  if (index == 0) {
++    _hx_up_err[0] = 0;
++    _hx_up_auth = (_mode == MODE_LAN) && checkAuth(req);
++    if (!_hx_up_auth) { strcpy(_hx_up_err, "sign in first"); return; }
++    if (Update.isRunning()) Update.abort();
++    if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) { snprintf(_hx_up_err, sizeof(_hx_up_err), "can't start: %s", Update.errorString()); return; }
++    Serial.println("Hoptics: firmware upload started");
++  }
++  if (!_hx_up_auth || _hx_up_err[0]) return;
++  _last_activity = millis();
++  if (len && Update.write(data, len) != len) {
++    snprintf(_hx_up_err, sizeof(_hx_up_err), "write failed: %s", Update.errorString());
++    Update.abort();
++    return;
++  }
++  if (final && !Update.end(true)) snprintf(_hx_up_err, sizeof(_hx_up_err), "not a valid image: %s", Update.errorString());
++}
++
++void WebConfigServer::handleHxUpdateDone(AsyncWebServerRequest* req) {
++  if (!_hx_up_auth) { req->send(401, "application/json", "{\"error\":\"sign in first\"}"); return; }
++  if (_hx_up_err[0] || !Update.isFinished()) {
++    String e = String("{\"error\":\"") + (_hx_up_err[0] ? _hx_up_err : "upload incomplete") + "\"}";
++    req->send(400, "application/json", e);
++    return;
++  }
++  Serial.println("Hoptics: firmware updated, restarting");
++  _reboot_at = millis() + 1500;
++  if (_reboot_at == 0) _reboot_at = 1;
++  req->send(200, "application/json", "{\"ok\":true}");
++}
 +
 +void WebConfigServer::handleHxPage(AsyncWebServerRequest* req) {
 +  if (_mode == MODE_OFF) { req->send(503); return; }
@@ -204,22 +248,26 @@ index 167e5cd..97154e0 100644
 +}
 +#endif
 diff --git a/src/helpers/esp32/WebConfigServer.h b/src/helpers/esp32/WebConfigServer.h
-index bdd3e27..3e97918 100644
+index bdd3e27..aefc37b 100644
 --- a/src/helpers/esp32/WebConfigServer.h
 +++ b/src/helpers/esp32/WebConfigServer.h
-@@ -236,6 +236,10 @@ private:
+@@ -236,6 +236,14 @@ private:
    void handleReboot(AsyncWebServerRequest* req);
    void handlePortalExit(AsyncWebServerRequest* req);
    void handleNotFound(AsyncWebServerRequest* req);
 +#ifdef HOPTICS_M7
 +  void handleHxPage(AsyncWebServerRequest* req);
 +  void handleHxData(AsyncWebServerRequest* req);
++  void handleHxUpdateDone(AsyncWebServerRequest* req);
++  void hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final);
++  bool _hx_up_auth = false;
++  char _hx_up_err[64] = "";
 +#endif
  };
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..6b6e612 100644
+index 4bd316b..02c2a89 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
 @@ -290,3 +290,17 @@ lib_deps =
@@ -233,7 +281,7 @@ index 4bd316b..6b6e612 100644
 +build_flags =
 +  ${env:ThinkNode_M7_repeater_observer_mqtt.build_flags}
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.2.0"'
++  -D HOPTICS_M7_VERSION='"0.2.1"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +  -UADVERT_NAME
 +  -D ADVERT_NAME='"Hoptics M7"'
