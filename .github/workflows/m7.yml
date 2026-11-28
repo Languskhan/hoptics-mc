@@ -7,6 +7,9 @@ on:
     paths: ['m7/**', '.github/workflows/m7.yml']
   workflow_dispatch:
 
+permissions:
+  contents: write # publish the images to the m7-builds branch
+
 jobs:
   build:
     name: ${{ matrix.env }}
@@ -70,3 +73,22 @@ jobs:
           name: ${{ matrix.env }}
           path: out/${{ matrix.env }}
           retention-days: 30
+
+  # the images, on a branch of their own (replaced on every build), so they can be fetched with git
+  publish:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - name: Push to m7-builds
+        run: |
+          cd out
+          git init -q -b m7-builds
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "M7 images from ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" m7-builds
