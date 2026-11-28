@@ -323,7 +323,7 @@ index cc8600b..d3c67b3 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
  
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..5ca1592 100644
+index 167e5cd..015849b 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
 @@ -690,8 +690,42 @@ uint32_t WebConfigServer::handlerRefCount() const {
@@ -369,13 +369,14 @@ index 167e5cd..5ca1592 100644
    WebConfigServer* target = NULL;
    portENTER_CRITICAL(&s_wc_route_mux);
    if (_active != NULL) {
-@@ -735,6 +769,16 @@ void WebConfigServer::registerRoutes() {
+@@ -735,6 +769,17 @@ void WebConfigServer::registerRoutes() {
    _server->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleScan); });
    _server->on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleReboot); });
    _server->on("/api/portal/exit", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handlePortalExit); });
 +#ifdef HOPTICS_M7
 +  _server->on("/hoptics", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxPage); });
 +  _server->on("/api/hx", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxData); });
++  _server->on("/api/hx/alerts", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxAlerts); });
 +  _server->on("/api/hx/update", HTTP_POST,
 +      [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxUpdateDone); },
 +      [](AsyncWebServerRequest* r, String, size_t index, uint8_t* data, size_t len, bool final) {
@@ -386,7 +387,7 @@ index 167e5cd..5ca1592 100644
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -856,7 +900,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -856,7 +901,11 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    uint32_t now = millis();
    if (_login_lock_until && (int32_t)(now - _login_lock_until) < 0) {
@@ -398,7 +399,7 @@ index 167e5cd..5ca1592 100644
      return;
    }
    const char* body = (const char*)req->_tempObject;
-@@ -871,7 +919,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -871,7 +920,14 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
                                                 : sizeof(_prefs->password);
    if (!fixedTimeEquals(pwd, expected, expected_size)) {
      if (++_login_fails >= 5) {
@@ -413,7 +414,7 @@ index 167e5cd..5ca1592 100644
        if (_login_lock_until == 0) _login_lock_until = 1;
        _login_fails = 0;
      }
-@@ -880,6 +935,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
+@@ -880,6 +936,17 @@ void WebConfigServer::handleLogin(AsyncWebServerRequest* req) {
    }
    _login_fails = 0;
    _login_lock_until = 0;
@@ -431,7 +432,7 @@ index 167e5cd..5ca1592 100644
    uint32_t generation;
    {
      WCLock lock(_mux);
-@@ -1631,3 +1697,114 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -1631,3 +1698,133 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -520,6 +521,24 @@ index 167e5cd..5ca1592 100644
 +  req->send(200, "application/json", "{\"ok\":true}");
 +}
 +
++// Alert settings: url (blank keeps it, "-" removes it), flags, or test=1. Signed-in admin from this page only.
++void WebConfigServer::handleHxAlerts(AsyncWebServerRequest* req) {
++  if (_mode != MODE_LAN) { req->send(503); return; }
++  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
++  if (!hxSameOrigin(req)) { req->send(403, "application/json", "{\"error\":\"wrong origin\"}"); return; }
++  if (req->hasParam("test", true)) { hx::alertsTest(); req->send(200, "application/json", "{\"ok\":true}"); return; }
++  const String url = req->hasParam("url", true) ? req->getParam("url", true)->value() : String("");
++  const long flags = req->hasParam("flags", true) ? req->getParam("flags", true)->value().toInt() : 0;
++  if (url.length() > 199 || flags < 0 || flags > 255) { req->send(400, "application/json", "{\"error\":\"bad request\"}"); return; }
++  char err[64];
++  if (!hx::alertsConfigure(url.c_str(), (uint8_t)flags, err, sizeof(err))) {
++    String e = String("{\"error\":\"") + err + "\"}";
++    req->send(400, "application/json", e);
++    return;
++  }
++  req->send(200, "application/json", "{\"ok\":true}");
++}
++
 +void WebConfigServer::handleHxPage(AsyncWebServerRequest* req) {
 +  if (_mode == MODE_OFF) { req->send(503); return; }
 +  AsyncWebServerResponse* res = req->beginResponse(200, "text/html", HX_PAGE_GZ, HX_PAGE_GZ_LEN);
@@ -540,6 +559,7 @@ index 167e5cd..5ca1592 100644
 +  if (k == "packets") hx::writePackets(*res, req->hasParam("since") ? strtoul(req->getParam("since")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "history") hx::writeHistory(*res, req->hasParam("from") ? strtoul(req->getParam("from")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "nodes") hx::writeNodes(*res);
++  else if (k == "alerts") hx::writeAlerts(*res);
 +  else if (k == "region") hx::writeRegion(*res, req->hasParam("from") ? strtoul(req->getParam("from")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "raw") hx::writeRaw(*res, req->hasParam("seq") ? strtoul(req->getParam("seq")->value().c_str(), NULL, 10) : 0);
 +  else hx::writeSelf(*res);
@@ -547,7 +567,7 @@ index 167e5cd..5ca1592 100644
 +}
 +#endif
 diff --git a/src/helpers/esp32/WebConfigServer.h b/src/helpers/esp32/WebConfigServer.h
-index bdd3e27..7a815db 100644
+index bdd3e27..4a8d754 100644
 --- a/src/helpers/esp32/WebConfigServer.h
 +++ b/src/helpers/esp32/WebConfigServer.h
 @@ -177,6 +177,9 @@ private:
@@ -560,7 +580,7 @@ index bdd3e27..7a815db 100644
    uint32_t _login_lock_until = 0;
  
    // Once set (via /api/portal/exit), OS captive probes get native "success"
-@@ -236,6 +239,12 @@ private:
+@@ -236,6 +239,13 @@ private:
    void handleReboot(AsyncWebServerRequest* req);
    void handlePortalExit(AsyncWebServerRequest* req);
    void handleNotFound(AsyncWebServerRequest* req);
@@ -568,16 +588,17 @@ index bdd3e27..7a815db 100644
 +  void handleHxPage(AsyncWebServerRequest* req);
 +  void handleHxData(AsyncWebServerRequest* req);
 +  void handleHxUpdateDone(AsyncWebServerRequest* req);
++  void handleHxAlerts(AsyncWebServerRequest* req);
 +  void hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final);
 +#endif
  };
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..d0abf80 100644
+index 4bd316b..08cdbde 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
-@@ -290,3 +290,37 @@ lib_deps =
+@@ -290,3 +290,39 @@ lib_deps =
    JChristensen/Timezone
    paulstoffregen/Time@1.6.1
    0neblock/SNMP_Agent
@@ -586,7 +607,7 @@ index 4bd316b..d0abf80 100644
 +[hoptics_m7]
 +build_flags =
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.3.3"'
++  -D HOPTICS_M7_VERSION='"0.3.4"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +
 +[env:Hoptics_M7_repeater_observer]
@@ -601,6 +622,7 @@ index 4bd316b..d0abf80 100644
 +  ${env:ThinkNode_M7_repeater_observer_mqtt.build_src_filter}
 +  +<helpers/esp32/HopticsData.cpp>
 +  +<helpers/esp32/HopticsRegion.cpp>
++  +<helpers/esp32/HopticsAlerts.cpp>
 +
 +; ---------------------------------------------------------------- Hoptics M7 (observer + room server, dashboard)
 +[env:Hoptics_M7_room_observer]
@@ -615,3 +637,4 @@ index 4bd316b..d0abf80 100644
 +  ${env:ThinkNode_M7_room_server_observer_mqtt.build_src_filter}
 +  +<helpers/esp32/HopticsData.cpp>
 +  +<helpers/esp32/HopticsRegion.cpp>
++  +<helpers/esp32/HopticsAlerts.cpp>

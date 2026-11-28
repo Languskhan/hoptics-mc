@@ -9,6 +9,8 @@ with the Hoptics dashboard at `http://<node-ip>/hoptics`.
   packets with full decoding, insights, MQTT status, settings advisor and console
 - Mesh-impact warnings based on what the node hears at its spot
 - 30 days of 5-minute history, kept on flash so it survives restarts and updates
+- Role switching (observer, repeater, room server, companion, KISS) and one-click updates
+- Discord alerts (optional): quiet repeaters, daily summary, new nodes
 - Web page always on while the network is up; advert at boot
 
 ## How it is built

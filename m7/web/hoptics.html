@@ -165,6 +165,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
   </div>
   <div class="card glass"><h3>Role</h3><div id="rolecard"><span class="dim">Loading...</span></div></div>
   <div class="card glass"><h3>Updates</h3><div class="row"><button class="b" id="chk">Check for updates</button><span class="dim" id="chkmsg"></span></div></div>
+  <div class="card glass"><h3>Discord alerts</h3><div id="alertcard"><span class="dim">Loading...</span></div></div>
   <div class="card glass"><h3>Restart</h3><div class="row"><button class="b" id="reboot">Restart node</button><span class="dim">History in memory is cleared by a restart.</span></div></div>
 </section>
 <section id="t-console">
@@ -753,6 +754,19 @@ function renderRole(){const now=roleNow();
       const blob=await fetchBuild(t.env,msg);if(t.repeat!=null)await cli(["set repeat "+(t.repeat?"on":"off")]).catch(()=>{});
       setTab("system");sendFirmware(blob,t.env+".update.bin");msg("Installing; the node restarts in its new role.")}
     catch(e){msg("Didn't switch: "+e.message)}}}
+// ---- Discord alerts (the link is a secret: the node only ever shows its last 4 characters)
+async function renderAlerts(){let a;try{a=await api("/api/hx?k=alerts")}catch(e){return}
+  const f=a.flags||0,cb=(bit,label)=>`<label style="display:block;margin:4px 0"><input type="checkbox" data-bit="${bit}" ${f&bit?"checked":""}> ${label}</label>`;
+  $("alertcard").innerHTML=`<p class="dim">${a.set?`On: sending to the webhook ending in <code>…${esc(a.hint)}</code>. Sent today: ${a.today}${a.queued?`, ${a.queued} waiting`:""}.`:"Off. Add a Discord webhook link to turn alerts on (Discord: channel settings, Integrations, Webhooks, New Webhook, Copy Webhook URL)."}${a.err?` <span style="color:var(--red)">Last error: ${esc(a.err)}</span>`:""}</p>
+  ${cb(1,"A repeater this node hears directly goes quiet for 6 hours, and when it comes back")}${cb(2,"Daily summary: packets, airtime, noise, nodes heard, MQTT")}${cb(4,"A new node shows up that isn't on the SacMesh map yet")}
+  <div class="row" style="margin-top:8px"><input id="aurl" type="password" autocomplete="off" placeholder="${a.set?"New webhook link (leave empty to keep)":"https://discord.com/api/webhooks/..."}" style="flex:1;min-width:240px">
+  <button class="b p" id="asave">Save</button>${a.set?'<button class="b" id="atest">Send test</button><button class="b" id="aoff">Remove link</button>':""}</div>
+  <p class="dim" style="font-size:12px">At most one message a minute and 40 a day. Node names are sent as plain text and can't ping anyone.</p><div id="amsg" class="dim"></div>`;
+  const send=async body=>{const r=await fetch("/api/hx/alerts",{method:"POST",body:new URLSearchParams(body)});const j=await r.json().catch(()=>({}));$("amsg").textContent=r.ok?"Saved.":"Not saved: "+(j.error||r.status);if(r.ok)setTimeout(renderAlerts,600)};
+  const flags=()=>[...$("alertcard").querySelectorAll("[data-bit]")].reduce((s,c)=>s|(c.checked?+c.dataset.bit:0),0);
+  $("asave").onclick=()=>{const u=$("aurl").value.trim();if(u&&!/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(u)){$("amsg").textContent="That doesn't look like a Discord webhook link.";return}send({url:u,flags:flags()})};
+  if(a.set){$("atest").onclick=async()=>{await fetch("/api/hx/alerts",{method:"POST",body:new URLSearchParams({test:1})});$("amsg").textContent="Test queued; it arrives within a minute."};
+    $("aoff").onclick=()=>{if(confirm("Remove the webhook link and stop alerts?"))send({url:"-",flags:flags()})}}}
 $("chk").onclick=async()=>{const env=S.self&&S.self.role==="room"?"Hoptics_M7_room_observer":"Hoptics_M7_repeater_observer";const msg=x=>$("chkmsg").innerHTML=x;
   msg("Checking...");try{const v=(await (await fetch(BUILDS+env+"/version.txt",{cache:"no-store"})).text()).trim();
     if(!/^[0-9.]+$/.test(v))throw new Error("no version published");
@@ -770,7 +784,7 @@ $("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
 
 // ================================================================ loop
 function safe(f){try{f()}catch(e){console.error("Hoptics:",e)}}
-function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!$("rolesel")||document.activeElement!==$("rolesel")&&!S.roleDrawn){safe(renderRole);S.roleDrawn=1}}}
+function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();S.roleDrawn=1}}}
 let started=false;
 async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);

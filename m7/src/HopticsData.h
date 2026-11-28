@@ -45,4 +45,14 @@ void addRegionNode(const uint8_t* pub, uint8_t type, const char* name, bool has_
 void regionDone(bool ok, int total, const char* err);
 void writeRegion(Print& out, uint32_t from_i);
 
+// Discord alerts (HopticsAlerts.cpp)
+enum : uint8_t { ALERT_SILENT = 1, ALERT_DAILY = 2, ALERT_NEW = 4 };
+void alertsBegin();
+bool alertsWanted(uint8_t kind);
+void alert(uint8_t kind, const char* text);
+void alertName(char* dst, size_t n, const char* name);  // a node name made safe for Discord
+bool alertsConfigure(const char* url, uint8_t flags, char* err, size_t err_len);
+void alertsTest();
+void writeAlerts(Print& out);
+
 }  // namespace hx

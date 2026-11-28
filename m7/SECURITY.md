@@ -31,6 +31,11 @@ as hostile input.
   limit, keys and coordinates are validated, names are cut to fit, and the number of pages is capped. A failed
   refresh keeps the last good list.
 
+- **Discord alerts can't be turned against you.** Only `https://discord.com/api/webhooks/…` links are
+  accepted (the node can't be pointed at another server). The link is a secret: the page only ever sees its
+  last 4 characters. Sending is TLS-verified with redirects refused, limited to one message a minute and 40 a
+  day, and node names are stripped of Discord markup with mentions disabled, so a name can't ping anyone.
+
 ## Limits to know
 
 - The page is plain HTTP on your LAN, like most device setup pages: someone on the same network could see the

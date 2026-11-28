@@ -3,6 +3,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <SPIFFS.h>
+#include <time.h>
 
 namespace hx {
 namespace {
@@ -146,6 +147,7 @@ void begin() {
     loadFile(kH1);
   }
   startRegion();
+  alertsBegin();
 }
 
 void regionBegin() {
@@ -263,6 +265,7 @@ void onAdvert(const uint8_t* pub, uint8_t type, const char* name, bool has_loc, 
     if (!nodes[i].seen) { if (slot < 0) slot = i; }
     else if (nodes[i].seen < nodes[oldest].seen) oldest = i;
   }
+  const bool is_new = slot < 0 || !nodes[slot].seen;
   if (slot < 0) slot = oldest;
   Node& n = nodes[slot];
   memcpy(n.pub, pub, 4);
@@ -272,6 +275,18 @@ void onAdvert(const uint8_t* pub, uint8_t type, const char* name, bool has_loc, 
   if (has_loc && (lat || lon)) { n.loc = true; n.lat = lat; n.lon = lon; }
   n.seen = now ? now : 1;
   strlcpy(n.name, name ? name : "", sizeof(n.name));
+  if (is_new && millis() > 30UL * 60UL * 1000UL && alertsWanted(ALERT_NEW)) {
+    bool known = false;
+    for (int i = 0; region[0] && i < region_n[0]; i++) if (!memcmp(region[0][i].pub, pub, 4)) { known = true; break; }
+    if (!known) {
+      static const char* const kinds[] = {"node", "companion", "repeater", "room server", "sensor"};
+      char nm[28], msg[160];
+      alertName(nm, sizeof(nm), name);
+      snprintf(msg, sizeof(msg), "New %s heard: %s, %u hop%s away, SNR %.1f dB", type < 5 ? kinds[type] : "node", nm,
+               hops, hops == 1 ? "" : "s", snr);
+      alert(ALERT_NEW, msg);
+    }
+  }
 }
 
 void addSample(const Sample& s) {
@@ -287,13 +302,60 @@ void addSample(const Sample& s) {
     if (sample_count < kSamples) sample_count++;
   }
   saveSample(saved);  // flash write outside the lock, so the web server is never held up by it
+  static uint32_t n_since = 0;
+  if (++n_since >= 288 && alertsWanted(ALERT_DAILY)) {  // every 24 h of samples
+    n_since = 0;
+    Sample a{}, b{};
+    int nodes_seen = 0;
+    {
+      Lock l;
+      if (sample_count < 2) return;
+      const int span = sample_count > 288 ? 288 : sample_count - 1;
+      b = samples[(sample_head - 1 + kSamples) % kSamples];
+      a = samples[(sample_head - 1 - span + kSamples) % kSamples];
+      for (int i = 0; nodes && i < kNodes; i++) if (nodes[i].seen && b.t - nodes[i].seen < 86400) nodes_seen++;
+    }
+    if (b.up <= a.up) return;  // restarted during the day: skip rather than report nonsense
+    const float secs = (float)(b.up - a.up);
+    char msg[300];
+    snprintf(msg, sizeof(msg),
+             "Daily summary\nPackets heard %lu, sent %lu\nAirtime %.1f %%, noise floor %d dBm\nNodes heard %d, "
+             "repeaters heard well %u\nMQTT uploads %lu ok, %lu failed",
+             (unsigned long)(b.recv - a.recv), (unsigned long)(b.sent - a.sent),
+             ((b.tx_ms - a.tx_ms) + (b.rx_ms - a.rx_ms)) / (secs * 10.0f), b.noise, nodes_seen, b.nbr_strong,
+             (unsigned long)(b.mqtt_ok - a.mqtt_ok), (unsigned long)(b.mqtt_err - a.mqtt_err));
+    alert(ALERT_DAILY, msg);
+  }
 }
 
 void setNeighbours(const Neighbour* n, int count) {
   if (!mu) return;
+  static uint8_t quiet[kNbrs][4];  // neighbours already reported as quiet
+  static int quiet_n = 0;
   Lock l;
   nbr_count = count > kNbrs ? kNbrs : count;
   memcpy(nbrs, n, sizeof(Neighbour) * nbr_count);
+  const uint32_t now = (uint32_t)time(nullptr);
+  if (now < 1700000000 || !alertsWanted(ALERT_SILENT)) return;
+  for (int i = 0; i < nbr_count; i++) {
+    const Neighbour& b = nbrs[i];
+    int q = -1;
+    for (int k = 0; k < quiet_n; k++) if (!memcmp(quiet[k], b.pub, 4)) { q = k; break; }
+    const bool silent = b.heard && now > b.heard && now - b.heard > 6UL * 3600UL;
+    if (silent == (q >= 0)) continue;
+    char nm[28] = "unnamed", msg[160];
+    for (int k = 0; nodes && k < kNodes; k++) if (nodes[k].seen && !memcmp(nodes[k].pub, b.pub, 4)) { alertName(nm, sizeof(nm), nodes[k].name); break; }
+    if (silent) {
+      if (quiet_n < kNbrs) memcpy(quiet[quiet_n++], b.pub, 4);
+      snprintf(msg, sizeof(msg), "Repeater %s %02X has gone quiet: not heard for %lu h", nm, b.pub[0],
+               (unsigned long)((now - b.heard) / 3600));
+    } else {
+      memmove(quiet[q], quiet[q + 1], (quiet_n - q - 1) * 4);
+      quiet_n--;
+      snprintf(msg, sizeof(msg), "Repeater %s %02X is back, SNR %.1f dB", nm, b.pub[0], b.snr4 / 4.0f);
+    }
+    alert(ALERT_SILENT, msg);
+  }
 }
 
 void writePackets(Print& out, uint32_t since) {
