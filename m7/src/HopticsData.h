@@ -37,4 +37,12 @@ void writeNodes(Print& out);
 void writeSelf(Print& out);
 void writeRaw(Print& out, uint32_t seq);   // one packet's bytes, for the detail view
 
+// Region nodes from SacMesh CoreScope (HopticsRegion.cpp fills them; a refresh builds a new list, then swaps it in)
+void startRegion();
+void regionBegin();
+void addRegionNode(const uint8_t* pub, uint8_t type, const char* name, bool has_loc, int32_t lat, int32_t lon,
+                   uint32_t seen, uint32_t relays_24h);
+void regionDone(bool ok, int total, const char* err);
+void writeRegion(Print& out, uint32_t from_i);
+
 }  // namespace hx

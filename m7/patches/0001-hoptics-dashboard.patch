@@ -161,7 +161,7 @@ index 782a2f4..d225588 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
    int calcRxDelay(float score, uint32_t air_time) const override;
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..5fdc35c 100644
+index 167e5cd..2848616 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
 @@ -735,6 +735,16 @@ void WebConfigServer::registerRoutes() {
@@ -181,7 +181,7 @@ index 167e5cd..5fdc35c 100644
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -1631,3 +1641,113 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -1631,3 +1641,114 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -279,7 +279,7 @@ index 167e5cd..5fdc35c 100644
 +  req->send(res);
 +}
 +
-+// /api/hx?k=packets&since=N | history&from=I | nodes | raw&seq=N | self (signed-in admin only)
++// /api/hx?k=packets&since=N | history&from=I | nodes | region&from=I | raw&seq=N | self (signed-in admin only)
 +void WebConfigServer::handleHxData(AsyncWebServerRequest* req) {
 +  if (_mode == MODE_OFF) { req->send(503); return; }
 +  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
@@ -290,6 +290,7 @@ index 167e5cd..5fdc35c 100644
 +  if (k == "packets") hx::writePackets(*res, req->hasParam("since") ? strtoul(req->getParam("since")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "history") hx::writeHistory(*res, req->hasParam("from") ? strtoul(req->getParam("from")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "nodes") hx::writeNodes(*res);
++  else if (k == "region") hx::writeRegion(*res, req->hasParam("from") ? strtoul(req->getParam("from")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "raw") hx::writeRaw(*res, req->hasParam("seq") ? strtoul(req->getParam("seq")->value().c_str(), NULL, 10) : 0);
 +  else hx::writeSelf(*res);
 +  req->send(res);
@@ -313,10 +314,10 @@ index bdd3e27..0a34c8a 100644
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..6669f6e 100644
+index 4bd316b..5f33ac8 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
-@@ -290,3 +290,17 @@ lib_deps =
+@@ -290,3 +290,18 @@ lib_deps =
    JChristensen/Timezone
    paulstoffregen/Time@1.6.1
    0neblock/SNMP_Agent
@@ -327,10 +328,11 @@ index 4bd316b..6669f6e 100644
 +build_flags =
 +  ${env:ThinkNode_M7_repeater_observer_mqtt.build_flags}
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.2.2"'
++  -D HOPTICS_M7_VERSION='"0.3.0"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +  -UADVERT_NAME
 +  -D ADVERT_NAME='"Hoptics M7"'
 +build_src_filter =
 +  ${env:ThinkNode_M7_repeater_observer_mqtt.build_src_filter}
 +  +<helpers/esp32/HopticsData.cpp>
++  +<helpers/esp32/HopticsRegion.cpp>

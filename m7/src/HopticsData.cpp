@@ -26,6 +26,20 @@ struct Node {
   char name[24];
 };
 
+struct RNode {
+  uint8_t pub[4];
+  uint8_t type;
+  bool loc;
+  int32_t lat, lon;
+  uint32_t seen, relays;
+  char name[24];
+};
+constexpr int kRegion = 2600;
+RNode* region[2];       // [live, being built]
+int region_n[2];
+uint32_t region_at;     // uptime seconds of the last good refresh
+char region_err[48];
+
 constexpr int kPkts = 1024, kRaw = 256, kSeen = 256, kSamples = 8640, kNodes = 256, kNbrs = 64;  // 8640 x 5 min = 30 days
 
 SemaphoreHandle_t mu;
@@ -74,6 +88,64 @@ void begin() {
   raws = (uint8_t*)ps(kPkts * kRaw);
   samples = (Sample*)ps(sizeof(Sample) * kSamples);
   nodes = (Node*)ps(sizeof(Node) * kNodes);
+  region[0] = (RNode*)ps(sizeof(RNode) * kRegion);
+  region[1] = (RNode*)ps(sizeof(RNode) * kRegion);
+  startRegion();
+}
+
+void regionBegin() {
+  if (!mu) return;
+  Lock l;
+  region_n[1] = 0;
+}
+
+void addRegionNode(const uint8_t* pub, uint8_t type, const char* name, bool has_loc, int32_t lat, int32_t lon,
+                   uint32_t seen, uint32_t relays_24h) {
+  if (!mu || !region[1]) return;
+  Lock l;
+  if (region_n[1] >= kRegion) return;
+  RNode& n = region[1][region_n[1]++];
+  memcpy(n.pub, pub, 4);
+  n.type = type;
+  n.loc = has_loc;
+  n.lat = lat;
+  n.lon = lon;
+  n.seen = seen;
+  n.relays = relays_24h;
+  strlcpy(n.name, name ? name : "", sizeof(n.name));
+}
+
+void regionDone(bool ok, int total, const char* err) {
+  if (!mu) return;
+  Lock l;
+  strlcpy(region_err, ok ? "" : (err ? err : "failed"), sizeof(region_err));
+  if (!ok || !region[1]) return;  // keep the last good list
+  RNode* t = region[0]; region[0] = region[1]; region[1] = t;
+  region_n[0] = region_n[1];
+  region_n[1] = 0;
+  region_at = millis() / 1000;
+  (void)total;
+}
+
+void writeRegion(Print& out, uint32_t from_i) {
+  Lock l;
+  const int count = region_n[0];
+  out.printf("{\"count\":%d,\"age\":%ld,\"err\":", count,
+             region_at ? (long)(millis() / 1000 - region_at) : -1L);
+  jsonStr(out, region_err);
+  out.print(",\"nodes\":[");
+  const int start = from_i < (uint32_t)count ? (int)from_i : count;
+  const int end = start + 250 < count ? start + 250 : count;
+  for (int i = start; i < end; i++) {
+    const RNode& n = region[0][i];
+    out.printf("%s[\"%02x%02x%02x%02x\",%u,", i > start ? "," : "", n.pub[0], n.pub[1], n.pub[2], n.pub[3], n.type);
+    if (n.loc) out.printf("%.5f,%.5f,", n.lat / 1e6, n.lon / 1e6);
+    else out.print("null,null,");
+    out.printf("%lu,%lu,", (unsigned long)n.seen, (unsigned long)n.relays);
+    jsonStr(out, n.name);
+    out.print(']');
+  }
+  out.print("]}");
 }
 
 void setSelf(const uint8_t* pub, const char* name, double lat, double lon) {
