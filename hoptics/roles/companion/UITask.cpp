@@ -65,11 +65,19 @@ UITask::UITask(mesh::MainBoard *board, MultiSerialInterface *serial) : AbstractU
 
 namespace
 {
-// mbedTLS (HTTPS for the street map, the live feed) takes 40 KB or more per connection, and this Arduino core gives it
-// internal RAM only, which Wi-Fi and Bluetooth need too. Its buffers go to PSRAM instead (internal RAM when there is none).
+// mbedTLS (HTTPS for the street map, the live feed, the web page) takes 40 KB or more per connection, and this Arduino
+// core gives it internal RAM only, which Wi-Fi and Bluetooth need too. Its big buffers (the 16 KB records) go to PSRAM.
+// The small, short-lived pieces of the key maths stay in internal RAM while there is room: in PSRAM a handshake took
+// seconds instead of a fraction of one
 void *tlsCalloc(size_t n, size_t size)
 {
-    void *p = heap_caps_calloc(n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (size && n > SIZE_MAX / size)
+        return nullptr;
+    void *p = nullptr;
+    if (n * size <= 4096 && heap_caps_get_free_size(MALLOC_CAP_INTERNAL) > 48 * 1024)
+        p = heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!p)
+        p = heap_caps_calloc(n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     return p ? p : heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 void tlsFree(void *p) { heap_caps_free(p); }
