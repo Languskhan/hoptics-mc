@@ -1,0 +1,2 @@
+ccb36c0023930f3f3c3f46bc4d9cf655935048acc993314522c0705a6ebaa8db  hoptics-mc-lilygo-t-deck-plus-companion-0.2.7-pr15.factory.bin
+774807f97bfb8b2f4816e3b651ee4d2d333cbba0be3d8a36a00ce6917f61b704  hoptics-mc-lilygo-t-deck-plus-companion-0.2.7-pr15.update.bin
