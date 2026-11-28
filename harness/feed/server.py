@@ -18,9 +18,22 @@ def accept():
     print("REQUEST:", req.decode().split("\r\n")[0], "|", [l for l in req.decode().split("\r\n") if l.startswith(("Host", "User-Agent", "Sec-WebSocket-Version"))])
     return conn, req
 conn, req = accept()
+def moved(to):
+    conn.sendall(b"HTTP/1.1 301 Moved Permanently\r\nLocation: " + to + b"\r\nContent-Length: 0\r\n\r\n"); time.sleep(0.3); conn.close()
 if mode == "moved":  # the old address forwards to the new one, as corescope.sacmesh.org does to scope.sacmesh.org
-    conn.sendall(b"HTTP/1.1 301 Moved Permanently\r\nLocation: ws://localhost:8765/ws\r\nContent-Length: 0\r\n\r\n"); time.sleep(0.3); conn.close()
+    moved(b"ws://127.0.0.1:8765/ws")  # not localhost: that can resolve to ::1, where nothing listens
     conn, req = accept()
+if mode == "secure":  # the client asked for wss:// (the stand-in client is plain TCP): a move to another wss:// is followed
+    moved(b"wss://127.0.0.1:8765/ws")
+    conn, req = accept()
+# moved and secure redirect back to this same address, and downgrade waits 2.5 s: both checks rely on the client's
+# first retry after a failure coming later than that (hx_feed.cpp backs off 5 s first) and after main's 3 s run
+if mode == "downgrade":  # from wss:// to ws://: the client must not follow it
+    moved(b"ws://127.0.0.1:8765/ws")
+    s.settimeout(2.5)
+    try: accept(); print("FOLLOWED: the client reconnected after a move off TLS")
+    except socket.timeout: print("not followed")
+    sys.exit()
 if mode == "refuse":
     conn.sendall(b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n"); time.sleep(1); conn.close(); sys.exit()
 key = [l.split(": ")[1] for l in req.decode().split("\r\n") if l.lower().startswith("sec-websocket-key")][0]

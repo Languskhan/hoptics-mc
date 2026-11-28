@@ -19,7 +19,7 @@ int main() {
     const char *cut = "{\"raw_hex\":\"1501AB";  // truncated message
     assert(hxfeed::parse(cut, strlen(cut), it) && it.len == 3);
     bool tls; char h[64], p[64]; uint16_t port;
-    const char *urls[] = {"corescope.sacmesh.org", "wss://corescope.sacmesh.org/ws", "ws://192.168.1.5:3000", "https://x.org:8443/live/ws", " ws://h/", "", "wss://:99/ws", "h:0"};
+    const char *urls[] = {"corescope.sacmesh.org", "wss://corescope.sacmesh.org/ws", "ws://192.168.1.5:3000", "https://x.org:8443/live/ws", " ws://h/", "", "wss://:99/ws", "h:0", "WS://h/ws"};
     for (auto u : urls) { bool ok = hxfeed::splitUrl(u, tls, h, sizeof(h), port, p, sizeof(p)); printf("%-34s -> %d %s %s %u %s\n", u, ok, ok&&tls?"tls":"   ", ok?h:"", ok?port:0, ok?p:""); }
     puts("all good");
 }
