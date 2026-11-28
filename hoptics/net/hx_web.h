@@ -32,6 +32,7 @@ void stop();
 bool running();
 void setPin(const char *pin); // six digits; a new PIN signs every browser out
 uint8_t sessions();           // browsers signed in now
+void tick();                  // main loop: now and then, saves how long each sign-in has left (it survives a restart)
 
 // main loop: a page is waiting for data. Answer it on the same pass
 bool take(Query &q);

@@ -1,6 +1,7 @@
 // The web server's text helpers (hoptics/net/hx_parse): card paths from the page, %-escapes, and JSON read a field at a
 // time, including what a hostile page could send. Run: bash harness/parse/run.sh (ASan/UBSan, exits non-zero on failure)
 #include "hx_parse.h"
+#include "hx_session.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -116,6 +117,25 @@ int main()
     p = o.c_str();
     OK(hxparse::value(p, p + o.size(), v) && hxparse::text(v, s, sizeof(s)) && !strcmp(s, "a\"b\\c<d>& "));
 
+    // web sign-ins across a restart: saved with the time they have left, brought back with that and no more
+    {
+        const uint32_t L = 12u * 3600 * 1000;
+        // saved: a session used a minute ago, one idle for 11 hours, one idle for exactly 12 hours, one idle for 30 hours
+        OK(hxsession::remaining(1000000, 1000000 - 60000, L) == L - 60000);
+        OK(hxsession::remaining(1000000000, 1000000000 - 11u * 3600 * 1000, L) == 3600u * 1000);
+        OK(hxsession::remaining(1000000000, 1000000000 - L, L) == 0);
+        OK(hxsession::remaining(1000000000, 1000000000 - 30u * 3600 * 1000, L) == 0);
+        // millis() wrapping between the last use and the save changes nothing
+        OK(hxsession::remaining(5000, 0xFFFFFFFFu - 9999, L) == L - 15000);
+        // restored at 3 s into the new boot: the live one keeps its time, the expired ones (saved as 0) don't come back
+        uint32_t last = 0;
+        OK(hxsession::restoredLast(3000, 3600u * 1000, L, last) && hxsession::remaining(3000, last, L) == 3600u * 1000);
+        OK(hxsession::remaining(3000 + 3600u * 1000 - 1, last, L) == 1); // and runs out on schedule, not 12 hours on
+        OK(hxsession::remaining(3000 + 3600u * 1000, last, L) == 0);
+        OK(!hxsession::restoredLast(3000, 0, L, last));
+        OK(!hxsession::restoredLast(3000, L + 1, L, last)); // a corrupt value is no session
+        OK(hxsession::restoredLast(3000, L, L, last) && last == 3000); // saved the moment it was made: a full 12 hours
+    }
     printf("hx_parse: %d checks passed\n", n);
     return 0;
 }

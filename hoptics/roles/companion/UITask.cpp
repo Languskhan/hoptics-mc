@@ -1921,6 +1921,7 @@ void UITask::webRestore(const char *data, size_t len, uint8_t parts, std::string
 // ------------------------------------------------------------------ the web page
 void UITask::webTick(void)
 {
+    hxweb::tick();
     const bool up = wifiOn && WiFi.status() == WL_CONNECTED;
     if (webOn && up && !hxweb::running()) {
         hxweb::start(80);
