@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>Hoptics M7</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://unpkg.com; connect-src 'self'; form-action 'self'; base-uri 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
 <style>
 :root{--text:#eef3f8;--dim:#9aa7b4;--faint:rgba(255,255,255,.08);--glass:rgba(16,24,34,.52);--glass2:rgba(24,34,46,.62);--edge:rgba(255,255,255,.12);
 --cyan:#3fd6e0;--green:#46e08a;--violet:#a78bfa;--blue:#5b9dff;--amber:#f4b740;--orange:#f0883e;--red:#ff6b6b;--pink:#f778ba}
@@ -170,7 +172,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 </main>
 </div>
 <div id="modal"><div id="mbox" class="glass"><button class="b" id="mclose">Close</button><div id="mbody2"></div></div></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
@@ -357,10 +359,11 @@ const pfx=b=>b.toString(16).padStart(2,"0");
 async function pollStats(){try{const j=await api("/api/stats");if(j.uptime_s!==undefined)S.stats=j}catch(e){}}
 async function pollSelf(){try{S.self=await api("/api/hx?k=self")}catch(e){}}
 async function pollNodes(){try{const j=await api("/api/hx?k=nodes");S.nodes=j.nodes;S.nbrs=j.nbrs}catch(e){}}
-async function pollHist(){try{const j=await api("/api/hx?k=history");S.hist=j.s;S.rows=deltas(S.hist)}catch(e){}}
+async function pollHist(){try{let all=[],from=0;for(let n=0;n<40;n++){const j=await api("/api/hx?k=history&from="+from);all.push(...j.s);from+=j.s.length;if(!j.s.length||from>=j.count)break}S.hist=all;S.rows=deltas(all)}catch(e){}}
 async function pollPk(){if(S.paused)return;
-  try{const j=await api("/api/hx?k=packets&since="+S.seq);if(j.seq<S.seq)S.pk=[];S.seq=j.seq;S.upAt=Date.now()/1000-j.now;
-    S.pk.push(...j.p);if(S.pk.length>3000)S.pk.splice(0,S.pk.length-3000);if(j.p.length&&mapReady)addMapLines(j.p)}catch(e){}}
+  try{for(let n=0;n<8;n++){const j=await api("/api/hx?k=packets&since="+S.seq);if(j.seq<S.seq){S.pk=[];S.seq=0;continue}
+    S.upAt=Date.now()/1000-j.now;S.pk.push(...j.p);S.seq=j.p.length?j.p[j.p.length-1][0]:j.seq;
+    if(S.pk.length>3000)S.pk.splice(0,S.pk.length-3000);if(j.p.length&&mapReady&&n===0)addMapLines(j.p);if(S.seq>=j.seq)break}}catch(e){}}
 
 // ================================================================ numbers per 5-minute interval, and health
 // history row: t,up,noise,tx_ms,rx_ms,recv,sent,rf,rd,sf,sd,rxerr,uniq,dup,nbr_strong,nbr_snr4,mqtt_ok,mqtt_err,heap,temp
@@ -495,14 +498,15 @@ function decode(b){
     if(T===5&&o.ct.length%16===0)for(const ch of chanKeys()){if(ch.hash!==o.ch)continue;const mac=SHA.hmac(ch.secret,o.ct);if(mac[0]!==o.mac[0]||mac[1]!==o.mac[1])continue;
       const pt=AES.decryptECB(ch.key,o.ct),t=new DataView(pt.buffer).getUint32(0,true),s=utf8(pt.subarray(5)).replace(/\0[\s\S]*$/,""),c=s.indexOf(": ");
       o.msg={ch:ch.name,t,from:c>0?s.slice(0,c):"",text:c>0?s.slice(c+2):s};break}}
-  else if((T<=2||T===8)&&p.length>=4){o.dst=p[0];o.src=p[1];F("To",P0,P0+1,"#f0883e",who(o.dst));F("From",P0+1,P0+2,"#46e08a",who(o.src));F("MAC",P0+2,P0+4,"#7d8a97",hex(p.subarray(2,4)));F("Encrypted",P0+4,b.length,"#5b9dff",(p.length-4)+" bytes")}
-  else if(T===7&&p.length>=35){o.dst=p[0];o.key=hex(p.subarray(1,33));F("To",P0,P0+1,"#f0883e",who(o.dst));F("Sender key",P0+1,P0+33,"#46e08a",o.key.slice(0,16)+"...");F("Encrypted",P0+33,b.length,"#5b9dff",(p.length-33)+" bytes")}
+  else if((T<=2||T===8)&&p.length>=4){o.dst=p[0];o.src=p[1];F("To",P0,P0+1,"#f0883e",whoText(o.dst));F("From",P0+1,P0+2,"#46e08a",whoText(o.src));F("MAC",P0+2,P0+4,"#7d8a97",hex(p.subarray(2,4)));F("Encrypted",P0+4,b.length,"#5b9dff",(p.length-4)+" bytes")}
+  else if(T===7&&p.length>=35){o.dst=p[0];o.key=hex(p.subarray(1,33));F("To",P0,P0+1,"#f0883e",whoText(o.dst));F("Sender key",P0+1,P0+33,"#46e08a",o.key.slice(0,16)+"...");F("Encrypted",P0+33,b.length,"#5b9dff",(p.length-33)+" bytes")}
   else if(T===3&&p.length>=4){F("Checksum",P0,P0+4,"#7d8a97",hex(p.subarray(0,4)))}
   else if(T===9&&p.length>=9){F("Trace tag",P0,P0+4,"#f778ba",hex(p.subarray(0,4)));F("Auth",P0+4,P0+8,"#7d8a97",hex(p.subarray(4,8)));F("Flags",P0+8,P0+9,"#a78bfa",p[8]);
     o.trace=[];for(let k=9;k<p.length;k++)o.trace.push(pfx(p[k]));F("Route to trace",P0+9,b.length,"#f0883e",o.trace.join(" ").toUpperCase())}
   else if(p.length)F("Payload",P0,b.length,"#5b9dff",p.length+" bytes");
   return o}
 function who(b){const n=nodeByPrefix(pfx(b));return(n&&n.name?esc(n.name)+" ":"")+`<span class="mono">${pfx(b).toUpperCase()}</span>`}
+function whoText(b){const n=nodeByPrefix(pfx(b));return(n&&n.name?n.name+" ":"")+pfx(b).toUpperCase()}
 function pathNames(path){return path.map(h=>{const n=nodeByPrefix(h.slice(0,2));return`<span class="pill" title="${h}">${n&&n.name?esc(n.name):h.toUpperCase()}</span>`}).join(" → ")}
 async function openPacket(p){
   modal('<p class="dim">Loading packet...</p>');
@@ -525,7 +529,7 @@ async function openPacket(p){
   if(copies.length>1)html+=`<h3 style="margin-top:16px">Heard ${copies.length} times</h3><p class="dim">Each copy came through a different route. More copies mean more repeaters resent this packet near you.</p>
     <table><thead><tr><th>Time</th><th>SNR</th><th>RSSI</th><th>Hops</th><th>Last relays</th></tr></thead><tbody>${copies.map(q=>`<tr><td>${new Date((S.upAt+q[1])*1000).toLocaleTimeString()}</td><td>${(q[8]/4).toFixed(1)}</td><td>${q[9]}</td><td>${q[5]}</td><td>${(q[11].match(/../g)||[]).map(x=>{const n=nodeByPrefix(x);return n&&n.name?esc(n.name):x.toUpperCase()}).join(" → ")}</td></tr>`).join("")}</tbody></table>`;
   if(d){html+=`<h3 style="margin-top:16px">Bytes</h3><div class="hex mono">`+d.fields.map(f=>`<span style="background:${f.col}26;border-bottom:2px solid ${f.col}" title="${esc(f.name)}">${hex(raw.subarray(f.a,f.z)).toUpperCase()}</span>`).join(" ")+`</div>
-    <table style="margin-top:10px"><thead><tr><th>Field</th><th>Bytes</th><th>Meaning</th></tr></thead><tbody>${d.fields.map(f=>`<tr><td><span style="color:${f.col}">●</span> ${f.name}</td><td>${f.a}-${f.z-1}</td><td style="white-space:normal">${f.txt}</td></tr>`).join("")}</tbody></table>`;
+    <table style="margin-top:10px"><thead><tr><th>Field</th><th>Bytes</th><th>Meaning</th></tr></thead><tbody>${d.fields.map(f=>`<tr><td><span style="color:${f.col}">●</span> ${esc(f.name)}</td><td>${f.a}-${f.z-1}</td><td style="white-space:normal">${esc(f.txt)}</td></tr>`).join("")}</tbody></table>`;
     if(d.path.length&&hasLoc())html+=`<p><button class="b" id="showpath">Show path on map</button></p>`}
   else html+=`<p class="dim">The bytes of this packet are no longer in memory.</p>`;
   modal(html);

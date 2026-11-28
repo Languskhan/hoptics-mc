@@ -117,7 +117,7 @@ void onPacket(bool tx, const mesh::Packet* p, int len, float snr, float rssi, fl
   }
   memset(k.path, 0, sizeof(k.path));
   int first = k.hops > 8 ? k.hops - 8 : 0;
-  for (int i = first; i < k.hops; i++) k.path[i - first] = p->path[i * k.hsz];
+  for (int i = first; i < k.hops && i * k.hsz < MAX_PATH_SIZE; i++) k.path[i - first] = p->path[i * k.hsz];
   k.src = 0;
   if (k.type == PAYLOAD_TYPE_ADVERT && p->payload_len > 0) k.src = p->payload[0];
   else if ((k.type == PAYLOAD_TYPE_GRP_TXT || k.type == PAYLOAD_TYPE_GRP_DATA) && p->payload_len > 0) k.src = p->payload[0];
@@ -166,10 +166,13 @@ void setNeighbours(const Neighbour* n, int count) {
 void writePackets(Print& out, uint32_t since) {
   Lock l;
   out.printf("{\"seq\":%lu,\"now\":%lu,\"p\":[", (unsigned long)pkt_seq, (unsigned long)(millis() / 1000));
+  // (seq is the newest; the page keeps asking with since = its last packet until it reaches seq)
   uint32_t lo = pkt_seq > kPkts ? pkt_seq - kPkts : 0;
-  if (since < lo) since = lo;
+  if (since < lo || since > pkt_seq) since = lo;
+  // at most 256 per reply so a response never needs much RAM; the page asks again until it has caught up
+  const uint32_t last = pkt_seq - since > 256 ? since + 256 : pkt_seq;
   bool first = true;
-  for (uint32_t s = since + 1; s <= pkt_seq; s++) {
+  for (uint32_t s = since + 1; s <= last; s++) {
     const Pkt& k = pkts[(s - 1) % kPkts];
     out.printf("%s[%lu,%lu,%u,%u,%u,%u,%u,%u,%d,%d,\"%08lx\",\"", first ? "" : ",", (unsigned long)k.seq,
                (unsigned long)k.t, k.tx, k.type, k.route, k.hops, k.len, k.src, k.snr4, k.rssi,
@@ -182,13 +185,15 @@ void writePackets(Print& out, uint32_t since) {
   out.print("]}");
 }
 
-void writeHistory(Print& out, uint32_t from_t) {
+void writeHistory(Print& out, uint32_t from_i) {
+  // samples are numbered from the oldest kept (0); at most 300 per reply, the page asks for the rest
   Lock l;
-  out.print("{\"interval\":300,\"s\":[");
+  out.printf("{\"interval\":300,\"count\":%d,\"s\":[", sample_count);
   bool first = true;
-  for (int i = 0; i < sample_count; i++) {
+  const int start = from_i < (uint32_t)sample_count ? (int)from_i : sample_count;
+  const int end = start + 300 < sample_count ? start + 300 : sample_count;
+  for (int i = start; i < end; i++) {
     const Sample& s = samples[(sample_head - sample_count + i + kSamples) % kSamples];
-    if (s.t < from_t) continue;
     out.printf("%s[%lu,%lu,%d,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%u,%d,%lu,%lu,%lu,%d]", first ? "" : ",",
                (unsigned long)s.t, (unsigned long)s.up, s.noise, (unsigned long)s.tx_ms, (unsigned long)s.rx_ms,
                (unsigned long)s.recv, (unsigned long)s.sent, (unsigned long)s.recv_flood,
