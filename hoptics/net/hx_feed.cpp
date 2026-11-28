@@ -97,9 +97,9 @@ bool splitUrl(const char *url, bool &tls, char *host, size_t hostN, uint16_t &po
     while (*url == ' ')
         url++;
     tls = true;
-    if (!strncmp(url, "wss://", 6) || !strncmp(url, "https://", 8))
+    if (!strncasecmp(url, "wss://", 6) || !strncasecmp(url, "https://", 8)) // schemes are case-insensitive
         url = strchr(url, '/') + 2;
-    else if (!strncmp(url, "ws://", 5) || !strncmp(url, "http://", 7)) {
+    else if (!strncasecmp(url, "ws://", 5) || !strncasecmp(url, "http://", 7)) {
         url = strchr(url, '/') + 2;
         tls = false;
     }
@@ -305,6 +305,8 @@ void session(uint32_t gen0, uint8_t *msg)
     // the answer's headers, up to the blank line; the first must be "HTTP/1.1 101" (switching to WebSocket)
     char line[128];
     int ln = 0, lines = 0, code = 0;
+    const char *noMove = nullptr; // why a redirect wasn't taken, when one wasn't
+    bool took = false;            // a redirect was taken (with two Location lines, one may be taken and one not)
     for (;;) {
         uint8_t b;
         if (!readN(*c, &b, 1, gen0)) {
@@ -328,7 +330,22 @@ void session(uint32_t gen0, uint8_t *msg)
             const char *v = line + 9;
             while (*v == ' ')
                 v++;
-            snprintf(moved, sizeof(moved), "%s", v); // the task tries there next
+            // follow only an address that fits and reads, and never from a secure link to a plain one: the server
+            // (or anyone on the path, if it's plain) shouldn't be able to switch encryption off.
+            // host and path are done with (the request went out): they hold the new address's parts
+            bool tls2;
+            uint16_t port2;
+            if (strlen(v) >= sizeof(moved) || !splitUrl(v, tls2, host, sizeof(host), port2, path, sizeof(path)))
+                noMove = "Server moved to an address it can't use";
+            else if (tls && !tls2)
+                noMove = "Server moved to an insecure address";
+            else {
+                xSemaphoreTake(lock, portMAX_DELAY);
+                if (gen == gen0) // not if start() has set a new address meanwhile
+                    strcpy(moved, v); // the task tries there next
+                xSemaphoreGive(lock);
+                took = true;
+            }
         }
         if (!ln)
             break; // end of the headers
@@ -337,7 +354,7 @@ void session(uint32_t gen0, uint8_t *msg)
     if (code != 101) {
         char e[64];
         snprintf(e, sizeof(e), "Server said: %d", code);
-        setErr(e);
+        setErr(noMove && !took ? noMove : e);
         st = State::FAILED;
         c->stop();
         delete c;
@@ -479,10 +496,10 @@ void start(const char *u, const char *userAgent)
     strncpy(ua, userAgent, sizeof(ua) - 1);
     moved[0] = 0;
     count = 0;
+    gen++; // under the lock, so a session for the old address can't write moved after it's cleared
     xSemaphoreGive(lock);
     nPackets = 0;
     want = true;
-    gen++;
 }
 
 void stop()

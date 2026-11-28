@@ -9,12 +9,20 @@ B=$(mktemp -d)
 g++ -std=gnu++11 -Wall -fsanitize=address,undefined -g -I$N -I$H parse_test.cpp $N/hx_feed.cpp -o $B/parse_test
 $B/parse_test
 g++ -std=gnu++11 -Wall -fsanitize=address,undefined -g -DARDUINO_ARCH_ESP32 -Istubs -I$N -I$H main.cpp stubs_impl.cpp $N/hx_feed.cpp -pthread -o $B/ws
-for mode in ok moved refuse overflow huge; do
-  timeout 30 python3 server.py $mode > $B/server.log 2>&1 &
+for mode in ok moved refuse overflow huge secure downgrade; do
+  url=ws://127.0.0.1:8765/ws
+  case $mode in secure|downgrade) url=wss://127.0.0.1:8765/ws ;; esac
+  timeout 30 python3 -u server.py $mode > $B/server.log 2>&1 &
   sleep 0.5
-  timeout 20 $B/ws ws://127.0.0.1:8765/ws 3 > $B/client.log 2>&1 || true
+  timeout 20 $B/ws $url 3 > $B/client.log 2>&1 || true
   wait
   echo "== $mode"; cat $B/server.log $B/client.log
   if grep -q "ERROR: AddressSanitizer\|runtime error:" $B/client.log; then echo "FAIL $mode: sanitizer report"; exit 1; fi
-  if [ $mode = overflow ] && ! grep -q "bad frame" $B/client.log; then echo "FAIL overflow: the bad frame wasn't refused"; exit 1; fi
+  case $mode in
+    ok|moved|secure) grep -q "PACKETS [1-9]" $B/client.log || { echo "FAIL $mode: no packets"; exit 1; } ;;
+    overflow) grep -q "bad frame" $B/client.log || { echo "FAIL overflow: the bad frame wasn't refused"; exit 1; } ;;
+    downgrade) ! grep -q FOLLOWED $B/server.log && grep -q "insecure address" $B/client.log ||
+      { echo "FAIL downgrade: the move off TLS wasn't refused"; exit 1; } ;;
+  esac
 done
+echo "PASS"
