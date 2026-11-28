@@ -8,11 +8,12 @@ namespace {
 
 struct Pkt {
   uint32_t seq, t;
-  uint8_t tx, type, route, hops, hsz, len, src;  // src: first byte of the sender, 0 if unknown
+  uint8_t tx, type, route, hops, hsz, len, src;  // src: sender's first byte (channel hash for channel packets)
   int8_t snr4;
   int16_t rssi;
   uint8_t path[8];                                // first byte of each of the last 8 hops
   uint32_t hash;
+  uint16_t score, air_ms, raw_len;
 };
 
 struct Node {
@@ -25,10 +26,14 @@ struct Node {
   char name[24];
 };
 
-constexpr int kPkts = 512, kSamples = 8640, kNodes = 256, kNbrs = 64;  // 8640 x 5 min = 30 days
+constexpr int kPkts = 1024, kRaw = 256, kSeen = 256, kSamples = 8640, kNodes = 256, kNbrs = 64;  // 8640 x 5 min = 30 days
 
 SemaphoreHandle_t mu;
 Pkt* pkts;
+uint8_t* raws;                                    // kPkts x kRaw packet bytes
+uint32_t seen[kSeen];                             // recent flood hashes, to count copies
+int seen_head;
+uint32_t flood_uniq, flood_dup;
 Sample* samples;
 Node* nodes;
 Neighbour nbrs[kNbrs];
@@ -66,6 +71,7 @@ void begin() {
   if (mu) return;
   mu = xSemaphoreCreateMutex();
   pkts = (Pkt*)ps(sizeof(Pkt) * kPkts);
+  raws = (uint8_t*)ps(kPkts * kRaw);
   samples = (Sample*)ps(sizeof(Sample) * kSamples);
   nodes = (Node*)ps(sizeof(Node) * kNodes);
 }
@@ -79,12 +85,19 @@ void setSelf(const uint8_t* pub, const char* name, double lat, double lon) {
   self_lon = lon;
 }
 
-void onPacket(bool tx, const mesh::Packet* p, int len, float snr, float rssi) {
-  if (!mu || !pkts) return;
+void onPacket(bool tx, const mesh::Packet* p, int len, float snr, float rssi, float score, uint32_t air_ms) {
+  if (!mu || !pkts || !raws) return;
   uint8_t h[MAX_HASH_SIZE];
   p->calculatePacketHash(h);
+  uint8_t raw[kRaw];
+  uint8_t rl = p->writeTo(raw);
   Lock l;
-  Pkt& k = pkts[pkt_seq % kPkts];
+  const uint32_t idx = pkt_seq % kPkts;
+  Pkt& k = pkts[idx];
+  memcpy(raws + idx * kRaw, raw, rl);
+  k.raw_len = rl;
+  k.score = tx ? 0 : (uint16_t)(score * 1000);
+  k.air_ms = air_ms > 65535 ? 65535 : air_ms;
   k.seq = ++pkt_seq;
   k.t = millis() / 1000;
   k.tx = tx;
@@ -96,11 +109,18 @@ void onPacket(bool tx, const mesh::Packet* p, int len, float snr, float rssi) {
   k.snr4 = tx ? 0 : (int8_t)(snr * 4);
   k.rssi = tx ? 0 : (int16_t)rssi;
   memcpy(&k.hash, h, 4);
+  if (!tx && p->isRouteFlood()) {               // a copy of a flood we already heard, or a new one
+    bool again = false;
+    for (int i = 0; i < kSeen; i++) if (seen[i] == k.hash) { again = true; break; }
+    if (again) flood_dup++;
+    else { flood_uniq++; seen[seen_head] = k.hash; seen_head = (seen_head + 1) % kSeen; }
+  }
   memset(k.path, 0, sizeof(k.path));
   int first = k.hops > 8 ? k.hops - 8 : 0;
   for (int i = first; i < k.hops; i++) k.path[i - first] = p->path[i * k.hsz];
   k.src = 0;
   if (k.type == PAYLOAD_TYPE_ADVERT && p->payload_len > 0) k.src = p->payload[0];
+  else if ((k.type == PAYLOAD_TYPE_GRP_TXT || k.type == PAYLOAD_TYPE_GRP_DATA) && p->payload_len > 0) k.src = p->payload[0];
   else if ((k.type == PAYLOAD_TYPE_PATH || k.type == PAYLOAD_TYPE_REQ || k.type == PAYLOAD_TYPE_RESPONSE ||
             k.type == PAYLOAD_TYPE_TXT_MSG) && p->payload_len > 1) k.src = p->payload[1];
 }
@@ -130,6 +150,8 @@ void addSample(const Sample& s) {
   if (!mu || !samples) return;
   Lock l;
   samples[sample_head] = s;
+  samples[sample_head].flood_uniq = flood_uniq;
+  samples[sample_head].flood_dup = flood_dup;
   sample_head = (sample_head + 1) % kSamples;
   if (sample_count < kSamples) sample_count++;
 }
@@ -167,11 +189,12 @@ void writeHistory(Print& out, uint32_t from_t) {
   for (int i = 0; i < sample_count; i++) {
     const Sample& s = samples[(sample_head - sample_count + i + kSamples) % kSamples];
     if (s.t < from_t) continue;
-    out.printf("%s[%lu,%lu,%d,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu]", first ? "" : ",", (unsigned long)s.t,
-               (unsigned long)s.up, s.noise, (unsigned long)s.tx_ms, (unsigned long)s.rx_ms,
+    out.printf("%s[%lu,%lu,%d,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%u,%d,%lu,%lu,%lu,%d]", first ? "" : ",",
+               (unsigned long)s.t, (unsigned long)s.up, s.noise, (unsigned long)s.tx_ms, (unsigned long)s.rx_ms,
                (unsigned long)s.recv, (unsigned long)s.sent, (unsigned long)s.recv_flood,
                (unsigned long)s.recv_direct, (unsigned long)s.sent_flood, (unsigned long)s.sent_direct,
-               (unsigned long)s.rx_err);
+               (unsigned long)s.rx_err, (unsigned long)s.flood_uniq, (unsigned long)s.flood_dup, s.nbr_strong,
+               s.nbr_snr4, (unsigned long)s.mqtt_ok, (unsigned long)s.mqtt_err, (unsigned long)s.heap, s.temp);
     first = false;
   }
   out.print("]}");
@@ -199,6 +222,18 @@ void writeNodes(Print& out) {
                b.pub[1], b.pub[2], b.pub[3], b.snr4 / 4.0f, (unsigned long)b.heard, (unsigned long)b.advert);
   }
   out.print("]}");
+}
+
+void writeRaw(Print& out, uint32_t seq) {
+  Lock l;
+  uint32_t lo = pkt_seq > kPkts ? pkt_seq - kPkts : 0;
+  if (seq == 0 || seq <= lo || seq > pkt_seq) { out.print("{\"error\":\"gone\"}"); return; }
+  const uint32_t idx = (seq - 1) % kPkts;
+  const Pkt& k = pkts[idx];
+  out.printf("{\"seq\":%lu,\"score\":%u,\"air\":%u,\"raw\":\"", (unsigned long)seq, k.score, k.air_ms);
+  const uint8_t* r = raws + idx * kRaw;
+  for (int i = 0; i < k.raw_len; i++) out.printf("%02x", r[i]);
+  out.print("\"}");
 }
 
 void writeSelf(Print& out) {

@@ -2,116 +2,312 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
 <title>Hoptics M7</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--text:#e6edf3;--dim:#8b949e;--acc:#3fb6c6;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--info:#58a6ff}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
-header h1{font-size:17px;margin:0}header .sub{color:var(--dim);font-size:12px}.sp{flex:1}
-nav{display:flex;gap:2px;padding:0 10px;border-bottom:1px solid var(--line);overflow-x:auto}
-nav button{background:none;border:0;color:var(--dim);padding:10px 12px;cursor:pointer;font:inherit;border-bottom:2px solid transparent;white-space:nowrap}
-nav button.on{color:var(--text);border-color:var(--acc)}
-main{padding:14px 16px;max-width:1300px;margin:0 auto}section{display:none}section.on{display:block}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:14px}
-.tile{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
-.tile .k{color:var(--dim);font-size:12px}.tile .v{font-size:22px;font-variant-numeric:tabular-nums;margin-top:2px}.tile .s{color:var(--dim);font-size:12px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
-.card h3{margin:0 0 8px;font-size:14px}
-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
-th{color:var(--dim);font-weight:500;font-size:12px;position:sticky;top:0;background:var(--panel)}
-.scroll{max-height:520px;overflow:auto}
-.warn{border-left:4px solid var(--warn);padding:8px 10px;margin:8px 0;background:#1d1a12;border-radius:4px}
-.warn.bad{border-color:var(--bad);background:#211314}.warn.info{border-color:var(--info);background:#111a26}.warn.ok{border-color:var(--ok);background:#0f1d14}
-.warn b{display:block}.warn .why{color:var(--dim);font-size:12px;margin-top:3px}
-button.b,select,input{background:#21262d;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
-button.b{cursor:pointer}button.b:hover{border-color:var(--acc)}button.p{background:var(--acc);color:#001;border-color:var(--acc)}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
-canvas{width:100%;height:220px;display:block}
-#map{height:560px;border-radius:8px;border:1px solid var(--line)}
-.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;background:#21262d}
-.pill.ok{background:#12361d;color:#7ee2a8}.pill.bad{background:#3a1416;color:#ff9a94}.pill.mid{background:#33290f;color:#f1c75b}
-pre{background:#0a0d12;border:1px solid var(--line);border-radius:6px;padding:10px;max-height:420px;overflow:auto;white-space:pre-wrap;margin:0}
-#login{max-width:340px;margin:12vh auto;text-align:center}#login input{width:100%;margin:12px 0}
-.dim{color:var(--dim)}a{color:var(--acc)}
-.bar{height:8px;background:#21262d;border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc)}
+:root{--text:#eef3f8;--dim:#9aa7b4;--faint:rgba(255,255,255,.08);--glass:rgba(16,24,34,.52);--glass2:rgba(24,34,46,.62);--edge:rgba(255,255,255,.12);
+--cyan:#3fd6e0;--green:#46e08a;--violet:#a78bfa;--blue:#5b9dff;--amber:#f4b740;--orange:#f0883e;--red:#ff6b6b;--pink:#f778ba}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%}
+body{color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable","Segoe UI",Inter,Roboto,sans-serif;
+-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;background:#071016}
+#sky{position:fixed;inset:0;width:100vw;height:100vh;z-index:-1;display:block}
+.glass{background:var(--glass);-webkit-backdrop-filter:blur(22px) saturate(160%);backdrop-filter:blur(22px) saturate(160%);
+border:1px solid var(--edge);border-radius:18px;box-shadow:0 10px 40px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06)}
+header{position:sticky;top:0;z-index:20;margin:12px;padding:12px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.logo{width:30px;height:30px}h1{font-size:18px;font-weight:650;margin:0;letter-spacing:.2px}
+.sub{color:var(--dim);font-size:12.5px}.sp{flex:1}
+nav{display:flex;gap:4px;padding:4px;margin:0 12px 12px;overflow-x:auto;border-radius:14px}
+nav button{border:0;background:transparent;color:var(--dim);padding:8px 14px;border-radius:10px;font:inherit;font-weight:550;cursor:pointer;white-space:nowrap;transition:.15s}
+nav button:hover{color:var(--text)}nav button.on{background:rgba(255,255,255,.12);color:var(--text);box-shadow:inset 0 1px 0 rgba(255,255,255,.1)}
+main{padding:0 12px 30px;max-width:1400px;margin:0 auto}section{display:none;animation:in .25s ease}section.on{display:block}
+@keyframes in{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:12px}
+.tile{padding:14px 16px;cursor:default}.tile .k{color:var(--dim);font-size:12px;font-weight:550;text-transform:uppercase;letter-spacing:.5px}
+.tile .v{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:4px}.tile .s{color:var(--dim);font-size:12px}
+.card{padding:16px 18px;margin-bottom:12px}.card h3{margin:0 0 10px;font-size:15px;font-weight:620}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:900px){.two{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--faint);white-space:nowrap}
+th{color:var(--dim);font-weight:550;font-size:12px;position:sticky;top:0;background:rgba(14,21,30,.9);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+tbody tr.click{cursor:pointer}tbody tr.click:hover{background:rgba(255,255,255,.05)}
+.scroll{max-height:560px;overflow:auto;border-radius:12px}
+.msg{border-radius:12px;padding:10px 14px;margin:8px 0;background:rgba(244,183,64,.12);border:1px solid rgba(244,183,64,.3)}
+.msg.bad{background:rgba(255,107,107,.12);border-color:rgba(255,107,107,.35)}.msg.info{background:rgba(91,157,255,.12);border-color:rgba(91,157,255,.3)}
+.msg.ok{background:rgba(70,224,138,.1);border-color:rgba(70,224,138,.3)}.msg b{display:block}.msg .why{color:#c9d3dc;font-size:13px;margin-top:3px}
+button.b,select,input{background:rgba(255,255,255,.08);color:var(--text);border:1px solid var(--edge);border-radius:10px;padding:7px 12px;font:inherit}
+button.b{cursor:pointer;font-weight:550}button.b:hover{background:rgba(255,255,255,.14)}button.p{background:linear-gradient(180deg,#4fe0ea,#25b6c4);color:#02161a;border:0}
+select option{background:#0e1620}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.chart{position:relative}.chart canvas{width:100%;height:240px;display:block;cursor:crosshair}
+.tip{position:absolute;pointer-events:none;padding:8px 10px;border-radius:10px;font-size:12px;background:rgba(10,16,24,.88);border:1px solid var(--edge);white-space:nowrap;display:none;z-index:5}
+#map{height:600px;border-radius:18px;overflow:hidden}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:550;background:rgba(255,255,255,.1)}
+.pill.ok{background:rgba(70,224,138,.18);color:#8ff0b8}.pill.bad{background:rgba(255,107,107,.18);color:#ffaaa5}.pill.mid{background:rgba(244,183,64,.18);color:#ffd57e}
+pre{background:rgba(0,0,0,.35);border:1px solid var(--faint);border-radius:12px;padding:12px;max-height:440px;overflow:auto;white-space:pre-wrap;margin:0;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+#login{max-width:380px;margin:16vh auto;padding:28px;text-align:center}#login input{width:100%;margin:14px 0}
+.dim{color:var(--dim)}a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+.bar{height:8px;background:rgba(255,255,255,.08);border-radius:5px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--green))}
+.hb{display:grid;grid-template-columns:minmax(90px,170px) 1fr 50px;gap:8px;align-items:center;margin:5px 0;font-size:13px}
+.hb .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hb .n{text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
+#modal{position:fixed;inset:0;z-index:50;display:none;align-items:flex-start;justify-content:center;padding:5vh 12px;background:rgba(2,6,10,.45);overflow:auto}
+#modal.on{display:flex}#mbox{width:min(900px,100%);padding:20px 22px;position:relative}#mclose{position:absolute;top:12px;right:14px}
+.kv{display:grid;grid-template-columns:170px 1fr;gap:4px 14px;font-size:13.5px}.kv .k{color:var(--dim)}
+.hex{word-break:break-all;line-height:1.7}.hex span{padding:1px 0;border-radius:3px}
+.score{font-size:44px;font-weight:650;font-variant-numeric:tabular-nums}
+.ring{width:120px;height:120px}
+details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
+.heat{display:grid;grid-template-columns:repeat(24,1fr);gap:3px}.heat i{height:22px;border-radius:4px;display:block}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--dim);margin-top:6px}.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.leaflet-container{background:#0a1118}.leaflet-tooltip{background:rgba(10,16,24,.9);color:var(--text);border:1px solid var(--edge);border-radius:8px}
 </style>
 </head>
 <body>
-<div id="login" hidden>
-  <h2>Hoptics M7</h2>
+<canvas id="sky"></canvas>
+<div id="login" class="glass" hidden>
+  <svg class="logo" viewBox="0 0 32 32" style="width:46px;height:46px"><use href="#mark"/></svg>
+  <h2 style="margin:8px 0 2px">Hoptics M7</h2>
   <p class="dim">Enter this node's admin password.</p>
   <input id="pw" type="password" autocomplete="current-password">
-  <button class="b p" id="go">Sign in</button>
+  <button class="b p" id="go" style="width:100%">Sign in</button>
   <p id="lmsg" class="dim"></p>
 </div>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3fd6e0"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+  <symbol id="mark" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="none" stroke="url(#lg)" stroke-width="2"/>
+  <path d="M8 20l5-8 5 6 6-9" fill="none" stroke="url(#lg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="8" cy="20" r="2" fill="#3fd6e0"/><circle cx="13" cy="12" r="2" fill="#46e08a"/><circle cx="18" cy="18" r="2" fill="#5b9dff"/><circle cx="24" cy="9" r="2" fill="#a78bfa"/></symbol>
+</defs></svg>
 <div id="app" hidden>
-<header>
-  <h1 id="name">Hoptics M7</h1><span class="sub" id="hsub"></span><span class="sp"></span>
-  <span class="sub" id="hnet"></span><a class="sub" href="/">Settings</a>
+<header class="glass">
+  <svg class="logo"><use href="#mark"/></svg>
+  <div><h1 id="name">Hoptics M7</h1><div class="sub" id="hsub"></div></div>
+  <span class="sp"></span><span class="sub" id="hnet"></span><a class="b" href="/" style="padding:6px 12px;border-radius:10px;background:rgba(255,255,255,.08);color:var(--text)">Settings</a>
 </header>
-<nav id="tabs"></nav>
+<nav id="tabs" class="glass"></nav>
 <main>
 <section id="t-overview">
+  <div class="two">
+    <div class="card glass" style="display:flex;gap:20px;align-items:center">
+      <canvas class="ring" id="ring"></canvas>
+      <div><div class="dim" style="font-size:12px;font-weight:600;letter-spacing:.5px">REPEATER HEALTH</div><div class="score" id="hscore">-</div><div class="dim" id="hsum">Needs 10 minutes of data.</div></div>
+    </div>
+    <div class="card glass"><h3>Health over time</h3><div class="chart"><canvas id="g-health" style="height:120px"></canvas><div class="tip"></div></div></div>
+  </div>
   <div class="grid" id="tiles"></div>
-  <div class="card"><h3>Mesh check for this spot</h3><div id="warns"><span class="dim">Collecting data...</span></div></div>
+  <div class="card glass"><h3>Mesh check for this spot</h3><div id="warns"><span class="dim">Collecting data...</span></div></div>
 </section>
 <section id="t-graphs">
-  <div class="row"><span class="dim">Range</span>
-    <select id="range"><option value="3600">1 hour</option><option value="86400" selected>24 hours</option><option value="604800">7 days</option><option value="2592000">30 days</option></select>
-    <span class="dim" id="gnote"></span></div>
-  <div class="card"><h3>Noise floor (dBm)</h3><canvas id="g-noise"></canvas></div>
-  <div class="card"><h3>Airtime used (%): transmit and receive</h3><canvas id="g-air"></canvas></div>
-  <div class="card"><h3>Packets per 5 minutes: flood and direct received, sent</h3><canvas id="g-pk"></canvas></div>
+  <div class="row glass" style="padding:10px 14px;border-radius:14px"><span class="dim">Range</span>
+    <select id="range"><option value="3600">1 hour</option><option value="21600">6 hours</option><option value="86400" selected>24 hours</option><option value="604800">7 days</option><option value="2592000">30 days</option></select>
+    <span class="dim" id="gnote"></span><span class="sp"></span><span class="dim">Click any point for the full picture of that 5 minutes.</span></div>
+  <div class="card glass"><h3>Repeater health (0-100)</h3><div class="chart"><canvas id="g-health2"></canvas><div class="tip"></div></div></div>
+  <div class="two">
+    <div class="card glass"><h3>Noise floor (dBm)</h3><div class="chart"><canvas id="g-noise"></canvas><div class="tip"></div></div></div>
+    <div class="card glass"><h3>Airtime used (%)</h3><div class="chart"><canvas id="g-air"></canvas><div class="tip"></div></div></div>
+    <div class="card glass"><h3>Packets per 5 minutes</h3><div class="chart"><canvas id="g-pk"></canvas><div class="tip"></div></div></div>
+    <div class="card glass"><h3>Copies heard per flood</h3><div class="chart"><canvas id="g-dup"></canvas><div class="tip"></div></div></div>
+    <div class="card glass"><h3>Repeaters heard well, and their SNR</h3><div class="chart"><canvas id="g-nb"></canvas><div class="tip"></div></div></div>
+    <div class="card glass"><h3>MQTT uploads per 5 minutes</h3><div class="chart"><canvas id="g-mq"></canvas><div class="tip"></div></div></div>
+  </div>
 </section>
 <section id="t-map">
-  <div class="row"><span class="dim" id="mapnote"></span></div>
-  <div id="map"></div>
+  <div class="row glass" style="padding:10px 14px;border-radius:14px"><span class="dim" id="mapnote"></span></div>
+  <div id="map" class="glass"></div>
 </section>
 <section id="t-nbrs">
   <div class="row"><button class="b" id="scan">Scan now</button><span class="dim" id="scanmsg">Repeaters this node hears directly (zero hop).</span></div>
-  <div class="card scroll"><table><thead><tr><th>Name</th><th>ID</th><th>SNR (dB)</th><th>Signal</th><th>Last heard</th></tr></thead><tbody id="nbody"></tbody></table></div>
-  <div class="card"><h3>All nodes heard (adverts)</h3><div class="scroll"><table><thead><tr><th>Name</th><th>Type</th><th>ID</th><th>Hops</th><th>SNR (dB)</th><th>Location</th><th>Seen</th></tr></thead><tbody id="allbody"></tbody></table></div></div>
+  <div class="card glass"><h3>Neighbours</h3><div class="scroll"><table><thead><tr><th>Name</th><th>ID</th><th>SNR (dB)</th><th>Signal</th><th>Distance</th><th>Last heard</th></tr></thead><tbody id="nbody"></tbody></table></div></div>
+  <div class="card glass"><h3>All nodes heard (adverts)</h3><div class="scroll"><table><thead><tr><th>Name</th><th>Type</th><th>ID</th><th>Hops</th><th>SNR (dB)</th><th>Distance</th><th>Seen</th></tr></thead><tbody id="allbody"></tbody></table></div></div>
 </section>
 <section id="t-packets">
-  <div class="row">
+  <div class="row glass" style="padding:10px 14px;border-radius:14px">
     <select id="pf"><option value="">All types</option></select>
     <label><input type="checkbox" id="prx" checked> Received</label><label><input type="checkbox" id="ptx" checked> Sent</label>
     <button class="b" id="ppause">Pause</button><button class="b" id="pcsv">Download CSV</button>
-    <span class="dim" id="pnote"></span>
+    <span class="dim" id="pnote"></span><span class="sp"></span><span class="dim">Click a packet for its details.</span>
   </div>
-  <div class="card scroll"><table><thead><tr><th>Time</th><th>Dir</th><th>Type</th><th>Route</th><th>Hops</th><th>Path</th><th>From</th><th>SNR</th><th>RSSI</th><th>Len</th><th>Heard</th></tr></thead><tbody id="pbody"></tbody></table></div>
+  <div class="card glass"><div class="scroll"><table><thead><tr><th>Time</th><th>Dir</th><th>Type</th><th>Route</th><th>Hops</th><th>Path</th><th>From / channel</th><th>SNR</th><th>RSSI</th><th>Len</th><th>Copies</th></tr></thead><tbody id="pbody"></tbody></table></div></div>
+</section>
+<section id="t-insights">
+  <div class="two">
+    <div class="card glass"><h3>Packet types</h3><div id="i-types"></div></div>
+    <div class="card glass"><h3>Repeaters that hand packets to this node</h3><div id="i-relay"></div></div>
+    <div class="card glass"><h3>How far packets travelled (hops)</h3><div id="i-hops"></div></div>
+    <div class="card glass"><h3>Signal of packets heard (SNR, dB)</h3><div id="i-snr"></div></div>
+    <div class="card glass"><h3>Busiest channels</h3><div id="i-ch"></div></div>
+    <div class="card glass"><h3>Most heard nodes</h3><div id="i-talk"></div></div>
+  </div>
+  <div class="card glass"><h3>Busiest hours of the day (packets heard, average)</h3><div class="heat" id="i-heat"></div><div class="legend" id="i-hl"></div></div>
+  <div class="card glass"><h3>Channels to decode</h3>
+    <p class="dim">Public is built in. Add hashtag channels (like #test) to read their messages in packet details. Saved in this browser only.</p>
+    <div class="row"><input id="chin" placeholder="#channel"><button class="b" id="chadd">Add</button><span id="chlist"></span></div></div>
 </section>
 <section id="t-mqtt">
-  <div class="card"><h3>Servers this node uploads to</h3><table><thead><tr><th>Slot</th><th>Server</th><th>State</th><th>Sent</th><th>Errors</th></tr></thead><tbody id="mbody"></tbody></table>
+  <div class="card glass"><h3>Servers this node uploads to</h3><table><thead><tr><th>Slot</th><th>Server</th><th>State</th><th>Uploads</th><th>Errors</th><th>Success</th></tr></thead><tbody id="mbody"></tbody></table>
   <p class="dim">Add or change servers on the <a href="/">Settings</a> page (up to 6).</p></div>
-  <div class="card"><h3>See your data</h3><div id="links"></div></div>
+  <div class="card glass"><h3>See your data</h3><div id="links"></div></div>
 </section>
 <section id="t-advisor">
-  <div class="card"><h3>Settings advisor</h3><div id="adv"><span class="dim">Loading...</span></div></div>
+  <div class="card glass"><h3>Settings advisor</h3><div id="adv"><span class="dim">Loading...</span></div></div>
 </section>
 <section id="t-console">
-  <div class="row"><input id="cmd" style="flex:1" placeholder="Command, e.g. get txdelay"><button class="b p" id="run">Run</button></div>
-  <pre id="cout"></pre>
+  <div class="card glass"><div class="row"><input id="cmd" style="flex:1" placeholder="Command, e.g. get txdelay"><button class="b p" id="run">Run</button></div>
+  <pre id="cout"></pre></div>
 </section>
 </main>
 </div>
+<div id="modal"><div id="mbox" class="glass"><button class="b" id="mclose">Close</button><div id="mbody2"></div></div></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
-const TYPES=["Request","Response","Message","Ack","Advert","Channel msg","Channel data","Anon request","Path","Trace","Multipart","Control","","","","Custom"];
-const ADV=["?","Companion","Repeater","Room","Sensor"];
-const ROUTE=["Flood+","Flood","Direct","Direct+"];
-const S={stats:null,self:null,nodes:[],nbrs:[],hist:[],pk:[],seq:0,upAt:0,paused:false,repeat:null,cfg:{}};
+const hex=b=>Array.from(b,x=>x.toString(16).padStart(2,"0")).join("");
+const unhex=s=>{const o=new Uint8Array(s.length>>1);for(let i=0;i<o.length;i++)o[i]=parseInt(s.substr(i*2,2),16);return o};
+const utf8=b=>{try{return new TextDecoder().decode(b)}catch(e){return""}};
+// SHA-256, HMAC and AES-128 from the Hoptics-MC web page (hoptics/web/core.js)
+// ------------------------------------------------------------------ crypto (the page may be plain http, where
+// crypto.subtle is missing, so SHA-256, HMAC and AES-128 are done here)
+const SHA = (() => {
+  const K = new Uint32Array([0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]);
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  function sha256(data) {
+    const len = data.length, bl = ((len + 9 + 63) >> 6) << 6, m = new Uint8Array(bl);
+    m.set(data); m[len] = 0x80;
+    const dv = new DataView(m.buffer);
+    dv.setUint32(bl - 4, len * 8); dv.setUint32(bl - 8, Math.floor(len / 0x20000000));
+    const H = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]), W = new Uint32Array(64);
+    for (let o = 0; o < bl; o += 64) {
+      for (let i = 0; i < 16; i++) W[i] = dv.getUint32(o + i * 4);
+      for (let i = 16; i < 64; i++) {
+        const s0 = rotr(W[i - 15], 7) ^ rotr(W[i - 15], 18) ^ (W[i - 15] >>> 3), s1 = rotr(W[i - 2], 17) ^ rotr(W[i - 2], 19) ^ (W[i - 2] >>> 10);
+        W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;
+      }
+      let [a, b, c, d, e, f, g, h] = H;
+      for (let i = 0; i < 64; i++) {
+        const t1 = (h + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + W[i]) | 0;
+        const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+        h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      H[0] += a; H[1] += b; H[2] += c; H[3] += d; H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+    }
+    const out = new Uint8Array(32), ov = new DataView(out.buffer);
+    for (let i = 0; i < 8; i++) ov.setUint32(i * 4, H[i]);
+    return out;
+  }
+  function hmac(key, msg) {
+    const k = new Uint8Array(64);
+    k.set(key.length > 64 ? sha256(key) : key);
+    const ip = new Uint8Array(64 + msg.length), op = new Uint8Array(96);
+    for (let i = 0; i < 64; i++) { ip[i] = k[i] ^ 0x36; op[i] = k[i] ^ 0x5c; }
+    ip.set(msg, 64); op.set(sha256(ip), 64);
+    return sha256(op);
+  }
+  return { sha256, hmac };
+})();
+
+const AES = (() => {
+  const S = new Uint8Array(256), Si = new Uint8Array(256);
+  const rotl8 = (x, s) => ((x << s) | (x >> (8 - s))) & 255;
+  let p = 1, q = 1;
+  do {
+    p = (p ^ (p << 1) ^ (p & 0x80 ? 0x1b : 0)) & 255;
+    q ^= q << 1; q ^= q << 2; q ^= q << 4; q &= 255; if (q & 0x80) q ^= 0x09;
+    S[p] = (q ^ rotl8(q, 1) ^ rotl8(q, 2) ^ rotl8(q, 3) ^ rotl8(q, 4) ^ 0x63) & 255;
+  } while (p !== 1);
+  S[0] = 0x63;
+  for (let i = 0; i < 256; i++) Si[S[i]] = i;
+  const xt = (a) => ((a << 1) ^ (a & 0x80 ? 0x1b : 0)) & 255;
+  const mul = (a, b) => { let r = 0; while (b) { if (b & 1) r ^= a; a = xt(a); b >>= 1; } return r; };
+  function expand(key) {
+    const w = new Uint8Array(176); w.set(key);
+    let rc = 1;
+    for (let i = 16; i < 176; i += 4) {
+      let t = [w[i - 4], w[i - 3], w[i - 2], w[i - 1]];
+      if (i % 16 === 0) { t = [S[t[1]] ^ rc, S[t[2]], S[t[3]], S[t[0]]]; rc = xt(rc); }
+      for (let j = 0; j < 4; j++) w[i + j] = w[i - 16 + j] ^ t[j];
+    }
+    return w;
+  }
+  function decryptBlock(w, inp, out, off) {
+    const s = new Uint8Array(16);
+    for (let i = 0; i < 16; i++) s[i] = inp[off + i] ^ w[160 + i];
+    for (let r = 9; r >= 0; r--) {
+      // inverse shift rows (state is column-major: s[row + 4 * col])
+      const t = s.slice();
+      for (let row = 1; row < 4; row++) for (let c = 0; c < 4; c++) s[row + 4 * ((c + row) % 4)] = t[row + 4 * c];
+      for (let i = 0; i < 16; i++) s[i] = Si[s[i]] ^ w[r * 16 + i];
+      if (r) for (let c = 0; c < 4; c++) {
+        const a0 = s[4 * c], a1 = s[4 * c + 1], a2 = s[4 * c + 2], a3 = s[4 * c + 3];
+        s[4 * c] = mul(a0, 14) ^ mul(a1, 11) ^ mul(a2, 13) ^ mul(a3, 9);
+        s[4 * c + 1] = mul(a0, 9) ^ mul(a1, 14) ^ mul(a2, 11) ^ mul(a3, 13);
+        s[4 * c + 2] = mul(a0, 13) ^ mul(a1, 9) ^ mul(a2, 14) ^ mul(a3, 11);
+        s[4 * c + 3] = mul(a0, 11) ^ mul(a1, 13) ^ mul(a2, 9) ^ mul(a3, 14);
+      }
+    }
+    out.set(s, off);
+  }
+  function decryptECB(key, data) {
+    const w = expand(key), out = new Uint8Array(data.length);
+    for (let o = 0; o + 16 <= data.length; o += 16) decryptBlock(w, data, out, o);
+    return out;
+  }
+  function encryptECB(key, data) { // only the demo uses this (the page never sends)
+    const w = expand(key), out = new Uint8Array(data.length);
+    for (let o = 0; o + 16 <= data.length; o += 16) {
+      const s = new Uint8Array(16);
+      for (let i = 0; i < 16; i++) s[i] = data[o + i] ^ w[i];
+      for (let r = 1; r <= 10; r++) {
+        for (let i = 0; i < 16; i++) s[i] = S[s[i]];
+        const t = s.slice();
+        for (let row = 1; row < 4; row++) for (let c = 0; c < 4; c++) s[row + 4 * c] = t[row + 4 * ((c + row) % 4)];
+        if (r < 10) for (let c = 0; c < 4; c++) {
+          const a0 = s[4 * c], a1 = s[4 * c + 1], a2 = s[4 * c + 2], a3 = s[4 * c + 3];
+          s[4 * c] = mul(a0, 2) ^ mul(a1, 3) ^ a2 ^ a3; s[4 * c + 1] = a0 ^ mul(a1, 2) ^ mul(a2, 3) ^ a3;
+          s[4 * c + 2] = a0 ^ a1 ^ mul(a2, 2) ^ mul(a3, 3); s[4 * c + 3] = mul(a0, 3) ^ a1 ^ a2 ^ mul(a3, 2);
+        }
+        for (let i = 0; i < 16; i++) s[i] ^= w[r * 16 + i];
+      }
+      out.set(s, o);
+    }
+    return out;
+  }
+  return { decryptECB, encryptECB };
+})();
+
+
+const TYPES=["Request","Response","Direct message","Ack","Advert","Channel message","Channel data","Anonymous request","Path","Trace","Multipart","Control","","","","Custom"];
+const TCOL=["#a78bfa","#a78bfa","#5b9dff","#7d8a97","#46e08a","#3fd6e0","#3fd6e0","#f0883e","#f4b740","#f778ba","#9aa7b4","#f0883e","#999","#999","#999","#999"];
+const ADV=["Node","Companion","Repeater","Room","Sensor"];
+const ROUTE=["Flood (scoped)","Flood","Direct","Direct (scoped)"];
+const S={stats:null,self:null,nodes:[],nbrs:[],hist:[],pk:[],seq:0,upAt:0,paused:false,repeat:null};
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-function ago(sec){if(sec==null||sec<0)return"-";if(sec<60)return Math.round(sec)+" s";if(sec<3600)return Math.round(sec/60)+" min";if(sec<86400)return(sec/3600).toFixed(1)+" h";return(sec/86400).toFixed(1)+" d"}
+const nowEpoch=()=>Math.floor(Date.now()/1000);
+function ago(sec){if(sec==null||sec<0||!isFinite(sec))return"-";if(sec<60)return Math.round(sec)+" s";if(sec<3600)return Math.round(sec/60)+" min";if(sec<86400)return(sec/3600).toFixed(1)+" h";return(sec/86400).toFixed(1)+" d"}
 function dur(s){const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return(d?d+"d ":"")+h+"h "+m+"m"}
+const fmtT=t=>new Date(t*1000).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
 async function api(path,opt){const r=await fetch(path,opt);if(r.status===401){showLogin();throw new Error("auth")}if(!r.ok)throw new Error(path+" "+r.status);return r.json()}
 
-// ---------------------------------------------------------------- login
+// ================================================================ background: the Hoptics constellation, drawn at screen resolution
+(()=>{const cv=$("sky"),c=cv.getContext("2d");let W,H,dpr,pts=[],last=0;
+  const cols=["#3fd6e0","#46e08a","#a78bfa","#5b9dff","#3fd6e0"],still=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function size(){dpr=Math.min(devicePixelRatio||1,3);W=innerWidth;H=innerHeight;cv.width=W*dpr;cv.height=H*dpr;c.setTransform(dpr,0,0,dpr,0,0);
+    const n=Math.round(W*H/16000);pts=Array.from({length:n},()=>({x:Math.random()*W,y:Math.random()*H,r:.8+Math.random()*1.9,c:cols[Math.random()*cols.length|0],
+      vx:(Math.random()-.5)*.06,vy:(Math.random()-.5)*.06,p:Math.random()*6.28}))}
+  function draw(t){c.clearRect(0,0,W,H);
+    const g=c.createRadialGradient(W*.5,H*.42,0,W*.5,H*.42,Math.max(W,H)*.75);g.addColorStop(0,"#0f2a33");g.addColorStop(.55,"#0a1820");g.addColorStop(1,"#060c11");c.fillStyle=g;c.fillRect(0,0,W,H);
+    c.strokeStyle="rgba(63,214,224,.06)";c.lineWidth=1;for(let i=1;i<=4;i++){c.beginPath();c.arc(W*.5,H*.42,Math.min(W,H)*.16*i,0,6.283);c.stroke()}
+    for(const p of pts){p.x+=p.vx;p.y+=p.vy;if(p.x<0)p.x+=W;if(p.x>W)p.x-=W;if(p.y<0)p.y+=H;if(p.y>H)p.y-=H}
+    for(let i=0;i<pts.length;i++)for(let j=i+1;j<pts.length;j++){const a=pts[i],b=pts[j],dx=a.x-b.x,dy=a.y-b.y,d=dx*dx+dy*dy;
+      if(d<26000){c.strokeStyle=`rgba(120,200,220,${.16*(1-d/26000)})`;c.beginPath();c.moveTo(a.x,a.y);c.lineTo(b.x,b.y);c.stroke()}}
+    for(const p of pts){const tw=.65+.35*Math.sin(t/900+p.p);c.globalAlpha=tw;c.shadowColor=p.c;c.shadowBlur=10;c.fillStyle=p.c;c.beginPath();c.arc(p.x,p.y,p.r,0,6.283);c.fill()}
+    c.globalAlpha=1;c.shadowBlur=0}
+  function loop(t){if(!document.hidden&&t-last>66){draw(t);last=t}if(!still)requestAnimationFrame(loop)}
+  addEventListener("resize",()=>{size();draw(performance.now())});size();draw(0);if(!still)requestAnimationFrame(loop)})();
+
+// ================================================================ login
 function showLogin(){$("app").hidden=true;$("login").hidden=false;$("pw").focus()}
 async function login(){
   $("lmsg").textContent="Signing in...";
@@ -121,237 +317,370 @@ async function login(){
 }
 $("go").onclick=login;$("pw").onkeydown=e=>{if(e.key==="Enter")login()};
 
-// ---------------------------------------------------------------- CLI (one batch at a time)
+// ================================================================ CLI, one batch at a time
 let cliChain=Promise.resolve();
 function cli(cmds){
   const run=async()=>{
-    const reqid=[...crypto.getRandomValues(new Uint8Array(8))].map(b=>b.toString(16).padStart(2,"0")).join("");
+    const reqid=hex(crypto.getRandomValues(new Uint8Array(8)));
     await api("/api/cli",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reqid,cmds})});
     const out=[];
-    for(let i=0;i<120;i++){
-      await sleep(350);
+    for(let i=0;i<150;i++){await sleep(350);
       const r=await api("/api/cli/result?reqid="+reqid+"&from="+out.length);
-      if(r.state==="idle")break;
-      if(r.results)out.push(...r.results.map(x=>x.reply));
-      if(r.state==="done")break;
-    }
-    return out;
-  };
-  const p=cliChain.then(run,run);cliChain=p.catch(()=>{});return p;
-}
-const val=r=>String(r||"").replace(/^\s*>\s*/,"").trim();
+      if(r.state==="idle")break;if(r.results)out.push(...r.results.map(x=>x.reply));if(r.state==="done")break}
+    return out};
+  const p=cliChain.then(run,run);cliChain=p.catch(()=>{});return p}
+const val=r=>String(r||"").replace(/^\s*-?>\s*/,"").replace(/^>\s*/,"").trim();
 
-// ---------------------------------------------------------------- tabs
-const TABS=[["overview","Overview"],["graphs","Graphs"],["map","Live map"],["nbrs","Neighbours"],["packets","Packets"],["mqtt","MQTT"],["advisor","Advisor"],["console","Console"]];
+// ================================================================ tabs
+const TABS=[["overview","Overview"],["graphs","Graphs"],["map","Live map"],["nbrs","Neighbours"],["packets","Packets"],["insights","Insights"],["mqtt","MQTT"],["advisor","Advisor"],["console","Console"]];
 let tab="overview";
 TABS.forEach(([id,label])=>{const b=document.createElement("button");b.textContent=label;b.onclick=()=>setTab(id);b.id="b-"+id;$("tabs").appendChild(b)});
 function setTab(id){if(!TABS.some(t=>t[0]===id))id="overview";tab=id;TABS.forEach(([t])=>{$("t-"+t).classList.toggle("on",t===id);$("b-"+t).classList.toggle("on",t===id)});
-  if(id==="map")initMap();if(id==="graphs")drawGraphs();if(id==="advisor")loadAdvisor();location.hash=id}
+  if(id==="map")initMap();if(id==="advisor")loadAdvisor();history.replaceState(null,"","#"+id);render()}
 TYPES.forEach((t,i)=>{if(t){const o=document.createElement("option");o.value=i;o.textContent=t;$("pf").appendChild(o)}});
 
-// ---------------------------------------------------------------- data
-function nodeById(id){return S.nodes.find(n=>n.id===id)}
-function nodeByPrefix(hex2){return S.nodes.filter(n=>n.id.startsWith(hex2)).sort((a,b)=>b.seen-a.seen)[0]}
-function nowEpoch(){return Math.floor(Date.now()/1000)}
+// ================================================================ data
+const nodeById=id=>S.nodes.find(n=>n.id===id);
+function nodeByPrefix(h2){return S.nodes.filter(n=>n.id.startsWith(h2)).sort((a,b)=>(b.type===2)-(a.type===2)||b.seen-a.seen)[0]}
+const pfx=b=>b.toString(16).padStart(2,"0");
 async function pollStats(){try{const j=await api("/api/stats");if(j.uptime_s!==undefined)S.stats=j}catch(e){}}
 async function pollSelf(){try{S.self=await api("/api/hx?k=self")}catch(e){}}
 async function pollNodes(){try{const j=await api("/api/hx?k=nodes");S.nodes=j.nodes;S.nbrs=j.nbrs}catch(e){}}
-async function pollHist(){try{const j=await api("/api/hx?k=history");S.hist=j.s}catch(e){}}
-async function pollPk(){
-  if(S.paused)return;
-  try{const j=await api("/api/hx?k=packets&since="+S.seq);
-    if(j.seq<S.seq)S.pk=[];                                   // node restarted
-    S.seq=j.seq;S.upAt=Date.now()/1000-j.now;
-    for(const p of j.p)S.pk.push(p);
-    if(S.pk.length>2000)S.pk.splice(0,S.pk.length-2000);
-    if(j.p.length&&mapReady)addMapLines(j.p);
-  }catch(e){}
-}
+async function pollHist(){try{const j=await api("/api/hx?k=history");S.hist=j.s;S.rows=deltas(S.hist)}catch(e){}}
+async function pollPk(){if(S.paused)return;
+  try{const j=await api("/api/hx?k=packets&since="+S.seq);if(j.seq<S.seq)S.pk=[];S.seq=j.seq;S.upAt=Date.now()/1000-j.now;
+    S.pk.push(...j.p);if(S.pk.length>3000)S.pk.splice(0,S.pk.length-3000);if(j.p.length&&mapReady)addMapLines(j.p)}catch(e){}}
 
-// ---------------------------------------------------------------- derived numbers
-function histWindow(sec){const t0=nowEpoch()-sec;return S.hist.filter(s=>s[0]>=t0)}
-function deltas(rows){ // per-interval values between consecutive samples (skips restarts)
-  const out=[];
-  for(let i=1;i<rows.length;i++){const a=rows[i-1],b=rows[i];const dt=b[1]-a[1];if(dt<=0||dt>3600)continue;
-    out.push({t:b[0],noise:b[2],tx:(b[3]-a[3])/(dt*10),rx:(b[4]-a[4])/(dt*10),rf:b[7]-a[7],rd:b[8]-a[8],sent:b[6]-a[6]})}
+// ================================================================ numbers per 5-minute interval, and health
+// history row: t,up,noise,tx_ms,rx_ms,recv,sent,rf,rd,sf,sd,rxerr,uniq,dup,nbr_strong,nbr_snr4,mqtt_ok,mqtt_err,heap,temp
+function deltas(h){const out=[];
+  for(let i=1;i<h.length;i++){const a=h[i-1],b=h[i],dt=b[1]-a[1];if(dt<=0||dt>3600)continue;
+    const uniq=b[12]-a[12],dup=b[13]-a[13],recv=b[5]-a[5],err=b[11]-a[11],ok=b[16]-a[16],me=b[17]-a[17];
+    const r={t:b[0],dt,noise:b[2],tx:(b[3]-a[3])/(dt*10),rx:(b[4]-a[4])/(dt*10),recv,sent:b[6]-a[6],rf:b[7]-a[7],rd:b[8]-a[8],sf:b[9]-a[9],sd:b[10]-a[10],
+      err,uniq,dup,copies:uniq>0?(uniq+dup)/uniq:null,nb:b[14],nbsnr:b[15]/4,mok:ok,merr:me,heap:b[18],temp:b[19]};
+    r.h=health(r);out.push(r)}
   return out}
-function airtimeLastHour(){const d=deltas(histWindow(3900));if(!d.length)return null;return d.reduce((s,x)=>s+x.tx+x.rx,0)/d.length}
-function dupStats(){const rx=S.pk.filter(p=>!p[2]&&(p[4]===0||p[4]===1));if(rx.length<20)return null;
-  const seen=new Map();rx.forEach(p=>seen.set(p[10],(seen.get(p[10])||0)+1));
-  const uniq=seen.size;return{per:rx.length/uniq,uniq,total:rx.length}}
+const lin=(v,good,bad)=>Math.max(0,Math.min(100,100*(bad-v)/(bad-good)));
+function health(r){
+  const c={};
+  c.air=(r.tx+r.rx)<=10?100:lin(r.tx+r.rx,10,50);
+  c.noise=r.noise>=0?null:lin(r.noise,-112,-90);
+  c.copies=r.copies==null||r.uniq<3?null:lin(r.copies,2,8);
+  c.errors=(r.recv+r.err)<5?null:lin(r.err/(r.recv+r.err),.05,.4);
+  c.links=r.nb===0?30:r.nb<=6?100:Math.max(50,100-(r.nb-6)*5);
+  c.uplink=(r.mok+r.merr)===0?null:lin(r.merr/(r.mok+r.merr),0,.5);
+  const W={air:.25,copies:.2,noise:.15,links:.2,errors:.1,uplink:.1};let s=0,w=0;
+  for(const k in W)if(c[k]!=null){s+=c[k]*W[k];w+=W[k]}
+  return{score:w?Math.round(s/w):null,c}}
+const HNAME={air:"Airtime",copies:"Copies per flood",noise:"Noise floor",links:"Neighbour links",errors:"Receive errors",uplink:"MQTT uploads"};
+const HHELP={air:"How much of the time the radio is busy. Busy channels mean collisions and lost messages.",
+  copies:"How many times the same flood packet reaches this node. Many copies means many repeaters around resend the same thing.",
+  noise:"Background radio noise. Lower (more negative) is better: weak packets stay readable.",
+  links:"Repeaters heard with good signal. None means this node is isolated; very many means a crowded spot.",
+  errors:"Packets the radio heard but could not decode (damaged by collisions or noise).",
+  uplink:"Share of MQTT uploads that failed."};
+function windowRows(sec){const t0=nowEpoch()-sec;return(S.rows||[]).filter(r=>r.t>=t0)}
+function avg(a){a=a.filter(v=>v!=null&&isFinite(v));return a.length?a.reduce((s,v)=>s+v,0)/a.length:null}
+function healthNow(){const w=windowRows(3600);if(!w.length)return null;const c={};for(const k in HNAME)c[k]=avg(w.map(r=>r.h.c[k]));return{score:Math.round(avg(w.map(r=>r.h.score))),c}}
+function airLastHour(){const w=windowRows(3900);return w.length?avg(w.map(r=>r.tx+r.rx)):null}
+function copiesNow(){const w=windowRows(3600*3);const u=w.reduce((s,r)=>s+r.uniq,0),d=w.reduce((s,r)=>s+r.dup,0);return u>=10?{per:(u+d)/u,uniq:u}:null}
 function strongNbrs(){const now=nowEpoch();return S.nbrs.filter(n=>n.snr>=0&&(now-n.heard)<86400)}
 function km(a,b,c,d){const R=6371,r=x=>x*Math.PI/180;const h=Math.sin(r(c-a)/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(r(d-b)/2)**2;return 2*R*Math.asin(Math.sqrt(h))}
-function hasLoc(){return S.self&&(S.self.lat||S.self.lon)}
-function histHours(){if(S.hist.length<2)return 0;return(S.hist[S.hist.length-1][1]-S.hist[0][1])/3600}
+const hasLoc=()=>S.self&&(S.self.lat||S.self.lon);
+function distTo(n){return hasLoc()&&n&&n.lat!=null?km(S.self.lat,S.self.lon,n.lat,n.lon):null}
+const fmtKm=d=>d==null?"-":d<1?Math.round(d*1000)+" m":d.toFixed(d<10?1:0)+" km";
+function histHours(){return S.hist.length<2?0:(S.hist[S.hist.length-1][1]-S.hist[0][1])/3600}
+function recTiming(n){if(n<=3)return{tx:1.1,dtx:0.5,rx:n>=2?3:0,tier:"1 to 3"};if(n<=8)return{tx:1.4,dtx:0.6,rx:3,tier:"4 to 8"};
+  if(n<=12)return{tx:2.0,dtx:0.75,rx:3,tier:"9 to 12"};return{tx:2.2,dtx:0.75,rx:3,tier:"13 or more"}}
+const scoreCol=s=>s==null?"#7d8a97":s>=80?"#46e08a":s>=60?"#f4b740":"#ff6b6b";
 
-// recommended timing for the number of repeaters heard well (SNR >= 0)
-function recTiming(n){if(n<=3)return{tx:1.1,dtx:0.5,rx:n>=2?3:0,tier:"1-3"};if(n<=8)return{tx:1.4,dtx:0.6,rx:3,tier:"4-8"};
-  if(n<=12)return{tx:2.0,dtx:0.75,rx:3,tier:"9-12"};return{tx:2.2,dtx:0.75,rx:3,tier:"13+"}}
+// ================================================================ charts: sharp on any screen, hover read-out, click for details
+function chart(cv,series,opt){
+  const box=cv.parentElement,tip=box.querySelector(".tip");
+  const dpr=Math.min(devicePixelRatio||1,3),w=cv.clientWidth,h=cv.clientHeight;cv.width=w*dpr;cv.height=h*dpr;
+  const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
+  const pts=series.flatMap(s=>s.d.filter(p=>p[1]!=null));
+  if(!pts.length){c.fillStyle="#9aa7b4";c.font="13px -apple-system,Segoe UI,sans-serif";c.fillText("No data yet: a point is added every 5 minutes.",12,24);cv.onmousemove=cv.onclick=null;return}
+  const x0=Math.min(...pts.map(p=>p[0])),x1=Math.max(...pts.map(p=>p[0]));
+  let y0=opt.min!=null?opt.min:Math.min(...pts.map(p=>p[1])),y1=opt.max!=null?opt.max:Math.max(...pts.map(p=>p[1]));if(y1-y0<1e-9)y1=y0+1;
+  if(opt.min==null){const pad=(y1-y0)*.1;y0-=pad;y1+=pad}
+  const L=46,R=12,T=24,B=24,X=v=>L+(x1>x0?(v-x0)/(x1-x0):.5)*(w-L-R),Y=v=>h-B-(v-y0)/(y1-y0)*(h-T-B);
+  c.font="11px -apple-system,Segoe UI,sans-serif";c.lineWidth=1;
+  for(let i=0;i<=4;i++){const v=y0+(y1-y0)*i/4,y=Math.round(Y(v))+.5;c.strokeStyle="rgba(255,255,255,.07)";c.beginPath();c.moveTo(L,y);c.lineTo(w-R,y);c.stroke();
+    c.fillStyle="#9aa7b4";c.fillText(Math.abs(y1-y0)<8?v.toFixed(1):Math.round(v),6,y+4)}
+  const span=x1-x0;for(let i=0;i<=4&&span>0;i++){const t=x0+span*i/4,d=new Date(t*1000);const s=span>172800?d.toLocaleDateString([],{month:"short",day:"numeric"}):d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+    c.fillStyle="#9aa7b4";c.fillText(s,Math.min(w-R-c.measureText(s).width,Math.max(L,X(t)-c.measureText(s).width/2)),h-7)}
+  series.forEach(s=>{const d=s.d.filter(p=>p[1]!=null);if(!d.length)return;
+    if(s.fill){const g=c.createLinearGradient(0,T,0,h-B);g.addColorStop(0,s.c+"55");g.addColorStop(1,s.c+"00");c.fillStyle=g;c.beginPath();c.moveTo(X(d[0][0]),h-B);d.forEach(p=>c.lineTo(X(p[0]),Y(p[1])));c.lineTo(X(d[d.length-1][0]),h-B);c.fill()}
+    c.strokeStyle=s.c;c.lineWidth=2;c.lineJoin="round";c.beginPath();d.forEach((p,i)=>i?c.lineTo(X(p[0]),Y(p[1])):c.moveTo(X(p[0]),Y(p[1])));c.stroke();
+    if(d.length<40)d.forEach(p=>{c.fillStyle=s.c;c.beginPath();c.arc(X(p[0]),Y(p[1]),2.6,0,6.283);c.fill()})});
+  let lx=L;series.forEach(s=>{c.fillStyle=s.c;c.beginPath();c.arc(lx+5,11,4,0,6.283);c.fill();c.fillStyle="#dfe7ee";c.fillText(s.n,lx+13,15);lx+=c.measureText(s.n).width+30});
+  const xs=[...new Set(pts.map(p=>p[0]))].sort((a,b)=>a-b);
+  const near=mx=>{let best=xs[0];for(const x of xs)if(Math.abs(X(x)-mx)<Math.abs(X(best)-mx))best=x;return best};
+  cv.onmousemove=e=>{const r=cv.getBoundingClientRect(),x=near(e.clientX-r.left);
+    tip.innerHTML=`<b>${fmtT(x)}</b><br>`+series.map(s=>{const p=s.d.find(q=>q[0]===x);return p&&p[1]!=null?`<span style="color:${s.c}">●</span> ${s.n}: ${(+p[1]).toFixed(opt.dp??1)}${opt.unit||""}`:""}).filter(Boolean).join("<br>");
+    tip.style.display="block";const tx=X(x)+14;tip.style.left=Math.min(tx,w-tip.offsetWidth-4)+"px";tip.style.top="28px"};
+  cv.onmouseleave=()=>tip.style.display="none";
+  cv.onclick=e=>{const r=cv.getBoundingClientRect(),x=near(e.clientX-r.left);const row=(S.rows||[]).find(q=>q.t===x);if(row)openSample(row)}}
 
-// ---------------------------------------------------------------- overview
-function tile(k,v,s){return`<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s||""}</div></div>`}
+function drawGraphs(){
+  const rows=windowRows(+$("range").value);
+  $("gnote").textContent=rows.length+" points · "+histHours().toFixed(1)+" h of history kept (up to 30 days)";
+  const P=(k,f)=>rows.map(r=>[r.t,f?f(r):r[k]]);
+  chart($("g-health2"),[{n:"health",c:"#46e08a",fill:1,d:P(0,r=>r.h.score)}],{min:0,max:100,dp:0});
+  chart($("g-noise"),[{n:"noise floor",c:"#3fd6e0",fill:1,d:P("noise")}],{dp:0,unit:" dBm"});
+  chart($("g-air"),[{n:"transmit",c:"#f0883e",fill:1,d:P("tx")},{n:"receive",c:"#5b9dff",d:P("rx")}],{min:0,unit:" %"});
+  chart($("g-pk"),[{n:"flood heard",c:"#a78bfa",d:P("rf")},{n:"direct heard",c:"#46e08a",d:P("rd")},{n:"sent",c:"#f0883e",d:P("sent")}],{min:0,dp:0});
+  chart($("g-dup"),[{n:"copies per flood",c:"#f4b740",fill:1,d:P("copies")}],{min:0});
+  chart($("g-nb"),[{n:"repeaters heard well",c:"#46e08a",d:P("nb")},{n:"their avg SNR",c:"#5b9dff",d:P("nbsnr")}],{});
+  chart($("g-mq"),[{n:"uploads",c:"#3fd6e0",d:P("mok")},{n:"errors",c:"#ff6b6b",d:P("merr")}],{min:0,dp:0});
+}
+$("range").onchange=()=>render();addEventListener("resize",()=>render());
+
+// ================================================================ modal
+function modal(html){$("mbody2").innerHTML=html;$("modal").classList.add("on")}
+$("mclose").onclick=()=>$("modal").classList.remove("on");$("modal").onclick=e=>{if(e.target.id==="modal")$("modal").classList.remove("on")};
+addEventListener("keydown",e=>{if(e.key==="Escape")$("modal").classList.remove("on")});
+const kv=a=>`<div class="kv">${a.filter(Boolean).map(([k,v])=>`<div class="k">${k}</div><div>${v}</div>`).join("")}</div>`;
+
+function openSample(r){
+  const h=r.h,up0=r.t-r.dt-(S.upAt?0:0);
+  const comp=Object.keys(HNAME).map(k=>{const v=h.c[k];return`<div class="hb"><div class="t">${HNAME[k]}</div><div class="bar"><i style="width:${v??0}%;background:${scoreCol(v)}"></i></div><div class="n">${v==null?"-":Math.round(v)}</div></div><div class="dim" style="font-size:12px;margin:-2px 0 6px">${HHELP[k]}</div>`}).join("");
+  // packets kept in memory that fall in this interval (packet times are node uptime)
+  const t1=r.t-S.upAt,t0=t1-r.dt;const inWin=S.pk.filter(p=>p[1]>t0&&p[1]<=t1&&!p[2]);
+  const types={};inWin.forEach(p=>types[TYPES[p[3]]]=(types[TYPES[p[3]]]||0)+1);
+  modal(`<h2 style="margin:0 0 4px">${fmtT(r.t-r.dt)} to ${new Date(r.t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</h2>
+  <p class="dim">Everything this node measured in these ${Math.round(r.dt/60)} minutes.</p>
+  <div class="two"><div><h3>Health ${h.score??"-"}</h3>${comp}</div><div>${kv([
+    ["Noise floor",r.noise+" dBm"],["Airtime",`${(r.tx+r.rx).toFixed(2)} % (transmit ${r.tx.toFixed(2)} %, receive ${r.rx.toFixed(2)} %)`],
+    ["Packets heard",`${r.recv} (${r.rf} flood, ${r.rd} direct)`],["Packets sent",`${r.sent} (${r.sf} flood, ${r.sd} direct)`],
+    ["Receive errors",r.err],["New floods / copies",`${r.uniq} / ${r.dup}`+(r.copies?` (${r.copies.toFixed(2)} per flood)`:"")],
+    ["Repeaters heard well",`${r.nb} (average SNR ${r.nbsnr.toFixed(1)} dB)`],["MQTT uploads",`${r.mok} ok, ${r.merr} failed`],
+    ["Free memory",Math.round(r.heap/1024)+" KB"],["Chip temperature",r.temp+" °C"]])}
+  ${inWin.length?`<h3 style="margin-top:14px">Packets in this window (${inWin.length})</h3>`+Object.entries(types).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="pill" style="margin:2px">${k}: ${v}</span>`).join(""):`<p class="dim" style="margin-top:14px">Individual packets from this time are no longer in memory (the last ${S.pk.length} are kept).</p>`}
+  </div></div>`)}
+
+// ================================================================ packet details (decoded like an analyzer)
+const PUBLIC_KEY="8b3387e9c5cdea6ac9e5edbaa115cd72";
+function chanList(){let l=[];try{l=JSON.parse(localStorage.getItem("hx.ch")||"[]")}catch(e){}return l}
+function chanKeys(){const out=[{n:"Public",k:unhex(PUBLIC_KEY)}];chanList().forEach(n=>out.push({n,k:SHA.sha256(new TextEncoder().encode(n)).subarray(0,16)}));
+  return out.map(c=>{const secret=new Uint8Array(32);secret.set(c.k);return{name:c.n,key:c.k,secret,hash:SHA.sha256(c.k)[0]}})}
+function chanName(h){const c=chanKeys().find(x=>x.hash===h);return c?c.name:"channel "+pfx(h).toUpperCase()}
+function decode(b){
+  const o={fields:[]};const F=(name,a,z,col,txt)=>o.fields.push({name,a,z,col,txt});
+  const h=b[0];o.route=h&3;o.type=(h>>2)&15;o.ver=h>>6;F("Header",0,1,"#a78bfa",`route ${ROUTE[o.route]}, type ${TYPES[o.type]}, version ${o.ver+1}`);
+  let i=1;if(o.route===0||o.route===3){o.tc=[b[1]|b[2]<<8,b[3]|b[4]<<8];F("Transport codes",1,5,"#f778ba",o.tc.join(", "));i=5}
+  const pl=b[i];o.hs=(pl>>6)+1;o.hc=pl&63;F("Path length",i,i+1,"#f4b740",`${o.hc} hop${o.hc===1?"":"s"}, ${o.hs}-byte hashes`);i++;
+  o.path=[];for(let k=0;k<o.hc;k++)o.path.push(hex(b.subarray(i+k*o.hs,i+(k+1)*o.hs)));if(o.hc)F("Path",i,i+o.hc*o.hs,"#f0883e",o.path.join(" ").toUpperCase());i+=o.hc*o.hs;
+  const p=b.subarray(i),P0=i;o.payload=p;
+  const T=o.type;
+  if(T===4&&p.length>=101){o.key=hex(p.subarray(0,32));F("Public key",P0,P0+32,"#46e08a",o.key);
+    o.ts=new DataView(p.buffer,p.byteOffset+32,4).getUint32(0,true);F("Timestamp",P0+32,P0+36,"#3fd6e0",new Date(o.ts*1000).toLocaleString());
+    F("Signature",P0+36,P0+100,"#7d8a97","64 bytes");
+    const app=p.subarray(100),f=app[0];o.ntype=f&15;let j=1;F("Flags",P0+100,P0+101,"#a78bfa",ADV[o.ntype]||o.ntype);
+    if(f&0x10&&app.length>=j+8){const dv=new DataView(app.buffer,app.byteOffset+j,8);o.lat=dv.getInt32(0,true)/1e6;o.lon=dv.getInt32(4,true)/1e6;F("Location",P0+100+j,P0+108+j,"#5b9dff",o.lat.toFixed(5)+", "+o.lon.toFixed(5));j+=8}
+    if(f&0x20)j+=2;if(f&0x40)j+=2;if(f&0x80){o.name=utf8(app.subarray(j)).replace(/\0.*$/,"");F("Name",P0+100+j,b.length,"#46e08a",o.name)}}
+  else if((T===5||T===6)&&p.length>3){o.ch=p[0];o.mac=p.subarray(1,3);o.ct=p.subarray(3);F("Channel hash",P0,P0+1,"#3fd6e0",chanName(o.ch));F("MAC",P0+1,P0+3,"#7d8a97",hex(o.mac));F("Encrypted",P0+3,b.length,"#5b9dff",o.ct.length+" bytes");
+    if(T===5&&o.ct.length%16===0)for(const ch of chanKeys()){if(ch.hash!==o.ch)continue;const mac=SHA.hmac(ch.secret,o.ct);if(mac[0]!==o.mac[0]||mac[1]!==o.mac[1])continue;
+      const pt=AES.decryptECB(ch.key,o.ct),t=new DataView(pt.buffer).getUint32(0,true),s=utf8(pt.subarray(5)).replace(/\0[\s\S]*$/,""),c=s.indexOf(": ");
+      o.msg={ch:ch.name,t,from:c>0?s.slice(0,c):"",text:c>0?s.slice(c+2):s};break}}
+  else if((T<=2||T===8)&&p.length>=4){o.dst=p[0];o.src=p[1];F("To",P0,P0+1,"#f0883e",who(o.dst));F("From",P0+1,P0+2,"#46e08a",who(o.src));F("MAC",P0+2,P0+4,"#7d8a97",hex(p.subarray(2,4)));F("Encrypted",P0+4,b.length,"#5b9dff",(p.length-4)+" bytes")}
+  else if(T===7&&p.length>=35){o.dst=p[0];o.key=hex(p.subarray(1,33));F("To",P0,P0+1,"#f0883e",who(o.dst));F("Sender key",P0+1,P0+33,"#46e08a",o.key.slice(0,16)+"...");F("Encrypted",P0+33,b.length,"#5b9dff",(p.length-33)+" bytes")}
+  else if(T===3&&p.length>=4){F("Checksum",P0,P0+4,"#7d8a97",hex(p.subarray(0,4)))}
+  else if(T===9&&p.length>=9){F("Trace tag",P0,P0+4,"#f778ba",hex(p.subarray(0,4)));F("Auth",P0+4,P0+8,"#7d8a97",hex(p.subarray(4,8)));F("Flags",P0+8,P0+9,"#a78bfa",p[8]);
+    o.trace=[];for(let k=9;k<p.length;k++)o.trace.push(pfx(p[k]));F("Route to trace",P0+9,b.length,"#f0883e",o.trace.join(" ").toUpperCase())}
+  else if(p.length)F("Payload",P0,b.length,"#5b9dff",p.length+" bytes");
+  return o}
+function who(b){const n=nodeByPrefix(pfx(b));return(n&&n.name?esc(n.name)+" ":"")+`<span class="mono">${pfx(b).toUpperCase()}</span>`}
+function pathNames(path){return path.map(h=>{const n=nodeByPrefix(h.slice(0,2));return`<span class="pill" title="${h}">${n&&n.name?esc(n.name):h.toUpperCase()}</span>`}).join(" → ")}
+async function openPacket(p){
+  modal('<p class="dim">Loading packet...</p>');
+  let raw=null,j=null;try{j=await api("/api/hx?k=raw&seq="+p[0]);if(j.raw)raw=unhex(j.raw)}catch(e){}
+  const copies=S.pk.filter(q=>q[10]===p[10]&&!q[2]);
+  const t=new Date((S.upAt+p[1])*1000);
+  let html=`<h2 style="margin:0 0 6px"><span style="color:${TCOL[p[3]]}">●</span> ${TYPES[p[3]]||"Type "+p[3]} ${p[2]?'<span class="pill mid">sent</span>':'<span class="pill">received</span>'}</h2>`;
+  const d=raw?decode(raw):null;
+  html+=kv([["Time",t.toLocaleString()],["Route",ROUTE[p[4]]],
+    !p[2]&&["Signal",`SNR ${(p[8]/4).toFixed(2)} dB · RSSI ${p[9]} dBm`+(j&&j.score?` · score ${(j.score/1000).toFixed(2)}`:"")],
+    ["Size",`${p[6]} bytes`+(j&&j.air?` · about ${j.air} ms on air`:"")],["Packet hash",`<span class="mono">${p[10]}</span>`],
+    d&&d.path.length&&["Path ("+d.path.length+" hops)",pathNames(d.path)],
+    d&&d.name&&["Advert from",`${esc(d.name)} (${ADV[d.ntype]||""})`+(d.lat!=null?` · ${d.lat.toFixed(4)}, ${d.lon.toFixed(4)}`+(hasLoc()?` · ${fmtKm(km(S.self.lat,S.self.lon,d.lat,d.lon))} away`:""):"")],
+    d&&d.ts&&["Advert time",new Date(d.ts*1000).toLocaleString()],
+    d&&d.ch!=null&&["Channel",esc(chanName(d.ch))],
+    d&&d.msg&&["Message",`<b>${esc(d.msg.from)}</b>: ${esc(d.msg.text)} <span class="dim">(${new Date(d.msg.t*1000).toLocaleTimeString()})</span>`],
+    d&&d.ch!=null&&!d.msg&&p[3]===5&&["Message","Encrypted with a channel key this page doesn't have. Add the hashtag channel in Insights to read it."],
+    d&&d.src!=null&&["From → to",`${who(d.src)} → ${who(d.dst)}`],
+    d&&d.trace&&["Trace route",d.trace.join(" → ").toUpperCase()]]);
+  if(copies.length>1)html+=`<h3 style="margin-top:16px">Heard ${copies.length} times</h3><p class="dim">Each copy came through a different route. More copies mean more repeaters resent this packet near you.</p>
+    <table><thead><tr><th>Time</th><th>SNR</th><th>RSSI</th><th>Hops</th><th>Last relays</th></tr></thead><tbody>${copies.map(q=>`<tr><td>${new Date((S.upAt+q[1])*1000).toLocaleTimeString()}</td><td>${(q[8]/4).toFixed(1)}</td><td>${q[9]}</td><td>${q[5]}</td><td>${(q[11].match(/../g)||[]).map(x=>{const n=nodeByPrefix(x);return n&&n.name?esc(n.name):x.toUpperCase()}).join(" → ")}</td></tr>`).join("")}</tbody></table>`;
+  if(d){html+=`<h3 style="margin-top:16px">Bytes</h3><div class="hex mono">`+d.fields.map(f=>`<span style="background:${f.col}26;border-bottom:2px solid ${f.col}" title="${esc(f.name)}">${hex(raw.subarray(f.a,f.z)).toUpperCase()}</span>`).join(" ")+`</div>
+    <table style="margin-top:10px"><thead><tr><th>Field</th><th>Bytes</th><th>Meaning</th></tr></thead><tbody>${d.fields.map(f=>`<tr><td><span style="color:${f.col}">●</span> ${f.name}</td><td>${f.a}-${f.z-1}</td><td style="white-space:normal">${f.txt}</td></tr>`).join("")}</tbody></table>`;
+    if(d.path.length&&hasLoc())html+=`<p><button class="b" id="showpath">Show path on map</button></p>`}
+  else html+=`<p class="dim">The bytes of this packet are no longer in memory.</p>`;
+  modal(html);
+  if($("showpath"))$("showpath").onclick=()=>{$("modal").classList.remove("on");setTab("map");setTimeout(()=>drawPath(d.path),300)}}
+
+// ================================================================ overview
+function tile(k,v,s,col){return`<div class="tile glass"><div class="k">${k}</div><div class="v" style="${col?"color:"+col:""}">${v}</div><div class="s">${s||""}</div></div>`}
+function ring(cv,v){const dpr=Math.min(devicePixelRatio||1,3),w=cv.clientWidth,h=cv.clientHeight;cv.width=w*dpr;cv.height=h*dpr;const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);
+  const r=Math.min(w,h)/2-8;c.lineWidth=10;c.lineCap="round";c.strokeStyle="rgba(255,255,255,.08)";c.beginPath();c.arc(w/2,h/2,r,0,6.283);c.stroke();
+  if(v!=null){const g=c.createLinearGradient(0,0,w,h);g.addColorStop(0,scoreCol(v));g.addColorStop(1,"#3fd6e0");c.strokeStyle=g;c.beginPath();c.arc(w/2,h/2,r,-1.571,-1.571+6.283*v/100);c.stroke()}}
 function renderOverview(){
   const st=S.stats,sf=S.self;if(!st)return;
-  $("name").textContent=sf?sf.name||"Hoptics M7":"Hoptics M7";
-  $("hsub").textContent=(sf?"v"+sf.version+" · ":"")+"up "+dur(st.uptime_s);
-  $("hnet").textContent=(st.network_medium||"")+(st.ip?" "+st.ip:"");
-  const air=airtimeLastHour(),dup=dupStats(),nb=strongNbrs().length;
-  const okSlots=(st.slots||[]).filter(s=>/ok|connected/i.test(s.state)).length;
+  $("name").textContent=sf&&sf.name?sf.name:"Hoptics M7";
+  $("hsub").textContent=(sf?"Hoptics M7 v"+sf.version+" · ":"")+"up "+dur(st.uptime_s);
+  $("hnet").textContent=(st.network_medium==="ethernet"?"Ethernet":st.network_medium==="wifi"?"Wi-Fi":st.network_medium||"")+(st.ip?" · "+st.ip:"");
+  const hn=healthNow();ring($("ring"),hn&&hn.score);$("hscore").textContent=hn&&hn.score!=null?hn.score:"-";$("hscore").style.color=scoreCol(hn&&hn.score);
+  if(hn){const worst=Object.keys(hn.c).filter(k=>hn.c[k]!=null).sort((a,b)=>hn.c[a]-hn.c[b])[0];$("hsum").textContent="Last hour. "+(hn.c[worst]<80?"Weakest: "+HNAME[worst].toLowerCase()+" ("+Math.round(hn.c[worst])+").":"All parts look good.")}
+  const rows=windowRows(86400);chart($("g-health"),[{n:"health, 24 h",c:"#46e08a",fill:1,d:rows.map(r=>[r.t,r.h.score])}],{min:0,max:100,dp:0});
+  const air=airLastHour(),cp=copiesNow(),nb=strongNbrs().length,okSlots=(st.slots||[]).filter(s=>/ok/i.test(s.state)).length;
   $("tiles").innerHTML=
-    tile("Noise floor",st.noise+" dBm",st.noise<=-110?"quiet":st.noise<=-100?"some noise":"noisy")+
-    tile("Airtime, last hour",air==null?"-":air.toFixed(1)+" %","transmit + receive")+
-    tile("Packets heard",st.recv,"since start ("+st.recv_flood+" flood, "+st.recv_direct+" direct)")+
-    tile("Packets sent",st.sent,st.sent_flood+" flood, "+st.sent_direct+" direct")+
+    tile("Noise floor",st.noise+" dBm",st.noise<=-110?"quiet":st.noise<=-100?"some noise":"noisy",st.noise<=-110?"#46e08a":st.noise<=-100?"#f4b740":"#ff6b6b")+
+    tile("Airtime, last hour",air==null?"-":air.toFixed(1)+" %","transmit + receive",air==null?"":air<10?"#46e08a":air<25?"#f4b740":"#ff6b6b")+
+    tile("Packets heard",st.recv.toLocaleString(),`${st.recv_flood} flood · ${st.recv_direct} direct`)+
+    tile("Packets sent",st.sent.toLocaleString(),`${st.sent_flood} flood · ${st.sent_direct} direct`)+
     tile("Repeaters heard well",nb,"SNR 0 dB or better, last 24 h")+
-    tile("Copies per flood",dup?dup.per.toFixed(1):"-",dup?"over "+dup.uniq+" floods":"need more packets")+
-    tile("MQTT servers",okSlots+" / "+(st.slots||[]).length,"connected")+
-    tile("Last packet",st.rssi+" dBm",st.snr.toFixed(1)+" dB SNR");
-  renderWarnings();
-}
+    tile("Copies per flood",cp?cp.per.toFixed(1):"-",cp?"last 3 h, "+cp.uniq+" floods":"needs more data")+
+    tile("MQTT servers",okSlots+" / "+(st.slots||[]).length,"connected",okSlots===(st.slots||[]).length?"#46e08a":"#f4b740")+
+    tile("Last packet",st.snr.toFixed(1)+" dB",st.rssi+" dBm RSSI");
+  renderWarnings()}
 function renderWarnings(){
-  const W=[],st=S.stats,nb=strongNbrs(),air=airtimeLastHour(),dup=dupStats(),hrs=histHours();
-  const rep=S.repeat;
-  if(!hasLoc())W.push(["info","Set this node's location","The map and the distance checks need it. In Console: set lat &lt;your latitude&gt; and set lon &lt;your longitude&gt;, or use Settings."]);
-  if(rep===true&&nb.length>=3)W.push(["warn","This spot may add little coverage",`It hears ${nb.length} repeaters with strong signal (SNR 0 dB or better). Each repeater in range resends every flood, so another one here mostly adds airtime and collisions. Consider observer only (Console: set repeat off), or keep repeating with a longer txdelay (see Advisor).`]);
-  if(rep===false&&S.nbrs.length<=1)W.push(["warn","You may be the only link here",`Repeat is off, and this node hears ${S.nbrs.length} other repeater${S.nbrs.length===1?"":"s"}. If no other repeater covers this area, turning repeat on helps nearby users.`]);
-  if(hasLoc()&&rep!==false){const self=S.self;const close=S.nodes.filter(n=>n.type===2&&n.lat!=null&&km(self.lat,self.lon,n.lat,n.lon)<1&&n.id.slice(0,8)!==self.id.slice(0,8));
-    if(close.length)W.push(["warn","Another repeater is very close",close.map(n=>esc(n.name||n.id)+" ("+km(self.lat,self.lon,n.lat,n.lon).toFixed(2)+" km)").join(", ")+". Repeaters this close cover nearly the same area; one of them could switch to observer only."])}
-  if(air!=null&&air>25)W.push(["bad","Busy channel",`Airtime used in the last hour is ${air.toFixed(1)} %. Above about 25 % messages start colliding. Raise txdelay and rxdelay (Advisor), and consider repeat off if other repeaters cover this spot.`]);
-  if(dup&&dup.per>=4)W.push(["warn","Many copies of each flood",`Each flood packet is heard ${dup.per.toFixed(1)} times on average. That means several repeaters around you resend the same packets.`]);
+  const W=[],nb=strongNbrs(),air=airLastHour(),cp=copiesNow(),hrs=histHours(),rep=S.repeat;
+  if(!hasLoc())W.push(["info","Set this node's location","The map, distances and the too-close check need it. In Console: set lat &lt;latitude&gt; then set lon &lt;longitude&gt;, or use Settings."]);
+  if(rep===true&&nb.length>=3)W.push(["warn","This spot may add little coverage",`It hears ${nb.length} repeaters with strong signal. Each repeater that hears a flood packet sends it again, so one more repeater in an already-covered area mostly adds airtime and collisions. Consider observer only (Console: set repeat off), or keep repeating with a longer txdelay (see Advisor).`]);
+  if(rep===false&&S.nbrs.length<=1)W.push(["warn","You may be the only link here",`Repeat is off and this node hears ${S.nbrs.length} other repeater${S.nbrs.length===1?"":"s"}. If nothing else covers this area, turning repeat on helps people nearby.`]);
+  if(hasLoc()&&rep!==false){const close=S.nodes.filter(n=>n.type===2&&n.lat!=null&&!S.self.id.startsWith(n.id)&&distTo(n)<1);
+    if(close.length)W.push(["warn","Another repeater is very close",close.map(n=>esc(n.name||n.id)+" ("+fmtKm(distTo(n))+")").join(", ")+". Two repeaters this close cover nearly the same area; one could switch to observer only."])}
+  if(air!=null&&air>25)W.push(["bad","Busy channel",`The radio was busy ${air.toFixed(1)} % of the last hour. Above about 25 % packets start to collide. The Advisor's timing changes help; if other repeaters cover this spot, repeat off helps most.`]);
+  if(cp&&cp.per>=4)W.push(["warn","Many copies of each flood",`Each flood packet reaches this node ${cp.per.toFixed(1)} times. Several repeaters around you resend the same packets.`]);
   if(S.self){const me=S.self.id.slice(0,2);const same=S.nbrs.filter(n=>n.id.slice(0,2)===me);
-    if(same.length)W.push(["warn","Same short ID as a neighbour",`Neighbour ${esc((nodeById(same[0].id)||{}).name||same[0].id)} also starts with ${me.toUpperCase()}. Paths and traces will be ambiguous. Only change the key before the node is in use.`])}
-  if(S.hist.length&&S.hist[S.hist.length-1][0]<1700000000)W.push(["warn","Clock not set","The node has no network time yet, so timestamps are wrong."]);
-  if(hrs<24)W.push(["info","Still learning this spot",`${hrs.toFixed(1)} of 24 hours collected. The Advisor gives timing suggestions after 24 hours.`]);
-  if(!W.length)W.push(["ok","Looks good","Nothing in the last 24 hours suggests a change for this spot."]);
-  $("warns").innerHTML=W.map(([c,t,w])=>`<div class="warn ${c==="warn"?"":c}"><b>${t}</b><div class="why">${w}</div></div>`).join("");
-}
+    if(same.length)W.push(["warn","Same short ID as a neighbour",`${esc((nodeById(same[0].id)||{}).name||same[0].id)} also starts with ${me.toUpperCase()}, so paths and traces can't tell you apart. Change the key only before the node is in use.`])}
+  if(S.hist.length&&S.hist[S.hist.length-1][0]<1700000000)W.push(["warn","Clock not set","The node has no network time yet, so times are wrong."]);
+  if(hrs<24)W.push(["info","Still learning this spot",`${hrs.toFixed(1)} of 24 hours collected. Suggestions get more reliable after a full day.`]);
+  if(!W.length)W.push(["ok","Looks good","Nothing in the data suggests a change for this spot."]);
+  $("warns").innerHTML=W.map(([c,t,w])=>`<div class="msg ${c==="warn"?"":c}"><b>${t}</b><div class="why">${w}</div></div>`).join("")}
 
-// ---------------------------------------------------------------- graphs
-function chart(cv,series,opt){
-  const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;cv.width=w*dpr;cv.height=h*dpr;
-  const c=cv.getContext("2d");c.scale(dpr,dpr);c.clearRect(0,0,w,h);
-  const pts=series.flatMap(s=>s.d);if(!pts.length){c.fillStyle="#8b949e";c.fillText("No data yet: a point is added every 5 minutes.",10,20);return}
-  const x0=Math.min(...pts.map(p=>p[0])),x1=Math.max(...pts.map(p=>p[0]))||x0+1;
-  let y0=opt.min!=null?opt.min:Math.min(...pts.map(p=>p[1])),y1=Math.max(...pts.map(p=>p[1]));if(y1===y0)y1=y0+1;
-  const L=44,R=10,T=10,B=22,X=v=>L+(v-x0)/(x1-x0||1)*(w-L-R),Y=v=>h-B-(v-y0)/(y1-y0)*(h-T-B);
-  c.strokeStyle="#30363d";c.fillStyle="#8b949e";c.font="11px system-ui";c.lineWidth=1;
-  for(let i=0;i<=4;i++){const v=y0+(y1-y0)*i/4,y=Y(v);c.beginPath();c.moveTo(L,y);c.lineTo(w-R,y);c.stroke();c.fillText(v.toFixed(Math.abs(y1-y0)<10?1:0),4,y+4)}
-  const span=x1-x0;for(let i=0;i<=4;i++){const t=x0+span*i/4,d=new Date(t*1000);c.fillText(span>172800?d.toLocaleDateString([],{month:"numeric",day:"numeric"}):d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),X(t)-16,h-6)}
-  series.forEach(s=>{c.strokeStyle=s.c;c.lineWidth=1.6;c.beginPath();s.d.forEach((p,i)=>{i?c.lineTo(X(p[0]),Y(p[1])):c.moveTo(X(p[0]),Y(p[1]))});c.stroke()});
-  let lx=L+6;series.forEach(s=>{c.fillStyle=s.c;c.fillRect(lx,T,10,3);c.fillStyle="#e6edf3";c.fillText(s.n,lx+14,T+5);lx+=c.measureText(s.n).width+34});
-}
-function drawGraphs(){
-  if(tab!=="graphs")return;
-  const rows=histWindow(+$("range").value),d=deltas(rows);
-  $("gnote").textContent=rows.length+" samples, "+histHours().toFixed(1)+" h of history in memory (up to 30 days)";
-  chart($("g-noise"),[{n:"noise floor",c:"#3fb6c6",d:rows.map(r=>[r[0],r[2]])}],{});
-  chart($("g-air"),[{n:"transmit %",c:"#f0883e",d:d.map(x=>[x.t,x.tx])},{n:"receive %",c:"#58a6ff",d:d.map(x=>[x.t,x.rx])}],{min:0});
-  chart($("g-pk"),[{n:"flood rx",c:"#a371f7",d:d.map(x=>[x.t,x.rf])},{n:"direct rx",c:"#3fb950",d:d.map(x=>[x.t,x.rd])},{n:"sent",c:"#f0883e",d:d.map(x=>[x.t,x.sent])}],{min:0});
-}
-$("range").onchange=drawGraphs;addEventListener("resize",drawGraphs);
-
-// ---------------------------------------------------------------- map
-let map,mapReady=false,selfMk,nodeLayer,lineLayer;
+// ================================================================ map (high-resolution dark tiles)
+let map,mapReady=false,nodeLayer,lineLayer;
 function initMap(){
-  if(mapReady||!window.L){if(!window.L)$("mapnote").textContent="The map needs an internet connection on this computer.";return}
-  map=L.map("map");L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:"© OpenStreetMap"}).addTo(map);
-  nodeLayer=L.layerGroup().addTo(map);lineLayer=L.layerGroup().addTo(map);mapReady=true;renderMapNodes(true);
-}
-function renderMapNodes(fit){
-  if(!mapReady)return;nodeLayer.clearLayers();const pts=[];
-  S.nodes.filter(n=>n.lat!=null).forEach(n=>{const col=n.type===2?"#3fb6c6":n.type===3?"#a371f7":"#8b949e";
-    L.circleMarker([n.lat,n.lon],{radius:n.type===2?6:4,color:col,fillOpacity:.8}).bindTooltip(`${esc(n.name||n.id)}<br>${ADV[n.type]||""} · ${n.hops} hops · ${n.snr} dB`).addTo(nodeLayer);pts.push([n.lat,n.lon])});
-  if(hasLoc()){L.circleMarker([S.self.lat,S.self.lon],{radius:9,color:"#f0883e",fillOpacity:1}).bindTooltip("This node").addTo(nodeLayer);pts.push([S.self.lat,S.self.lon])}
-  $("mapnote").textContent=(hasLoc()?"":"Set this node's location to draw packet lines. ")+pts.length+" nodes with a location. Lines show packets arriving, from the repeater that handed them over.";
-  if(fit&&pts.length)map.fitBounds(pts,{padding:[30,30],maxZoom:12});else if(fit)map.setView([20,0],2);
-}
-function addMapLines(list){
-  if(!hasLoc())return;const me=[S.self.lat,S.self.lon];
+  if(mapReady)return;if(!window.L){$("mapnote").textContent="The map needs an internet connection on this computer.";return}
+  map=L.map("map",{zoomControl:true});
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{maxZoom:19,subdomains:"abcd",attribution:"© OpenStreetMap © CARTO"}).addTo(map);
+  nodeLayer=L.layerGroup().addTo(map);lineLayer=L.layerGroup().addTo(map);mapReady=true;renderMapNodes(true)}
+function renderMapNodes(fit){if(!mapReady)return;nodeLayer.clearLayers();const pts=[];
+  S.nodes.filter(n=>n.lat!=null).forEach(n=>{const col=n.type===2?"#46e08a":n.type===3?"#a78bfa":n.type===1?"#5b9dff":"#f4b740";
+    L.circleMarker([n.lat,n.lon],{radius:n.type===2?7:5,color:col,weight:2,fillColor:col,fillOpacity:.55}).bindTooltip(`<b>${esc(n.name||n.id)}</b><br>${ADV[n.type]||""} · ${n.hops} hops · ${n.snr} dB${distTo(n)!=null?" · "+fmtKm(distTo(n)):""}`).addTo(nodeLayer);pts.push([n.lat,n.lon])});
+  if(hasLoc()){L.circleMarker([S.self.lat,S.self.lon],{radius:10,color:"#3fd6e0",weight:3,fillColor:"#3fd6e0",fillOpacity:.9}).bindTooltip("<b>This node</b>").addTo(nodeLayer);pts.push([S.self.lat,S.self.lon])}
+  $("mapnote").textContent=(hasLoc()?"":"Set this node's location to draw packet lines. ")+pts.length+" nodes with a location. Lines show packets arriving, from the repeater that handed them over (green direct, violet flood).";
+  if(fit&&pts.length)map.fitBounds(pts,{padding:[40,40],maxZoom:12});else if(fit)map.setView([20,0],2)}
+function fade(ln,o){const t=setInterval(()=>{o-=.04;if(o<=0){clearInterval(t);lineLayer.removeLayer(ln)}else ln.setStyle({opacity:o})},2000)}
+function addMapLines(list){if(!hasLoc())return;const me=[S.self.lat,S.self.lon];
   list.forEach(p=>{if(p[2])return;let from=null;
-    if(p[5]>0){const last=p[11].slice(-2);from=nodeByPrefix(last)}else if(p[7]){from=nodeByPrefix(p[7].toString(16).padStart(2,"0"))}
+    if(p[5]>0)from=nodeByPrefix(p[11].slice(-2));else if(p[7]&&p[3]!==5&&p[3]!==6)from=nodeByPrefix(pfx(p[7]));
     if(!from||from.lat==null)return;
-    const ln=L.polyline([[from.lat,from.lon],me],{color:p[4]>=2?"#3fb950":"#a371f7",weight:2,opacity:.9}).addTo(lineLayer);
-    let o=.9;const t=setInterval(()=>{o-=.05;if(o<=0){clearInterval(t);lineLayer.removeLayer(ln)}else ln.setStyle({opacity:o})},2000)});
-}
+    const ln=L.polyline([[from.lat,from.lon],me],{color:p[4]>=2?"#46e08a":"#a78bfa",weight:2.5,opacity:.95}).addTo(lineLayer);fade(ln,.95)})}
+function drawPath(path){if(!mapReady)return;const pts=path.map(h=>nodeByPrefix(h.slice(0,2))).filter(n=>n&&n.lat!=null).map(n=>[n.lat,n.lon]);
+  if(hasLoc())pts.push([S.self.lat,S.self.lon]);if(pts.length<2){$("mapnote").textContent="Not enough known locations to draw this path.";return}
+  const ln=L.polyline(pts,{color:"#f4b740",weight:4,opacity:1,dashArray:"8 6"}).addTo(lineLayer);map.fitBounds(pts,{padding:[60,60]});fade(ln,1)}
 
-// ---------------------------------------------------------------- neighbours and nodes
+// ================================================================ neighbours
 function sigPill(snr){return snr>=5?'<span class="pill ok">strong</span>':snr>=0?'<span class="pill mid">good</span>':'<span class="pill bad">weak</span>'}
-function renderNbrs(){
-  const now=nowEpoch();
+function renderNbrs(){const now=nowEpoch();
   $("nbody").innerHTML=S.nbrs.slice().sort((a,b)=>b.snr-a.snr).map(n=>{const nd=nodeById(n.id)||{};
-    return`<tr><td>${esc(nd.name||"(unknown)")}</td><td>${n.id.slice(0,2).toUpperCase()} <span class="dim">${n.id}</span></td><td>${n.snr.toFixed(1)}</td><td>${sigPill(n.snr)}</td><td>${ago(now-n.heard)} ago</td></tr>`}).join("")||'<tr><td colspan="5" class="dim">No neighbours heard yet. Press Scan now, or wait for adverts.</td></tr>';
-  $("allbody").innerHTML=S.nodes.slice().sort((a,b)=>b.seen-a.seen).map(n=>`<tr><td>${esc(n.name||"-")}</td><td>${ADV[n.type]||n.type}</td><td>${n.id.slice(0,2).toUpperCase()}</td><td>${n.hops}</td><td>${n.snr}</td><td>${n.lat!=null?n.lat.toFixed(3)+", "+n.lon.toFixed(3):"-"}</td><td>${ago(now-n.seen)} ago</td></tr>`).join("")||'<tr><td colspan="7" class="dim">No adverts heard yet.</td></tr>';
-}
-$("scan").onclick=async()=>{$("scanmsg").textContent="Scanning (takes about 30 seconds)...";
+    return`<tr><td>${esc(nd.name||"(unknown)")}</td><td class="mono">${n.id.slice(0,2).toUpperCase()}</td><td>${n.snr.toFixed(1)}</td><td>${sigPill(n.snr)}</td><td>${fmtKm(distTo(nd))}</td><td>${ago(now-n.heard)} ago</td></tr>`}).join("")||'<tr><td colspan="6" class="dim">No neighbours heard yet. Press Scan now, or wait for adverts.</td></tr>';
+  $("allbody").innerHTML=S.nodes.slice().sort((a,b)=>b.seen-a.seen).map(n=>`<tr><td>${esc(n.name||"-")}</td><td>${ADV[n.type]||n.type}</td><td class="mono">${n.id.slice(0,2).toUpperCase()}</td><td>${n.hops}</td><td>${n.snr}</td><td>${fmtKm(distTo(n))}</td><td>${ago(now-n.seen)} ago</td></tr>`).join("")||'<tr><td colspan="7" class="dim">No adverts heard yet.</td></tr>'}
+$("scan").onclick=async()=>{$("scanmsg").textContent="Scanning, about 30 seconds...";
   try{const r=await cli(["discover.neighbors"]);$("scanmsg").textContent=val(r[0])||"Scan sent.";setTimeout(pollNodes,30000)}catch(e){$("scanmsg").textContent="Scan failed: "+e.message}};
 
-// ---------------------------------------------------------------- packets
-function pkRows(){const f=$("pf").value,rx=$("prx").checked,tx=$("ptx").checked;
-  return S.pk.filter(p=>(f===""||p[3]===+f)&&(p[2]?tx:rx))}
-function renderPk(){
-  const rows=pkRows(),cnt=new Map();S.pk.forEach(p=>{if(!p[2])cnt.set(p[10],(cnt.get(p[10])||0)+1)});
-  $("pnote").textContent=rows.length+" shown, last "+S.pk.length+" kept";
-  $("pbody").innerHTML=rows.slice(-300).reverse().map(p=>{const t=new Date((S.upAt+p[1])*1000).toLocaleTimeString();
-    const from=p[7]?(nodeByPrefix(p[7].toString(16).padStart(2,"0"))||{}).name||p[7].toString(16).padStart(2,"0").toUpperCase():"";
-    const path=(p[11].match(/../g)||[]).map(x=>x.toUpperCase()).join(" ");
-    return`<tr><td>${t}</td><td>${p[2]?'<span class="pill mid">TX</span>':'<span class="pill">RX</span>'}</td><td>${TYPES[p[3]]||p[3]}</td><td>${ROUTE[p[4]]}</td><td>${p[5]}</td><td>${path}</td><td>${esc(from)}</td><td>${p[2]?"":(p[8]/4).toFixed(1)}</td><td>${p[2]?"":p[9]}</td><td>${p[6]}</td><td>${p[2]?"":cnt.get(p[10])+"x"}</td></tr>`}).join("");
-}
+// ================================================================ packets
+function pkRows(){const f=$("pf").value,rx=$("prx").checked,tx=$("ptx").checked;return S.pk.filter(p=>(f===""||p[3]===+f)&&(p[2]?tx:rx))}
+function fromCell(p){if(!p[7])return"";if(p[3]===5||p[3]===6)return esc(chanName(p[7]));const n=nodeByPrefix(pfx(p[7]));return n&&n.name?esc(n.name):pfx(p[7]).toUpperCase()}
+function renderPk(){const rows=pkRows(),cnt=new Map();S.pk.forEach(p=>{if(!p[2])cnt.set(p[10],(cnt.get(p[10])||0)+1)});
+  $("pnote").textContent=rows.length+" shown, last "+S.pk.length+" kept";const show=rows.slice(-400).reverse();
+  $("pbody").innerHTML=show.map((p,i)=>`<tr class="click" data-i="${p[0]}"><td>${new Date((S.upAt+p[1])*1000).toLocaleTimeString()}</td><td>${p[2]?'<span class="pill mid">TX</span>':'<span class="pill">RX</span>'}</td><td><span style="color:${TCOL[p[3]]}">●</span> ${TYPES[p[3]]||p[3]}</td><td>${ROUTE[p[4]]}</td><td>${p[5]}</td><td class="mono">${(p[11].match(/../g)||[]).join(" ").toUpperCase()}</td><td>${fromCell(p)}</td><td>${p[2]?"":(p[8]/4).toFixed(1)}</td><td>${p[2]?"":p[9]}</td><td>${p[6]}</td><td>${p[2]?"":cnt.get(p[10])+"×"}</td></tr>`).join("")}
+$("pbody").onclick=e=>{const tr=e.target.closest("tr");if(!tr)return;const p=S.pk.find(q=>q[0]===+tr.dataset.i);if(p)openPacket(p)};
 ["pf","prx","ptx"].forEach(id=>$(id).onchange=renderPk);
 $("ppause").onclick=()=>{S.paused=!S.paused;$("ppause").textContent=S.paused?"Resume":"Pause"};
 $("pcsv").onclick=()=>{const head="time,dir,type,route,hops,path,from,snr,rssi,len,hash\n";
-  const body=pkRows().map(p=>[new Date((S.upAt+p[1])*1000).toISOString(),p[2]?"TX":"RX",TYPES[p[3]]||p[3],ROUTE[p[4]],p[5],p[11],p[7]?p[7].toString(16):"",p[2]?"":p[8]/4,p[2]?"":p[9],p[6],p[10]].join(",")).join("\n");
+  const body=pkRows().map(p=>[new Date((S.upAt+p[1])*1000).toISOString(),p[2]?"TX":"RX",TYPES[p[3]]||p[3],ROUTE[p[4]],p[5],p[11],p[7]?pfx(p[7]):"",p[2]?"":p[8]/4,p[2]?"":p[9],p[6],p[10]].join(",")).join("\n");
   const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([head+body],{type:"text/csv"}));a.download="hoptics-m7-packets.csv";a.click()};
 
-// ---------------------------------------------------------------- MQTT
-function renderMqtt(){const st=S.stats;if(!st)return;
-  $("mbody").innerHTML=(st.slots||[]).map(s=>`<tr><td>${s.n}</td><td>${esc(s.name)}</td><td><span class="pill ${/ok|connected/i.test(s.state)?"ok":"bad"}">${esc(s.state)}</span></td><td>${s.ok}</td><td>${s.err}</td></tr>`).join("")||'<tr><td colspan="5" class="dim">No servers set up.</td></tr>';
-  const id=S.self?S.self.id:"";
-  $("links").innerHTML=[["SacMesh CoreScope","https://scope.sacmesh.org/"],["LetsMesh analyzer","https://analyzer.letsmesh.net/"],["MeshMapper","https://meshmapper.net/"]].map(([n,u])=>`<a href="${u}" target="_blank" rel="noopener">${n}</a>`).join(" · ")+(id?`<p class="dim">This node's public key: <code>${id}</code></p>`:"");
-}
+// ================================================================ insights
+function hbars(id,items,col){const max=Math.max(1,...items.map(x=>x[1]));
+  $(id).innerHTML=items.length?items.map(([k,v,c])=>`<div class="hb"><div class="t" title="${esc(String(k).replace(/<[^>]+>/g,""))}">${k}</div><div class="bar"><i style="width:${v/max*100}%;background:${c||col}"></i></div><div class="n">${v}</div></div>`).join(""):'<span class="dim">Not enough packets yet.</span>'}
+function renderInsights(){
+  const rx=S.pk.filter(p=>!p[2]),count=f=>{const m=new Map();rx.forEach(p=>{const k=f(p);if(k!=null)m.set(k,(m.get(k)||0)+1)});return[...m].sort((a,b)=>b[1]-a[1])};
+  hbars("i-types",count(p=>p[3]).map(([k,v])=>[TYPES[k]||k,v,TCOL[k]]),"#3fd6e0");
+  hbars("i-relay",count(p=>p[5]>0?p[11].slice(-2):null).slice(0,10).map(([k,v])=>{const n=nodeByPrefix(k);return[(n&&n.name?esc(n.name)+" ":"")+`<span class="mono dim">${k.toUpperCase()}</span>`,v]}),"#46e08a");
+  hbars("i-hops",count(p=>p[4]<2?Math.min(p[5],10):null).sort((a,b)=>a[0]-b[0]).map(([k,v])=>[k===10?"10+ hops":k+" hop"+(k===1?"":"s"),v]),"#a78bfa");
+  hbars("i-snr",count(p=>Math.max(-20,Math.min(15,Math.floor(p[8]/4/5)*5))).sort((a,b)=>b[0]-a[0]).map(([k,v])=>[k+" to "+(k+5)+" dB",v,k>=5?"#46e08a":k>=0?"#f4b740":"#ff6b6b"]),"#5b9dff");
+  hbars("i-ch",count(p=>p[3]===5||p[3]===6?p[7]:null).slice(0,10).map(([k,v])=>[esc(chanName(k)),v]),"#3fd6e0");
+  hbars("i-talk",count(p=>p[3]===4&&p[7]?pfx(p[7]):p[3]<=2&&p[7]?pfx(p[7]):null).slice(0,10).map(([k,v])=>{const n=nodeByPrefix(k);return[(n&&n.name?esc(n.name)+" ":"")+`<span class="mono dim">${k.toUpperCase()}</span>`,v]}),"#f0883e");
+  const hours=Array.from({length:24},()=>[]);(S.rows||[]).forEach(r=>hours[new Date(r.t*1000).getHours()].push(r.recv*12));
+  const hv=hours.map(a=>avg(a)),hm=Math.max(1,...hv.filter(v=>v!=null));
+  $("i-heat").innerHTML=hv.map((v,i)=>`<i title="${i}:00 · ${v==null?"no data":Math.round(v)+" packets/hour"}" style="background:${v==null?"rgba(255,255,255,.05)":`rgba(63,214,224,${.12+.85*v/hm})`}"></i>`).join("");
+  $("i-hl").innerHTML="<span>midnight</span><span class='sp' style='flex:1'></span><span>noon</span><span class='sp' style='flex:1'></span><span>11 pm</span>";
+  $("chlist").innerHTML=chanList().map((c,i)=>`<span class="pill" style="margin:2px">${esc(c)} <a href="#" data-rm="${i}">×</a></span>`).join("");
+  $("chlist").querySelectorAll("[data-rm]").forEach(a=>a.onclick=e=>{e.preventDefault();const l=chanList();l.splice(+a.dataset.rm,1);localStorage.setItem("hx.ch",JSON.stringify(l));renderInsights()})}
+$("chadd").onclick=()=>{let n=$("chin").value.trim().toLowerCase();if(!n)return;if(!n.startsWith("#"))n="#"+n;const l=chanList();if(!l.includes(n))l.push(n);
+  try{localStorage.setItem("hx.ch",JSON.stringify(l))}catch(e){}$("chin").value="";renderInsights()};
 
-// ---------------------------------------------------------------- advisor
+// ================================================================ MQTT
+function renderMqtt(){const st=S.stats;if(!st)return;
+  $("mbody").innerHTML=(st.slots||[]).map(s=>{const tot=s.ok+s.err;return`<tr><td>${s.n}</td><td>${esc(s.name)}</td><td><span class="pill ${/ok/i.test(s.state)?"ok":"bad"}">${esc(s.state)}</span></td><td>${s.ok.toLocaleString()}</td><td>${s.err}</td><td>${tot?(s.ok/tot*100).toFixed(1)+" %":"-"}</td></tr>`}).join("")||'<tr><td colspan="6" class="dim">No servers set up.</td></tr>';
+  const id=S.self?S.self.id:"";
+  $("links").innerHTML=[["SacMesh CoreScope","https://scope.sacmesh.org/"],["LetsMesh analyzer","https://analyzer.letsmesh.net/"],["MeshMapper","https://meshmapper.net/"]].map(([n,u])=>`<a class="pill" href="${u}" target="_blank" rel="noopener" style="margin:3px">${n} ↗</a>`).join("")+(id?`<p class="dim">This node's public key (search for it on those sites):<br><code>${id}</code></p>`:"")}
+
+// ================================================================ advisor
+const EXPLAIN={
+ txdelay:{what:"When a flood packet arrives, every repeater that hears it waits a random moment and then sends it again. txdelay sets how wide that random window is.",
+  why:"Think of several people answering a question at once: if they all speak at the same instant, nobody is understood. With more repeaters around you, a wider window makes it more likely each one gets a clear turn, so fewer packets collide and get lost.",
+  low:"Too low for your area: repeaters talk over each other, and messages and adverts get lost.",high:"Too high: messages take longer to cross the mesh, with no gain if few repeaters are around.",
+  helps:["copies","air","errors"]},
+ "direct.txdelay":{what:"The same waiting window, but for direct messages that follow a known route.",
+  why:"Only the repeaters on the route resend a direct message, so there is much less crowding. A short window keeps private messages and replies fast, while still avoiding a clash with the repeater before or after you.",
+  low:"Too low: hops on the same route can clash.",high:"Too high: direct messages and acks become slow and may time out, causing resends.",helps:["errors","air"]},
+ rxdelay:{what:"Lets the node wait a little longer before resending a flood packet it heard weakly, and resend strong ones quickly.",
+  why:"When several repeaters hear the same packet, the one with the best signal should usually resend it. With rxdelay on, weak copies wait; if a stronger repeater already sent the packet, the weak one hears that and doesn't send again. That means fewer duplicate transmissions and better routes.",
+  low:"Off (0) in a busy area: every repeater resends whatever it hears, strong or weak.",high:"Only useful when several repeaters are heard; with 0 or 1 neighbour it just adds delay.",helps:["copies","air"]}};
 async function loadAdvisor(){
   $("adv").innerHTML='<span class="dim">Reading current settings...</span>';
   let r;try{r=await cli(["get txdelay","get direct.txdelay","get rxdelay","get af","get flood.max","get repeat"])}catch(e){$("adv").textContent="Could not read settings: "+e.message;return}
-  const cur={tx:parseFloat(val(r[0])),dtx:parseFloat(val(r[1])),rx:parseFloat(val(r[2])),af:parseFloat(val(r[3])),fmax:parseInt(val(r[4])),rep:/on/i.test(val(r[5]))};
-  S.repeat=cur.rep;S.cfg=cur;
-  const nb=strongNbrs().length,rec=recTiming(nb),hrs=histHours(),ready=hrs>=24,air=airtimeLastHour();
-  const rows=[["txdelay","Flood retransmit delay",cur.tx,rec.tx,`Spreads repeats of flood packets so neighbours don't collide. For ${rec.tier} strong neighbours the range is about ${rec.tx}.`],
-    ["direct.txdelay","Direct retransmit delay",cur.dtx,rec.dtx,"Same idea for direct (routed) messages; kept lower so DMs stay fast."],
-    ["rxdelay","Signal-based delay",cur.rx,rec.rx,"Lets strong copies win: weak copies wait and are dropped as duplicates. Helps once several repeaters are heard."]];
-  let h=`<p>${ready?"Based on the last 24 hours at this spot:":`<b>Learning:</b> ${hrs.toFixed(1)} of 24 hours collected. Suggestions are shown now but get more reliable after 24 hours.`}</p>
-  <div class="bar"><i style="width:${Math.min(100,hrs/24*100)}%"></i></div>
-  <p class="dim">Repeaters heard with SNR 0 dB or better: <b>${nb}</b>. Airtime last hour: <b>${air==null?"-":air.toFixed(1)+" %"}</b>. Repeat: <b>${cur.rep?"on":"off"}</b>.</p>
-  <table><thead><tr><th>Setting</th><th>Now</th><th>Suggested</th><th></th><th>Why</th></tr></thead><tbody>`;
-  rows.forEach(([k,label,now,want,why])=>{const same=Math.abs(now-want)<0.05;
-    h+=`<tr><td><b>${label}</b><br><span class="dim">${k}</span></td><td>${isNaN(now)?"?":now}</td><td>${want}</td><td>${same?'<span class="pill ok">good</span>':`<button class="b" data-set="${k} ${want}">Apply</button>`}</td><td style="white-space:normal">${why}</td></tr>`});
-  h+=`</tbody></table><p class="dim">Airtime factor (af) is ${isNaN(cur.af)?"?":cur.af} and flood.max is ${isNaN(cur.fmax)?"?":cur.fmax}. ${air!=null&&air>25?"The channel is busy: keep af at 1 or higher so this node holds back.":"These are fine at the current traffic."}</p>
-  <p class="dim">Timing ranges by neighbour count come from the Gulf Coast MeshCore guide; rxdelay from the MichMesh repeater guide. Changes apply at once and can be undone the same way.</p>`;
+  const cur={txdelay:parseFloat(val(r[0])),"direct.txdelay":parseFloat(val(r[1])),rxdelay:parseFloat(val(r[2])),af:parseFloat(val(r[3])),fmax:parseInt(val(r[4])),rep:/on/i.test(val(r[5]))};
+  S.repeat=cur.rep;
+  const nb=strongNbrs().length,rec=recTiming(nb),want={txdelay:rec.tx,"direct.txdelay":rec.dtx,rxdelay:rec.rx},hrs=histHours(),ready=hrs>=24,air=airLastHour(),hn=healthNow();
+  let h=`<p>${ready?"Based on the last 24 hours at this spot.":`<b>Learning:</b> ${hrs.toFixed(1)} of 24 hours collected. Suggestions are shown now but get more reliable after a full day.`}</p>
+  <div class="bar" style="margin-bottom:12px"><i style="width:${Math.min(100,hrs/24*100)}%"></i></div>
+  ${kv([["Repeaters heard well",`${nb} (SNR 0 dB or better, last 24 h). That puts this spot in the "${rec.tier}" group.`],["Airtime last hour",air==null?"-":air.toFixed(1)+" %"],["Repeat",cur.rep?"on":"off"],hn&&["Health, last hour",`${hn.score} / 100`]])}`;
+  for(const k of ["txdelay","direct.txdelay","rxdelay"]){const now=cur[k],w=want[k],same=Math.abs(now-w)<.05,E=EXPLAIN[k];
+    const helps=E.helps.map(c=>`${HNAME[c]}${hn&&hn.c[c]!=null?" ("+Math.round(hn.c[c])+")":""}`).join(", ");
+    h+=`<div class="card glass" style="margin-top:12px;background:var(--glass2)"><div class="row" style="margin:0"><b style="font-size:15px">${k}</b><span class="dim">now ${isNaN(now)?"?":now}</span><span>suggested <b>${w}</b></span><span class="sp"></span>
+      ${same?'<span class="pill ok">already good</span>':`<button class="b p" data-set="${k} ${w}">Apply ${w}</button>`}</div>
+      <p style="margin:8px 0 4px">${E.what}</p><details ${same?"":"open"}><summary>Why this matters</summary><p>${E.why}</p><p class="dim">${E.low}<br>${E.high}</p>
+      <p class="dim">Improves these health parts: ${helps}.</p></details></div>`}
+  h+=`<p class="dim" style="margin-top:12px">Airtime factor (af) is ${isNaN(cur.af)?"?":cur.af}: it caps how much this node may transmit. flood.max is ${isNaN(cur.fmax)?"?":cur.fmax}: floods that already travelled that many hops are not resent. ${air!=null&&air>25?"The channel is busy, so keep af at 1 or higher.":"Both are fine at the current traffic."}</p>
+  <p class="dim">Timing ranges by neighbour count follow the Gulf Coast MeshCore guide; rxdelay follows the MichMesh repeater guide. Every change applies at once and can be undone the same way.</p>`;
   $("adv").innerHTML=h;
   $("adv").querySelectorAll("[data-set]").forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent="Applying...";
-    const r=await cli(["set "+b.dataset.set]);b.textContent=val(r[0]).slice(0,30)||"Done";setTimeout(loadAdvisor,1500)});
-}
+    try{const r=await cli(["set "+b.dataset.set]);b.textContent=val(r[0]).slice(0,30)||"Done"}catch(e){b.textContent="Failed"}setTimeout(loadAdvisor,1500)})}
 
-// ---------------------------------------------------------------- console
+// ================================================================ console
 async function runCmd(){const c=$("cmd").value.trim();if(!c)return;$("cmd").value="";$("cout").textContent+="> "+c+"\n";
-  try{const r=await cli([c]);$("cout").textContent+=(r[0]||"(no reply)")+"\n"}catch(e){$("cout").textContent+="Error: "+e.message+"\n"}
-  $("cout").scrollTop=1e9}
+  try{const r=await cli([c]);$("cout").textContent+=(r[0]||"(no reply)")+"\n"}catch(e){$("cout").textContent+="Error: "+e.message+"\n"}$("cout").scrollTop=1e9}
 $("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
 
-// ---------------------------------------------------------------- loop
+// ================================================================ loop
+function render(){renderOverview();if(tab==="graphs")drawGraphs();if(tab==="nbrs")renderNbrs();if(tab==="packets")renderPk();if(tab==="insights")renderInsights();if(tab==="mqtt")renderMqtt()}
 let started=false;
-async function start(){
-  if(started)return;started=true;
+async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);
-  cli(["get repeat"]).then(r=>{S.repeat=/on/i.test(val(r[0]))}).catch(()=>{});
-  const tick=()=>{renderOverview();if(tab==="nbrs")renderNbrs();if(tab==="packets")renderPk();if(tab==="mqtt")renderMqtt()};
-  tick();setTab((location.hash||"#overview").slice(1).replace(/[^a-z]/g,"")||"overview");
-  setInterval(async()=>{await pollStats();tick()},3000);
+  cli(["get repeat"]).then(r=>{S.repeat=/on/i.test(val(r[0]));render()}).catch(()=>{});
+  setTab((location.hash||"#overview").slice(1).replace(/[^a-z]/g,""));
+  setInterval(async()=>{await pollStats();if(!$("modal").classList.contains("on"))render()},3000);
   setInterval(pollPk,2000);
   setInterval(async()=>{await pollNodes();await pollSelf();if(mapReady)renderMapNodes(false)},15000);
-  setInterval(async()=>{await pollHist();drawGraphs()},300000);
-}
-(async()=>{try{await api("/api/hx?k=self");$("app").hidden=false;start()}catch(e){if(e.message!=="auth")showLogin()}})();
+  setInterval(pollHist,60000)}
+(async()=>{try{await api("/api/hx?k=self");$("app").hidden=false;start()}catch(e){if(e.message!=="auth"){$("app").hidden=false;start()}}})();
 </script>
 </body>
 </html>

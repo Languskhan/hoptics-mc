@@ -1,5 +1,5 @@
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index 1324da0..3fe4d73 100644
+index 1324da0..92c847a 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
 @@ -1,4 +1,7 @@
@@ -15,7 +15,7 @@ index 1324da0..3fe4d73 100644
  
  void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
 +#ifdef HOPTICS_M7
-+  hx::onPacket(false, pkt, len, pkt->getSNR(), _radio->getLastRSSI());
++  hx::onPacket(false, pkt, len, pkt->getSNR(), _radio->getLastRSSI(), score, _radio->getEstAirtimeFor(len));
 +#endif
  #ifdef DISPLAY_ACTIVITY_DASHBOARD
    // Valid parsed RF packet: the only event the dashboard's window counts.
@@ -25,7 +25,7 @@ index 1324da0..3fe4d73 100644
  
  void MyMesh::logTx(mesh::Packet *pkt, int len) {
 +#ifdef HOPTICS_M7
-+  hx::onPacket(true, pkt, len, 0, 0);
++  hx::onPacket(true, pkt, len, 0, 0, 0, _radio->getEstAirtimeFor(len));
 +#endif
  #if defined(WITH_MQTT_NEIGHBORS)
    if (neighbor_discover_active && pkt == neighbor_discover_request
@@ -57,7 +57,7 @@ index 1324da0..3fe4d73 100644
  #ifdef WITH_WEBCONFIG
    if (_webconfig) {
      _webconfig->tick(millis());
-@@ -2459,3 +2481,62 @@ bool MyMesh::hasPendingWork() const {
+@@ -2459,3 +2481,85 @@ bool MyMesh::hasPendingWork() const {
  #endif
    return _mgr->getOutboundCount(0xFFFFFFFF) > 0;
  }
@@ -106,6 +106,29 @@ index 1324da0..3fe4d73 100644
 +    s.sent_flood = getNumSentFlood();
 +    s.sent_direct = getNumSentDirect();
 +    s.rx_err = radio_driver.getPacketsRecvErrors();
++    s.nbr_strong = 0;
++    int snr_sum = 0;
++#if MAX_NEIGHBOURS
++    const uint32_t rtc = getRTCClock()->getCurrentTime();
++    for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++      const NeighbourInfo& nb = neighbours[i];
++      if (nb.heard_timestamp == 0 || nb.snr < 0 || rtc - nb.heard_timestamp > 86400) continue;
++      s.nbr_strong++;
++      snr_sum += nb.snr;
++    }
++#endif
++    s.nbr_snr4 = s.nbr_strong ? snr_sum / s.nbr_strong : 0;
++    s.mqtt_ok = s.mqtt_err = 0;
++#ifdef WITH_MQTT_BRIDGE
++    for (int i = 0; i < RUNTIME_MQTT_SLOTS; i++) {
++      MQTTBridge::SlotStatusSnapshot ss;
++      if (!MQTTBridge::getSlotStatusSnapshot(i, &ss)) continue;
++      s.mqtt_ok += ss.publish_ok;
++      s.mqtt_err += ss.publish_err;
++    }
++#endif
++    s.heap = ESP.getFreeHeap();
++    s.temp = (int16_t)temperatureRead();
 +    hx::addSample(s);
 +  }
 +#ifdef WITH_WEBCONFIG
@@ -135,7 +158,7 @@ index 782a2f4..d225588 100644
    void logTxFail(mesh::Packet* pkt, int len) override;
    int calcRxDelay(float score, uint32_t air_time) const override;
 diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
-index 167e5cd..dafc5c2 100644
+index 167e5cd..97154e0 100644
 --- a/src/helpers/esp32/WebConfigServer.cpp
 +++ b/src/helpers/esp32/WebConfigServer.cpp
 @@ -735,6 +735,10 @@ void WebConfigServer::registerRoutes() {
@@ -149,7 +172,7 @@ index 167e5cd..dafc5c2 100644
    _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
  }
  
-@@ -1631,3 +1635,29 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+@@ -1631,3 +1635,30 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
  }
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
@@ -166,7 +189,7 @@ index 167e5cd..dafc5c2 100644
 +  req->send(res);
 +}
 +
-+// /api/hx?k=packets&since=N | history&from=T | nodes | self
++// /api/hx?k=packets&since=N | history&from=T | nodes | raw&seq=N | self
 +void WebConfigServer::handleHxData(AsyncWebServerRequest* req) {
 +  if (_mode == MODE_OFF) { req->send(503); return; }
 +  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
@@ -175,6 +198,7 @@ index 167e5cd..dafc5c2 100644
 +  if (k == "packets") hx::writePackets(*res, req->hasParam("since") ? strtoul(req->getParam("since")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "history") hx::writeHistory(*res, req->hasParam("from") ? strtoul(req->getParam("from")->value().c_str(), NULL, 10) : 0);
 +  else if (k == "nodes") hx::writeNodes(*res);
++  else if (k == "raw") hx::writeRaw(*res, req->hasParam("seq") ? strtoul(req->getParam("seq")->value().c_str(), NULL, 10) : 0);
 +  else hx::writeSelf(*res);
 +  req->send(res);
 +}
@@ -195,7 +219,7 @@ index bdd3e27..3e97918 100644
  
  #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
 diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
-index 4bd316b..e2043af 100644
+index 4bd316b..6b6e612 100644
 --- a/variants/thinknode_m7/platformio.ini
 +++ b/variants/thinknode_m7/platformio.ini
 @@ -290,3 +290,17 @@ lib_deps =
@@ -209,7 +233,7 @@ index 4bd316b..e2043af 100644
 +build_flags =
 +  ${env:ThinkNode_M7_repeater_observer_mqtt.build_flags}
 +  -D HOPTICS_M7
-+  -D HOPTICS_M7_VERSION='"0.1.0"'
++  -D HOPTICS_M7_VERSION='"0.2.0"'
 +  -D ENABLE_ADVERT_ON_BOOT=1
 +  -UADVERT_NAME
 +  -D ADVERT_NAME='"Hoptics M7"'
