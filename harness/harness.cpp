@@ -1175,6 +1175,30 @@ int main(int argc, char **argv)
     pump(100);
     model.setUiPref("theme", 0);
 
+    // reused Live rows: after packets that change every row's type, edge and colours, the list must look exactly like a
+    // freshly built one (build_and_run.sh compares 30_live_reused with 30_live_fresh). Glass rainbow, so edges count too.
+    model.setUiPref("theme", 9);
+    app.begin();
+    app.selectTab(hx::App::T_LIVE);
+    pump(300);
+    for (int i = 0; i < 3; i++) {
+        hx::Packet k;
+        k.type = i == 1 ? hx::PktType::Text : hx::PktType::Advert, k.direct = i == 2, k.pathLen = i, k.rssi = -90 - i;
+        k.snr4 = 30 - 25 * i, k.time = NOW - 2, k.mine = i == 1, k.len = 40;
+        if (i != 1)
+            snprintf(k.from, sizeof(k.from), "Pool test %d", i);
+        app.onPacket(k);
+        pump(300);
+    }
+    shot("30_live_reused");
+    app.begin();
+    app.selectTab(hx::App::T_LIVE);
+    pump(300);
+    shot("30_live_fresh");
+    model.setUiPref("theme", 0);
+    app.begin();
+    app.selectTab(hx::App::T_HOME);
+    pump(100);
     // timings (with HX_PERF set): a full Nodes list, a full chat, each tab; desktop numbers, for comparing
     if (getenv("HX_PERF")) {
         using HA = hx::HarnessAccess;
