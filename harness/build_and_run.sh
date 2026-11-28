@@ -46,3 +46,12 @@ mkdir -p shots/320x240 shots/240x320
 $B/harness_land 320 240 shots/320x240 > /dev/null
 $B/harness_port 240 320 shots/240x320 > /dev/null
 echo done
+# reused Live rows must match a freshly built list, pixel for pixel
+python3 - <<'PY'
+import sys
+bad = [d for d in ("shots/320x240", "shots/240x320")
+       if open(f"{d}/30_live_reused.ppm", "rb").read() != open(f"{d}/30_live_fresh.ppm", "rb").read()]
+if bad:
+    sys.exit("reused Live rows differ from a fresh build: " + ", ".join(bad))
+print("reused Live rows: ok")
+PY

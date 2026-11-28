@@ -22,6 +22,7 @@ constexpr bool THREE_WIRE = false;
 const char *const NAME = "Heltec V4-R8 Expansion Kit V2";
 TwoWire &touchBus = Wire; // the board's I2C, started by MeshCore
 constexpr bool OWN_TOUCH_BUS = false;
+constexpr uint32_t PANEL_HZ = 75000000; // as Meshtastic runs this kit's screen: a full redraw goes out in ~16 ms
 #else
 constexpr int SCK = 17, MOSI = 33, MISO = -1, DC = 16, CS = 15, RST = 18, BL = 21, SD_CS = -1;
 constexpr int T_SDA = 47, T_SCL = 48, T_RST = 44;
@@ -29,6 +30,7 @@ constexpr bool THREE_WIRE = true; // one data line, as on the kit
 const char *const NAME = "Heltec V4 Expansion Kit";
 TwoWire &touchBus = Wire1; // the touch controller's own pins
 constexpr bool OWN_TOUCH_BUS = true;
+constexpr uint32_t PANEL_HZ = 40000000; // the original kit's screen, as Meshtastic runs it
 #endif
 constexpr int PIN_BTN = 0;
 constexpr uint8_t CHSC6X = 0x2E;
@@ -55,7 +57,7 @@ class Panel : public lgfx::LGFX_Device
         auto b = bus.config();
         b.spi_host = SPI2_HOST; // its own host: the radio is on SPI3
         b.spi_mode = 0;
-        b.freq_write = 40000000;
+        b.freq_write = PANEL_HZ;
         b.freq_read = 16000000;
         b.spi_3wire = THREE_WIRE;
         b.use_lock = false; // one thread: the main loop
