@@ -52,6 +52,16 @@ bool queueChannelMsg(const uint8_t key[16], const char* text);
 bool takeChannelMsg(uint8_t key[16], char* text, size_t n);
 void writeGroup(Print& out, uint32_t since);
 
+// Rollback and stats feed (HopticsSafety.cpp)
+void markUpdateInstalled();
+void bootCheck();
+void bootGood();
+void statsBegin();
+bool statsOn();
+bool statsTokenOk(const char* t);
+const char* statsNewToken(bool off);
+void writeMetrics(Print& out);
+
 // Discord alerts (HopticsAlerts.cpp)
 enum : uint8_t { ALERT_SILENT = 1, ALERT_DAILY = 2, ALERT_NEW = 4 };
 void alertsBegin();

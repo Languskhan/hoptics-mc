@@ -12,6 +12,7 @@ with the Hoptics dashboard at `http://<node-ip>/hoptics`.
 - Role switching (observer, repeater, room server, companion, KISS) and one-click updates
 - Discord alerts (optional): quiet repeaters, daily summary, new nodes
 - Chat tab: read and send Public and hashtag channel messages as this node
+- Stats feed for Home Assistant / Prometheus (read-only token); automatic rollback after a bad update
 - Web page always on while the network is up; advert at boot
 
 ## How it is built

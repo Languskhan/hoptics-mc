@@ -148,6 +148,7 @@ void begin() {
   }
   startRegion();
   alertsBegin();
+  statsBegin();
 }
 
 void regionBegin() {
@@ -488,6 +489,37 @@ void writeRaw(Print& out, uint32_t seq) {
   const uint8_t* r = raws + idx * kRaw;
   for (int i = 0; i < k.raw_len; i++) out.printf("%02x", r[i]);
   out.print("\"}");
+}
+
+// Prometheus text format from the latest 5-minute sample (no labels, so nothing from the air ends up here)
+void writeMetrics(Print& out) {
+  if (!mu || !samples) return;
+  Lock l;
+  if (!sample_count) { out.print("# no samples yet\n"); return; }
+  const Sample& s = samples[(sample_head - 1 + kSamples) % kSamples];
+  int heard = 0;
+  for (int i = 0; nodes && i < kNodes; i++) if (nodes[i].seen && s.t - nodes[i].seen < 86400) heard++;
+  struct M { const char* name; const char* type; double v; } m[] = {
+    {"hoptics_uptime_seconds", "gauge", (double)s.up},
+    {"hoptics_noise_floor_dbm", "gauge", (double)s.noise},
+    {"hoptics_airtime_tx_seconds_total", "counter", s.tx_ms / 1000.0},
+    {"hoptics_airtime_rx_seconds_total", "counter", s.rx_ms / 1000.0},
+    {"hoptics_packets_received_total", "counter", (double)s.recv},
+    {"hoptics_packets_sent_total", "counter", (double)s.sent},
+    {"hoptics_packets_received_flood_total", "counter", (double)s.recv_flood},
+    {"hoptics_packets_received_direct_total", "counter", (double)s.recv_direct},
+    {"hoptics_receive_errors_total", "counter", (double)s.rx_err},
+    {"hoptics_floods_unique_total", "counter", (double)s.flood_uniq},
+    {"hoptics_floods_copies_total", "counter", (double)s.flood_dup},
+    {"hoptics_neighbours_strong", "gauge", (double)s.nbr_strong},
+    {"hoptics_neighbour_snr_avg_db", "gauge", s.nbr_snr4 / 4.0},
+    {"hoptics_mqtt_uploads_total", "counter", (double)s.mqtt_ok},
+    {"hoptics_mqtt_errors_total", "counter", (double)s.mqtt_err},
+    {"hoptics_heap_free_bytes", "gauge", (double)s.heap},
+    {"hoptics_chip_temperature_celsius", "gauge", (double)s.temp},
+    {"hoptics_nodes_heard_24h", "gauge", (double)heard},
+  };
+  for (const M& x : m) out.printf("# TYPE %s %s\n%s %.3f\n", x.name, x.type, x.name, x.v);
 }
 
 void writeSelf(Print& out) {

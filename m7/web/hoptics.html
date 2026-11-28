@@ -172,6 +172,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
   <div class="card glass"><h3>Role</h3><div id="rolecard"><span class="dim">Loading...</span></div></div>
   <div class="card glass"><h3>Updates</h3><div class="row"><button class="b" id="chk">Check for updates</button><span class="dim" id="chkmsg"></span></div></div>
   <div class="card glass"><h3>Discord alerts</h3><div id="alertcard"><span class="dim">Loading...</span></div></div>
+  <div class="card glass"><h3>Stats feed (Home Assistant, Grafana)</h3><div id="statscard"><span class="dim">Loading...</span></div></div>
   <div class="card glass"><h3>Restart</h3><div class="row"><button class="b" id="reboot">Restart node</button><span class="dim">History in memory is cleared by a restart.</span></div></div>
 </section>
 <section id="t-console">
@@ -798,6 +799,30 @@ async function renderAlerts(){let a;try{a=await api("/api/hx?k=alerts")}catch(e)
   $("asave").onclick=()=>{const u=$("aurl").value.trim();if(u&&!/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(u)){$("amsg").textContent="That doesn't look like a Discord webhook link.";return}send({url:u,flags:flags()})};
   if(a.set){$("atest").onclick=async()=>{await fetch("/api/hx/alerts",{method:"POST",body:new URLSearchParams({test:1})});$("amsg").textContent="Test queued; it arrives within a minute."};
     $("aoff").onclick=()=>{if(confirm("Remove the webhook link and stop alerts?"))send({url:"-",flags:flags()})}}}
+// ---- read-only stats token
+async function renderStats(token){let on=false;try{on=(await api("/api/hx?k=statson")).on}catch(e){}
+  const url=location.origin+"/metrics";
+  $("statscard").innerHTML=`<p class="dim">${on?"On.":"Off."} The feed gives read-only numbers (noise, airtime, packets, neighbours, MQTT, memory, temperature) in Prometheus format at <code>${esc(url)}</code>, using a token instead of your password. The token can't change anything.</p>
+  ${token?`<div class="msg ok"><b>Your token (shown once, copy it now)</b><div class="why"><code style="word-break:break-all">${esc(token)}</code></div>
+  <details open><summary>Home Assistant (configuration.yaml)</summary><pre>rest:
+  - resource: ${esc(url)}
+    headers:
+      Authorization: "Bearer ${esc(token)}"
+    scan_interval: 300
+    sensor:
+      - name: "M7 noise floor"
+        unit_of_measurement: "dBm"
+        value_template: "{{ value | regex_findall_index('hoptics_noise_floor_dbm ([-0-9.]+)') }}"</pre></details>
+  <details><summary>Prometheus (scrape config)</summary><pre>- job_name: hoptics_m7
+  scrape_interval: 300s
+  authorization:
+    credentials: ${esc(token)}
+  static_configs:
+    - targets: ["${esc(location.host)}"]</pre></details></div>`:""}
+  <div class="row"><button class="b ${on?"":"p"}" id="stnew">${on?"Make a new token":"Turn on"}</button>${on?'<button class="b" id="stoff">Turn off</button>':""}</div>`;
+  const call=async body=>{const r=await fetch("/api/hx/stats-token",{method:"POST",body:new URLSearchParams(body)});const j=await r.json().catch(()=>({}));if(r.ok)renderStats(j.token||"")};
+  $("stnew").onclick=()=>{if(on&&!confirm("Make a new token? The old one stops working."))return;call({})};
+  if(on)$("stoff").onclick=()=>call({off:1})}
 $("chk").onclick=async()=>{const env=S.self&&S.self.role==="room"?"Hoptics_M7_room_observer":"Hoptics_M7_repeater_observer";const msg=x=>$("chkmsg").innerHTML=x;
   msg("Checking...");try{const v=(await (await fetch(BUILDS+env+"/version.txt",{cache:"no-store"})).text()).trim();
     if(!/^[0-9.]+$/.test(v))throw new Error("no version published");
@@ -815,7 +840,7 @@ $("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
 
 // ================================================================ loop
 function safe(f){try{f()}catch(e){console.error("Hoptics:",e)}}
-function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="chat")safe(renderChat);if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();S.roleDrawn=1}}}
+function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="chat")safe(renderChat);if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();renderStats();S.roleDrawn=1}}}
 let started=false;
 async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);

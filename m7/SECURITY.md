@@ -40,6 +40,12 @@ as hostile input.
   1-140 bytes with no control characters, one at a time and at least 5 s apart. Channel keys are added in the
   browser and sent only with the message; the node doesn't store them.
 
+- **Bad updates roll back.** After an update the node notes the slot it came from; if the new firmware can't
+  stay up and online for 3 minutes three starts in a row, it switches back to the previous one.
+- **The stats feed is read-only and separate.** It is off until you turn it on; it uses a random 32-character
+  token (compared in constant time) that can only read numbers, never change anything, and can be replaced or
+  turned off at any time. It carries no names or messages.
+
 ## Limits to know
 
 - The page is plain HTTP on your LAN, like most device setup pages: someone on the same network could see the
