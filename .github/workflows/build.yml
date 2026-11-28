@@ -3,6 +3,7 @@ name: Build Hoptics-MC
 on:
   push:
     branches: [main]
+    paths-ignore: ['m7/**', '.github/workflows/m7.yml']
   pull_request:
   release:
     types: [published]
