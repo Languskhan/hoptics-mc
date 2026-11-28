@@ -50,8 +50,8 @@ const API = DEMO ? DEMO.api : {
     const j = await r.json().catch(() => ({}));
     return r.ok ? { ok: true } : { ok: false, error: j.error || "No answer (" + r.status + ")" };
   },
-  async backup() {
-    const r = await fetch("/api/backup", { method: "POST", headers: { "X-Hoptics": "1" } });
+  async backup(keys) {
+    const r = await fetch("/api/backup" + (keys ? "?keys=1" : ""), { method: "POST", headers: { "X-Hoptics": "1" } });
     const j = await r.json().catch(() => ({}));
     return r.ok && j.backup ? j : { error: j.error || "No answer (" + r.status + ")" };
   },
@@ -104,6 +104,16 @@ function upsertNode(key, patch) {
   return n;
 }
 
+// An advert the node passes on was heard by its radio and its signature checked there. One from the internet feed
+// comes straight from the CoreScope server to this browser and isn't checked (the page has no Ed25519 over plain
+// HTTP: browsers keep crypto.subtle for HTTPS pages), so anyone feeding that server could make up a node. Such a node
+// is marked "unverified", and never changes the name or place of a node this radio heard or has as a contact
+function advertNode(p, src, t) {
+  const n = S.nodes.get(p.key.slice(0, 12)), vouched = n && (n.contact || n.signed);
+  if (src === "net" && vouched) { if (!n.last || t > n.last) n.last = t; return; }
+  upsertNode(p.key, { name: p.name, type: p.nodeType, lat: p.lat, lon: p.lon, last: t, advert: true, signed: src !== "net", unverified: src === "net" });
+}
+
 function bump(map, t) { const m = Math.floor(t / 60); map.set(m, (map.get(m) || 0) + 1); if (map.size > 180) map.delete(Math.min(...map.keys())); }
 
 function addPacket(p, src, extra) {
@@ -111,7 +121,7 @@ function addPacket(p, src, extra) {
   const old = S.seenPk.get(p.id);
   if (old) {
     if (src === "net" && extra.obs && !old.obs.has(extra.obs)) { old.obs.add(extra.obs); old.fresh = Date.now(); }
-    if (src === "rf" && old.src === "net") { old.src = "both"; Object.assign(old, extra); }
+    if (src === "rf" && old.src === "net") { old.src = "both"; Object.assign(old, extra); if (p.type === "ADVERT" && p.key) advertNode(p, "rf", old.t); }
     return old;
   }
   const { obs: oname, ...rest } = extra;
@@ -121,7 +131,7 @@ function addPacket(p, src, extra) {
   S.seenPk.set(p.id, e);
   if (S.packets.length > 600) S.seenPk.delete(S.packets.pop().id);
   bump(src === "rf" ? S.rfMin : S.netMin, e.t);
-  if (p.type === "ADVERT" && p.key) upsertNode(p.key, { name: p.name, type: p.nodeType, lat: p.lat, lon: p.lon, last: e.t, advert: true });
+  if (p.type === "ADVERT" && p.key) advertNode(p, src, e.t);
   queueBeam(e);
   return e;
 }
@@ -145,7 +155,7 @@ function takeSnapshot(d) {
   S.snap = d;
   const sig = (d.channels || []).map((c) => c.i + c.k).join(",");
   if (sig !== S.chKeySig) { S.chKeySig = sig; S.chKeys = channelKeys(d.channels || []); }
-  for (const c of d.contacts || []) upsertNode(c.k, { name: c.n, type: c.t, hops: c.h, last: c.last, lat: c.lat, lon: c.lon, fav: c.fav, contact: true });
+  for (const c of d.contacts || []) upsertNode(c.k, { name: c.n, type: c.t, hops: c.h, last: c.last, lat: c.lat, lon: c.lon, fav: c.fav, contact: true, unverified: false });
   const first = !S.rfSeq;
   for (const r of (d.packets || []).slice().sort((a, b) => a.s - b.s)) {
     if (r.s <= S.rfSeq) continue;
@@ -639,7 +649,7 @@ V.map = {
     this.sel = best;
     if (!best) { this.cardEl.classList.add("hidden"); this.m.render(); return; }
     const c = this.cardEl; c.replaceChildren(); c.classList.remove("hidden");
-    const hd = el("div", "who"); hd.append(avatar(best.key, best.name)); const tt = el("div"); tt.append(el("h4", "", best.name || best.key.toUpperCase()), el("div", "muted", NT[best.type] || "Node")); hd.append(tt);
+    const hd = el("div", "who"); hd.append(avatar(best.key, best.name)); const tt = el("div"); tt.append(el("h4", "", best.name || best.key.toUpperCase()), el("div", "muted", (NT[best.type] || "Node") + (best.unverified ? " · unverified (internet only)" : ""))); hd.append(tt);
     const kv = el("div", "kv"), add = (k, v) => kv.append(el("span", "", k), el("span", "", v));
     add("Heard", best.last ? ago(best.last) + " ago" : "-"); if (best.hops !== undefined && best.hops !== null) add("Route", best.hops < 0 ? "flood" : best.hops === 0 ? "direct" : best.hops + " hops");
     const p = myPos(); if (p) { add("Distance", km(distKm(p, best))); add("Bearing", Math.round(bearing(p, best)) + "° " + compass(bearing(p, best))); }
@@ -943,6 +953,7 @@ V.nodes = {
     this.tb.replaceChildren();
     for (const n of list.slice(0, 400)) {
       const tr = el("tr"), who = el("div", "who"); who.append(avatar(n.key, n.name), el("b", "", n.name || "(no name)")); if (n.fav) who.append(el("span", "", "★"));
+      if (n.unverified) { const u = el("span", "tag", "unverified"); u.title = "Only heard from the internet feed: its advert's signature wasn't checked"; who.append(u); }
       const td1 = el("td"); td1.append(who);
       const pill = el("span", "pill", NT[n.type] || "Node"); pill.style.setProperty("--c", css(NT_COLOR[n.type] || "--muted"));
       const td2 = el("td"); td2.append(pill);
@@ -1038,23 +1049,25 @@ V.device = {
     };
     trow.append(dir, send, clear); tl.append(tnote, trow, tbar, this.tlMsg);
     const bk = card("Backup", "c6", el("span", "dim", "settings, channels and contacts"));
-    const bnote = el("p", "muted", "A backup holds the node's name, position and radio settings, its channels with their keys, and its contacts. It never holds the node's own private key. Keep it private: with it, anyone can read your private channels. With a card in, each backup is also kept on the card (hoptics/backup).");
+    const bnote = el("p", "muted", "A backup holds the node's name, position and radio settings, its channels, and its contacts. It never holds the node's own private key. Private channels' keys are left out unless you tick the box: this page isn't encrypted, so anyone on the same Wi-Fi could read them on the way. Restoring a backup without keys keeps the keys already on the node. With a card in, each backup is also kept on the card (hoptics/backup).");
     bnote.style.cssText = "margin:10px 0;font-size:12.5px";
     const brow = el("div"); brow.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center";
     const make = el("button", "btn sm", "Back up now");
+    const keysL = el("label", "muted"), keysB = el("input"); keysB.type = "checkbox"; keysL.style.fontSize = "12.5px";
+    keysL.append(keysB, " Include private channel keys (only on a network you trust)");
     this.bkMsg = el("p", "muted"); this.bkMsg.style.cssText = "margin:8px 0 0;font-size:12.5px";
     make.onclick = async () => {
       if (DEMO) { toast("Not in the demo"); return; }
       make.disabled = true;
-      const r = await API.backup();
-      make.disabled = false;
+      const r = await API.backup(keysB.checked);
+      make.disabled = false; keysB.checked = false; // asked for each time
       if (r.error) { this.bkMsg.textContent = "No backup: " + r.error; return; }
       const a = el("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(r.backup, null, 1)], { type: "application/json" }));
       a.download = "hoptics-mc-backup-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-") + ".json"; a.click();
-      this.bkMsg.textContent = "Backup downloaded" + (r.file ? " and saved on the card as " + r.file : "") + ": " + (r.backup.contacts || []).length + " contacts, " + (r.backup.channels || []).length + " channels.";
+      this.bkMsg.textContent = "Backup downloaded" + (r.file ? " and saved on the card as " + r.file : "") + ": " + (r.backup.contacts || []).length + " contacts, " + (r.backup.channels || []).length + " channels" + (r.noKey ? " (" + r.noKey + " private without their keys)." : ".");
       this.bkList = null; this.render();
     };
-    brow.append(make);
+    brow.append(make, keysL);
     // restore: a file from this computer, or one of the backups on the card
     const rrow = el("div"); rrow.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px";
     const from = el("input"); from.type = "file"; from.accept = ".json,application/json"; from.style.cssText = "flex:1;min-width:0;font-size:12.5px;color:var(--muted)";
@@ -1077,7 +1090,7 @@ V.device = {
       if (r.error) { this.bkMsg.textContent = "Not restored: " + r.error; return; }
       const c = r.contacts, ch = r.channels;
       this.bkMsg.textContent = "Restored: " + c.added + " contacts added (" + c.had + " already there" + (c.full ? ", " + c.full + " didn't fit" : "") + "), " +
-        ch.added + " channels added (" + ch.had + " already there" + (ch.full ? ", " + ch.full + " didn't fit" : "") + ")" +
+        ch.added + " channels added (" + ch.had + " already there" + (ch.full ? ", " + ch.full + " didn't fit" : "") + (ch.noKey ? ", " + ch.noKey + " saved without a key, left as they are" : "") + ")" +
         (r.settings ? (r.radio ? ", settings and radio." : ", settings (the radio settings in it weren't valid, so the radio is unchanged).") : ".");
     };
     rrow.append(from, this.bkSel, restore);

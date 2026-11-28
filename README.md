@@ -39,6 +39,8 @@ Download the firmware for your board from the [latest release](https://github.co
   messages and private channels' keys never go to the page. From the page you can also send channel
   messages, install a firmware update (it starts on trial and goes back by itself if it doesn't start
   properly), and send a folder of offline map tiles for the radio's map.
+  **The page is plain HTTP, not encrypted:** use it only on a network you trust. On shared Wi-Fi (a club
+  meeting, a hamfest, a café, a hotel) anyone nearby could read the PIN as you sign in. See [Security](#security).
 - **microSD card** (T-Deck Plus, ThinkNode M9, V4-R8 Kit V2; FAT32): the street map keeps its tiles on the card
   (up to 1 GB) and shows ready-made map packs from it (Meshtastic's `maps/<style>/z/x/y.png` or `map/`, MeshCore's
   `tiles/`); the web page gets a **Files** tab (browse, download, upload, new folder, delete) and a **Backup** of
@@ -50,6 +52,22 @@ Download the firmware for your board from the [latest release](https://github.co
   **Connect** (Bluetooth PIN, Wi-Fi, web page, live feed), **Display** (themes, wallpapers, a lock screen, large
   chat text, message sounds with a volume setting), **Location** (GPS, the street map) and **System** (time zone,
   restart, device log, about). Back, Left, or More again returns to the six.
+
+## Security
+
+What strangers can send the radio (packets over the air, the live feed, a browser on the same Wi-Fi) is treated
+as hostile; [SECURITY.md](SECURITY.md) has the rules the code follows and how to report a problem. In short:
+
+- **The web page isn't encrypted.** Anyone on the same Wi-Fi can read what crosses it, including the PIN as you
+  sign in. Use it at home or on a network you trust. Backups leave private channels' keys out unless you tick
+  "Include private channel keys"; restoring a backup without keys keeps the keys already on the node.
+- **Wrong PINs lock out only the device that sent them:** five tries, then a minute, doubling up to 15 minutes.
+  If 50 wrong PINs arrive within an hour from any mix of devices, sign-in locks for everyone for 15 minutes.
+  **Making a new PIN on the radio clears every lock** and signs every browser out.
+- **A firmware update from the page installs only after a tap on the radio's own screen.**
+- **Names and positions on the map come from signed adverts.** The radio checks each advert's signature before it
+  shows a node's name or place, for packets it hears and for the live feed. The web page can't check the adverts
+  it gets straight from the feed, so a node seen only that way is marked "unverified".
 
 ## How it's built
 
@@ -69,7 +87,7 @@ to the same functions the app commands use, and one ThinkNode M9 pin name that c
 Every push also runs quick checks on a PC beside the firmware builds: cppcheck on `hoptics/`, the web page's
 SHA-256, HMAC, AES and packet decoder against Node's crypto (`node harness/web/core_test.js`), the feed parser
 and WebSocket client under ASan/UBSan (`harness/feed/run.sh`), the web server's card paths and JSON reading
-(`harness/parse/run.sh`), and every screen in every theme rendered by
+(`harness/parse/run.sh`), both parsers fuzzed with libFuzzer (`harness/fuzz/run.sh`), and every screen in every theme rendered by
 `harness/build_and_run.sh` (kept as the run's `screens` artifact), with the web page's JSON checked.
 
 ## Licence

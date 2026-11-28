@@ -82,13 +82,22 @@ bool parse(const char *json, size_t n, Item &out)
         return false;
     memset(out.obsKey, 0, sizeof(out.obsKey));
     char id[16];
-    if (str(field(json, end, "observer_id"), end, id, sizeof(id)) && strlen(id) >= 12)
-        for (int i = 0; i < 6; i++)
-            out.obsKey[i] = (uint8_t)(hexVal(id[2 * i]) << 4 | hexVal(id[2 * i + 1]));
+    if (str(field(json, end, "observer_id"), end, id, sizeof(id)) && strlen(id) >= 12) {
+        uint8_t k[6];
+        bool ok = true;
+        for (int i = 0; i < 6 && ok; i++) {
+            const int a = hexVal(id[2 * i]), b = hexVal(id[2 * i + 1]);
+            ok = a >= 0 && b >= 0; // not hex: no key (a shifted -1 would be undefined, and a wrong key besides)
+            k[i] = ok ? (uint8_t)(a << 4 | b) : 0;
+        }
+        if (ok)
+            memcpy(out.obsKey, k, sizeof(k));
+    }
     out.obsName[0] = 0;
     str(field(json, end, "observer_name"), end, out.obsName, sizeof(out.obsName));
     v = field(json, end, "snr");
-    out.snr4 = (v && *v != 'n') ? (int8_t)(atof(v) * 4) : 0;
+    const double snr = (v && *v != 'n') ? atof(v) : 0;
+    out.snr4 = snr >= -32 && snr <= 31.75 ? (int8_t)(snr * 4) : 0; // a float that doesn't fit an int8_t can't be cast
     return true;
 }
 

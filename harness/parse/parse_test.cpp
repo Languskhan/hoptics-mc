@@ -108,6 +108,30 @@ int main()
     OK(hxparse::jsonText("a\\nb\\u00e9\"", t, sizeof(t)) && !strcmp(t, "a b\xc3\xa9"));
     OK(hxparse::jsonText("\\ud83d\\ude00\"", t, sizeof(t)) && !strcmp(t, "\xf0\x9f\x98\x80"));
     OK(!hxparse::jsonText("abcdefgh\"", t, sizeof(t)) && !hxparse::jsonText("abc", t, sizeof(t)));
+    // a \u without four hex digits is refused, and never eats the closing quote to read on past the string
+    char w[32];
+    OK(!hxparse::jsonText("\\u\"}, \"pin\":\"1\"", w, sizeof(w)));
+    OK(!hxparse::jsonText("\\u12\"", w, sizeof(w)) && !hxparse::jsonText("\\u12g4\"", w, sizeof(w)) && !hxparse::jsonText("\\u", w, sizeof(w)));
+    // half a surrogate pair becomes U+FFFD, not broken UTF-8
+    OK(hxparse::jsonText("\\ud83dx\"", w, sizeof(w)) && !strcmp(w, "\xef\xbf\xbdx"));
+    OK(hxparse::jsonText("\\ude00\"", w, sizeof(w)) && !strcmp(w, "\xef\xbf\xbd"));
+    // whole numbers in a range: anything a cast can't hold gives the default
+    OK(hxparse::value("42", "42" + 2, v) && hxparse::integer(v, 0, 255, -1) == 42);
+    OK(hxparse::value("300", "300" + 3, v) && hxparse::integer(v, 0, 255, -1) == -1);
+    OK(hxparse::value("1e30", "1e30" + 4, v) && hxparse::integer(v, -2147483647L, 2147483647L, 7) == 7);
+    OK(hxparse::value("-1e999", "-1e999" + 6, v) && hxparse::integer(v, -100, 100, 7) == 7);
+    OK(hxparse::value("\"5\"", "\"5\"" + 3, v) && hxparse::integer(v, 0, 9, -1) == -1);
+    OK(hxparse::value("true", "true" + 4, v) && hxparse::integer(v, 0, 9, -1) == 1);
+    // Host: this node on the local network, never a name on the internet (DNS rebinding)
+    for (const char *good : {"192.168.1.40", "192.168.1.40:80", "[fe80::1]", "[fe80::1]:80", "hoptics-1a2b", "hoptics-1a2b.local",
+                             "HOPTICS-1A2B.LOCAL", "hoptics-1a2b.local.", "node.lan", "node.home", "node.home.arpa", "n.internal",
+                             "n.localdomain", "", (const char *)nullptr})
+        OK(hxparse::localHost(good));
+    for (const char *bad : {"evil.com", "evil.com:80", "192.168.1.40.evil.com", ".local", "x.local.evil.com",
+                            "hoptics.localhost.evil.com", "a b.local", "a\".local", ":80",
+                            "a-very-long-name-that-goes-on-and-on-and-on-past-sixty-four-chars.local"})
+        OK(!hxparse::localHost(bad));
+
     // writing: what the page shows can only ever be a string
     std::string o;
     hxparse::jsonString(o, "a\"b\\c<d>&\n");

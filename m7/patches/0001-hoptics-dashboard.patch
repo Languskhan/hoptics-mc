@@ -196,7 +196,7 @@ index 167e5cd..9874fd5 100644
 +void WebConfigServer::hxUpload(AsyncWebServerRequest* req, size_t index, uint8_t* data, size_t len, bool final) {
 +  if (index == 0) {
 +    _hx_up_err[0] = 0;
-+    _hx_up_auth = (_mode == MODE_LAN) && checkAuth(req);
++    _hx_up_auth = (_mode == MODE_LAN) && checkAuth(req) && req->hasHeader("X-Hoptics"); // the dashboard alone sends it
 +    if (!_hx_up_auth) { strcpy(_hx_up_err, "sign in first"); return; }
 +    if (Update.isRunning()) Update.abort();
 +    if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) { snprintf(_hx_up_err, sizeof(_hx_up_err), "can't start: %s", Update.errorString()); return; }

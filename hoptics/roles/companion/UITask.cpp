@@ -22,6 +22,7 @@
 #include <mbedtls/platform.h>
 #include <target.h>
 #include <algorithm>
+#include <cmath>
 
 // The screen runs in Arduino's loop task. Its 8 KB default ran out in LVGL's layout and focus chains when the
 // More tab opened (stack canary, loopTask); 16 KB is the usual fix (arduino-esp32's SET_LOOP_TASK_STACK_SIZE).
@@ -248,7 +249,7 @@ void UITask::loop()
                 hxsd::writeFile(path, body.data(), body.size());
             }
         } else if (wq.kind == hxweb::Query::BACKUP)
-            webBackup(body);
+            webBackup(body, (wq.parts & hxweb::Query::KEYS) != 0);
         else if (wq.kind == hxweb::Query::RESTORE) {
             webRestore(wq.data, wq.len, wq.parts, body);
             free(wq.data); // ours once taken (hx_web.h)
@@ -351,6 +352,39 @@ void UITask::onACKRecv(uint32_t ack_crc)
 }
 
 // ------------------------------------------------------------------ packets heard and sent
+namespace
+{
+// an advert's signature, checked the way MeshCore checks it before adding a contact (Mesh::onRecvPacket): a name and a
+// place go on the map and the web page only when the node's own key signed them. Packets heard over the radio come
+// here before MeshCore's own check, and the live feed's never reach it at all, so without this anyone could put a
+// made-up node anywhere on the map. Ed25519 takes a few milliseconds: at most 8 are checked a second, and past that
+// an advert shows without a name or place, so a flood of fake adverts can't stall the screen
+bool advertSigned(const uint8_t *pay, int plen)
+{
+    static uint32_t windowAt = 0;
+    static uint8_t checked = 0;
+    const uint32_t ms = millis();
+    if (ms - windowAt >= 1000) {
+        windowAt = ms;
+        checked = 0;
+    }
+    if (checked >= 8)
+        return false;
+    checked++;
+    const int head = PUB_KEY_SIZE + 4; // [public key 32][timestamp 4][signature 64][app data]
+    int alen = plen - head - SIGNATURE_SIZE;
+    if (alen < 0)
+        return false;
+    if (alen > MAX_ADVERT_DATA_SIZE) // MeshCore signs (and reads) only this much
+        alen = MAX_ADVERT_DATA_SIZE;
+    uint8_t msg[PUB_KEY_SIZE + 4 + MAX_ADVERT_DATA_SIZE];
+    memcpy(msg, pay, head);
+    memcpy(msg + head, pay + head + SIGNATURE_SIZE, alen);
+    mesh::Identity id(pay);
+    return id.verify(pay + head, msg, head + alen);
+}
+} // namespace
+
 void UITask::decode(const uint8_t *raw, int len, hx::Packet &p) const
 {
     if (len < 2)
@@ -386,11 +420,11 @@ void UITask::decode(const uint8_t *raw, int len, hx::Packet &p) const
     const uint8_t *pay = raw + i;
     int plen = len - i;
     // who sent it, where the packet says so in the clear
-    if (type == PAYLOAD_TYPE_ADVERT && plen > 32 + 4 + 64) {
+    if (type == PAYLOAD_TYPE_ADVERT && plen > 32 + 4 + 64 && advertSigned(pay, plen)) {
         memcpy(p.fromKey, pay, sizeof(p.fromKey)); // [public key 32][timestamp 4][signature 64][app data]
         p.hasFromKey = true;
         const uint8_t *app = pay + 32 + 4 + 64;
-        int alen = plen - (32 + 4 + 64);
+        int alen = std::min<int>(plen - (32 + 4 + 64), MAX_ADVERT_DATA_SIZE); // only what the signature covers
         uint8_t flags = app[0];
         int j = 1;
         if ((flags & ADV_LATLON_MASK) && alen >= 9) {
@@ -1349,6 +1383,7 @@ void UITask::feedStart(void)
     char url[96] = "";
     if (!nvsOpen || !nvs.isKey("feed_url") || nvs.getString("feed_url", url, sizeof(url)) == 0)
         strcpy(url, kFeedDefault);
+    hxweb::setFeed(url);
     char ua[48];
     snprintf(ua, sizeof(ua), "HopticsMC/%s (%s)", HOPTICS_VERSION, hxhal::boardName());
     hxfeed::start(url, ua);
@@ -1379,6 +1414,7 @@ bool UITask::setFeedServer(const char *url)
     if (!nvsOpen)
         return false;
     nvs.putString("feed_url", url);
+    hxweb::setFeed(url); // the page's own WebSocket may go there now (and nowhere else)
     if (feedOn)
         feedStart(); // reconnect to the new one
     return true;
@@ -1692,7 +1728,7 @@ void hexTo(std::string &o, const uint8_t *b, size_t n)
 }
 } // namespace
 
-void UITask::webBackup(std::string &out)
+void UITask::webBackup(std::string &out, bool keys)
 {
     std::string b;
     char t[400];
@@ -1710,7 +1746,7 @@ void UITask::webBackup(std::string &out)
              prefs->telemetry_mode_env);
     b += t;
     b += "\n\"channels\":[";
-    int nCh = 0, nCt = 0;
+    int nCh = 0, nCt = 0, nNoKey = 0;
     for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
         ChannelDetails d;
         if (!the_mesh.getChannel(i, d) || !d.name[0])
@@ -1719,8 +1755,16 @@ void UITask::webBackup(std::string &out)
         snprintf(t, sizeof(t), "%s\n{\"i\":%d,\"name\":", nCh++ ? "," : "", i);
         b += t;
         hxparse::jsonString(b, d.name);
-        b += ",\"key\":";
-        hexTo(b, d.channel.secret, memcmp(d.channel.secret + 16, zero, 16) ? 32 : 16); // a 128-bit key, or 256
+        // a private channel's key only when asked for: the page is plain HTTP, so anyone on the same Wi-Fi could
+        // read it on the way (Public's and #hashtag channels' keys anyone can work out, so they always come)
+        char known[33];
+        if (keys || channelWebKey(i, known)) {
+            b += ",\"key\":";
+            hexTo(b, d.channel.secret, memcmp(d.channel.secret + 16, zero, 16) ? 32 : 16); // a 128-bit key, or 256
+        } else {
+            b += ",\"key\":null";
+            nNoKey++;
+        }
         b += '}';
     }
     b += "],\n\"contacts\":[";
@@ -1744,8 +1788,9 @@ void UITask::webBackup(std::string &out)
         if (!hxsd::writeFile(path, b.data(), b.size()))
             path[0] = 0;
     }
-    hxlog::line("backup made: %d channels, %d contacts%s", nCh, nCt, path[0] ? ", saved on the card" : "");
-    out = "{\"ok\":true,\"file\":";
+    hxlog::line("backup made: %d channels (%d without their key), %d contacts%s", nCh, nNoKey, nCt, path[0] ? ", saved on the card" : "");
+    snprintf(t, sizeof(t), "{\"ok\":true,\"noKey\":%d,\"file\":", nNoKey);
+    out = t;
     if (path[0])
         hxparse::jsonString(out, path);
     else
@@ -1774,7 +1819,7 @@ void UITask::webRestore(const char *data, size_t len, uint8_t parts, std::string
         out = "{\"error\":\"That isn't a Hoptics backup\"}";
         return;
     }
-    int ctAdded = 0, ctHad = 0, ctFull = 0, chAdded = 0, chHad = 0, chFull = 0;
+    int ctAdded = 0, ctHad = 0, ctFull = 0, chAdded = 0, chHad = 0, chFull = 0, chNoKey = 0;
     bool setOk = false;
     if ((parts & hxweb::Query::CONTACTS) && contacts.p) { // contacts the node doesn't have yet are added; known ones stay as they are
         const char *q = contacts.p;
@@ -1790,17 +1835,17 @@ void UITask::webRestore(const char *data, size_t len, uint8_t parts, std::string
                 else if (hxparse::is(k, "name"))
                     hxparse::text(v, c.name, sizeof(c.name));
                 else if (hxparse::is(k, "type"))
-                    c.type = (uint8_t)hxparse::number(v, 0);
+                    c.type = (uint8_t)hxparse::integer(v, 0, 255, 0);
                 else if (hxparse::is(k, "flags"))
-                    c.flags = (uint8_t)hxparse::number(v, 0);
-                else if (hxparse::is(k, "lat"))
-                    c.gps_lat = (int32_t)hxparse::number(v, 0);
+                    c.flags = (uint8_t)hxparse::integer(v, 0, 255, 0);
+                else if (hxparse::is(k, "lat")) // degrees x 1e6
+                    c.gps_lat = (int32_t)hxparse::integer(v, -90000000L, 90000000L, 0);
                 else if (hxparse::is(k, "lon"))
-                    c.gps_lon = (int32_t)hxparse::number(v, 0);
+                    c.gps_lon = (int32_t)hxparse::integer(v, -180000000L, 180000000L, 0);
                 else if (hxparse::is(k, "heard"))
-                    c.last_advert_timestamp = (uint32_t)hxparse::number(v, 0);
+                    c.last_advert_timestamp = (uint32_t)hxparse::integer(v, 0, 4294967295L, 0);
                 else if (hxparse::is(k, "mod"))
-                    c.lastmod = (uint32_t)hxparse::number(v, 0);
+                    c.lastmod = (uint32_t)hxparse::integer(v, 0, 4294967295L, 0);
             });
             if (!key || c.type < ADV_TYPE_CHAT || c.type > ADV_TYPE_SENSOR)
                 return;
@@ -1829,14 +1874,18 @@ void UITask::webRestore(const char *data, size_t len, uint8_t parts, std::string
             const char *r = e.p;
             hxparse::object(r, e.p + e.n, [&](const hxparse::Value &k, const hxparse::Value &v) {
                 if (hxparse::is(k, "i"))
-                    want = (int)hxparse::number(v, -1);
+                    want = (int)hxparse::integer(v, 0, MAX_GROUP_CHANNELS - 1, -1);
                 else if (hxparse::is(k, "name"))
                     hxparse::text(v, d.name, sizeof(d.name));
                 else if (hxparse::is(k, "key"))
                     key = hxparse::hex(v, d.channel.secret, 16) || hxparse::hex(v, d.channel.secret, 32);
             });
-            if (!key || !d.name[0])
+            if (!d.name[0])
                 return;
+            if (!key) { // saved without its key: the node keeps whatever it has, nothing is wiped
+                chNoKey++;
+                return;
+            }
             int slot = -1;
             for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
                 ChannelDetails c;
@@ -1863,8 +1912,10 @@ void UITask::webRestore(const char *data, size_t len, uint8_t parts, std::string
         double lat = 999, lon = 999;
         const char *q = settings.p;
         hxparse::object(q, settings.p + settings.n, [&](const hxparse::Value &k, const hxparse::Value &v) {
-            const double n = hxparse::number(v, -1);
-            const uint8_t u = n >= 0 && n <= 255 ? (uint8_t)n : 0;
+            double n = hxparse::number(v, -1);
+            if (!std::isfinite(n)) // setRadio checks the ranges; a NaN would pass every "out of range" test
+                n = -1;
+            const uint8_t u = (uint8_t)hxparse::integer(v, 0, 255, 0);
             if (hxparse::is(k, "name"))
                 hxparse::text(v, name, sizeof(name));
             else if (hxparse::is(k, "lat"))
@@ -1880,7 +1931,7 @@ void UITask::webRestore(const char *data, size_t len, uint8_t parts, std::string
             else if (hxparse::is(k, "cr"))
                 rad.cr = u;
             else if (hxparse::is(k, "tx"))
-                rad.txPower = (int8_t)hxparse::number(v, prefs->tx_power_dbm);
+                rad.txPower = (int8_t)hxparse::integer(v, -128, 127, prefs->tx_power_dbm);
             else if (hxparse::is(k, "adv_loc"))
                 prefs->advert_loc_policy = u ? ADVERT_LOC_SHARE : ADVERT_LOC_NONE;
             else if (hxparse::is(k, "man_add"))
@@ -1910,11 +1961,12 @@ void UITask::webRestore(const char *data, size_t len, uint8_t parts, std::string
     }
     hxlog::line("restore: %d contacts and %d channels added%s", ctAdded, chAdded,
                 (parts & hxweb::Query::SETTINGS) ? (setOk ? ", settings" : ", settings without the radio") : "");
-    char b[260];
+    char b[280];
     snprintf(b, sizeof(b),
-             "{\"ok\":true,\"contacts\":{\"added\":%d,\"had\":%d,\"full\":%d},\"channels\":{\"added\":%d,\"had\":%d,\"full\":%d},"
-             "\"settings\":%s,\"radio\":%s}",
-             ctAdded, ctHad, ctFull, chAdded, chHad, chFull, (parts & hxweb::Query::SETTINGS) ? "true" : "false", setOk ? "true" : "false");
+             "{\"ok\":true,\"contacts\":{\"added\":%d,\"had\":%d,\"full\":%d},\"channels\":{\"added\":%d,\"had\":%d,\"full\":%d,"
+             "\"noKey\":%d},\"settings\":%s,\"radio\":%s}",
+             ctAdded, ctHad, ctFull, chAdded, chHad, chFull, chNoKey, (parts & hxweb::Query::SETTINGS) ? "true" : "false",
+             setOk ? "true" : "false");
     out = b;
 }
 
@@ -1923,6 +1975,7 @@ void UITask::webTick(void)
 {
     const bool up = wifiOn && WiFi.status() == WL_CONNECTED;
     if (webOn && up && !hxweb::running()) {
+        hxweb::setFeed(feed().server); // the feed's server, for the page's policy (the default when none is set)
         hxweb::start(80);
         if (!mdnsUp && MDNS.begin(webHost)) { // hoptics-xxxx.local, for phones and computers that look names up that way
             MDNS.addService("http", "tcp", 80);
@@ -1971,7 +2024,11 @@ void UITask::updateAnswer(bool install)
 
 void UITask::newWebPin(void)
 {
-    snprintf(webPin, sizeof(webPin), "%06lu", (unsigned long)(esp_random() % 1000000));
+    uint32_t r;
+    do // every PIN equally likely: 2^32 isn't a multiple of a million, so the top few values are thrown back
+        r = esp_random();
+    while (r >= 4294000000u);
+    snprintf(webPin, sizeof(webPin), "%06lu", (unsigned long)(r % 1000000));
     openNvs();
     if (nvsOpen)
         nvs.putString("web_pin", webPin);

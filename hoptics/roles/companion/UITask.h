@@ -166,7 +166,7 @@ class UITask : public AbstractUITask, public hx::Model
     void webTick(void);
     // the microSD card (hoptics/hal/hx_sd): a backup of the settings, channels and contacts for the web page (also
     // saved to /hoptics/backup on the card), and a backup brought back. Both answer as JSON
-    void webBackup(std::string &out);
+    void webBackup(std::string &out, bool keys);
     void webRestore(const char *data, size_t len, uint8_t parts, std::string &out);
     void cardName(char *out, size_t n, const char *folder, const char *ext) const; // a dated file name on the card
 public:

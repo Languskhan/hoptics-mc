@@ -18,6 +18,13 @@ int main() {
     assert(!hxfeed::parse(odd, strlen(odd), it));
     const char *cut = "{\"raw_hex\":\"1501AB";  // truncated message
     assert(hxfeed::parse(cut, strlen(cut), it) && it.len == 3);
+    // an observer id that isn't hex gives no key (no shift of -1), and an SNR too big for an int8_t gives 0
+    const char *nothex = "{\"raw_hex\":\"1501\",\"observer_id\":\"zz3a9c112233\",\"snr\":1e300}";
+    assert(hxfeed::parse(nothex, strlen(nothex), it) && it.obsKey[0] == 0 && it.obsKey[5] == 0 && it.snr4 == 0);
+    const char *huge = "{\"raw_hex\":\"1501\",\"snr\":-99999}";
+    assert(hxfeed::parse(huge, strlen(huge), it) && it.snr4 == 0);
+    const char *edge = "{\"raw_hex\":\"1501\",\"snr\":31.75}";
+    assert(hxfeed::parse(edge, strlen(edge), it) && it.snr4 == 127);
     bool tls; char h[64], p[64]; uint16_t port;
     const char *urls[] = {"corescope.sacmesh.org", "wss://corescope.sacmesh.org/ws", "ws://192.168.1.5:3000", "https://x.org:8443/live/ws", " ws://h/", "", "wss://:99/ws", "h:0", "WS://h/ws"};
     for (auto u : urls) { bool ok = hxfeed::splitUrl(u, tls, h, sizeof(h), port, p, sizeof(p)); printf("%-34s -> %d %s %s %u %s\n", u, ok, ok&&tls?"tls":"   ", ok?h:"", ok?port:0, ok?p:""); }

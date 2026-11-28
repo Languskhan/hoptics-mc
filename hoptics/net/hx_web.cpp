@@ -16,8 +16,10 @@
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <lwip/sockets.h>
 #include <algorithm>
 #include <string.h>
+#include "hx_feed.h"
 
 namespace hxweb
 {
@@ -33,8 +35,18 @@ struct Session {
     char tok[33];
     uint32_t last;
 } ses[4] = {};
-uint8_t fails = 0;
-uint32_t lockUntil = 0;
+// Wrong PINs are counted per address (#7): five free tries, then a lock of a minute that doubles with each wrong PIN
+// after it, up to 15 minutes, so one device on the Wi-Fi can't keep the owner out. Across all addresses, 50 wrong PINs
+// within an hour lock sign-in for everyone for 15 minutes: someone who keeps changing address still gets no more than
+// about 50 guesses an hour (a million PINs: well over a year). A new PIN on the node clears every lock
+struct Strike {
+    uint8_t ip[16]; // the address (IPv4 as ::ffff:a.b.c.d)
+    uint16_t fails;
+    uint32_t until; // locked until (0: not locked)
+    uint32_t at;    // last wrong PIN
+} strikes[8] = {};
+uint16_t hourFails = 0;
+uint32_t hourFrom = 0, allUntil = 0;
 
 // the sessions survive a restart (a firmware update over Wi-Fi restarts the node: the page shouldn't have to sign
 // in again): their tokens are kept with the PIN they were made under, and only come back for that PIN
@@ -59,17 +71,73 @@ bool taken = false;
 Query pending;
 std::string *reply = nullptr;
 
-// what the page may load and talk to: itself, the map tiles, the terrain service, and a CoreScope live feed
-const char *CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: "
-                  "https://tile.openstreetmap.org; connect-src 'self' wss: ws: https://api.open-meteo.com; frame-ancestors 'none'; "
-                  "base-uri 'none'; form-action 'none'";
+// what the page may load and talk to: itself, the map tiles, the terrain service, and the live feed's server only
+// (setFeed). Kept whole between changes: the server sends the header from this buffer (one server task; setFeed runs
+// on the main loop, so it's written under the lock and copied out per request)
+char csp[420] = "";
+void makeCsp(const char *feedOrigin)
+{
+    snprintf(csp, sizeof(csp),
+             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: "
+             "https://tile.openstreetmap.org; connect-src 'self'%s%s https://api.open-meteo.com; frame-ancestors 'none'; "
+             "base-uri 'none'; form-action 'none'",
+             feedOrigin[0] ? " " : "", feedOrigin);
+}
 
 void headers(httpd_req_t *r)
 {
+    static char c[sizeof(csp)]; // the server's one task: its own copy, alive until the reply is sent
+    xSemaphoreTake(lock, portMAX_DELAY);
+    if (!csp[0])
+        makeCsp("");
+    memcpy(c, csp, sizeof(c));
+    xSemaphoreGive(lock);
     httpd_resp_set_hdr(r, "X-Content-Type-Options", "nosniff");
     httpd_resp_set_hdr(r, "X-Frame-Options", "DENY");
     httpd_resp_set_hdr(r, "Referrer-Policy", "no-referrer");
-    httpd_resp_set_hdr(r, "Content-Security-Policy", CSP);
+    httpd_resp_set_hdr(r, "Content-Security-Policy", c);
+}
+
+// the Host header names this node on the local network (hxparse::localHost): not a website's own name pointed at the
+// node's address (DNS rebinding), which could otherwise try PINs from a visitor's browser
+bool hostOk(httpd_req_t *r)
+{
+    char h[72];
+    const size_t n = httpd_req_get_hdr_value_len(r, "Host");
+    if (!n)
+        return true;
+    if (n >= sizeof(h) || httpd_req_get_hdr_value_str(r, "Host", h, sizeof(h)) != ESP_OK)
+        return false;
+    return hxparse::localHost(h);
+}
+
+// the browser's address, as 16 bytes (IPv4 mapped into IPv6); false if the socket won't say
+bool peerOf(httpd_req_t *r, uint8_t out[16])
+{
+    struct sockaddr_storage a;
+    socklen_t n = sizeof(a);
+    if (getpeername(httpd_req_to_sockfd(r), (struct sockaddr *)&a, &n) != 0)
+        return false;
+    memset(out, 0, 16);
+    if (a.ss_family == AF_INET6) {
+        memcpy(out, &((struct sockaddr_in6 *)&a)->sin6_addr, 16);
+        return true;
+    }
+    if (a.ss_family == AF_INET) {
+        out[10] = out[11] = 0xff;
+        memcpy(out + 12, &((struct sockaddr_in *)&a)->sin_addr, 4);
+        return true;
+    }
+    return false;
+}
+
+// the same whatever the bytes: how much of a session token matched never shows in the time taken
+bool sameBytes(const char *a, const char *b, size_t n)
+{
+    uint8_t d = 0;
+    for (size_t i = 0; i < n; i++)
+        d |= (uint8_t)(a[i] ^ b[i]);
+    return d == 0;
 }
 esp_err_t sendJson(httpd_req_t *r, const char *status, const char *json)
 {
@@ -83,7 +151,7 @@ esp_err_t sendJson(httpd_req_t *r, const char *status, const char *json)
 int sessionOf(httpd_req_t *r)
 {
     char c[640]; // other sites' cookies on the same address come along too: a short buffer read as "signed out"
-    if (httpd_req_get_hdr_value_str(r, "Cookie", c, sizeof(c)) != ESP_OK)
+    if (!hostOk(r) || httpd_req_get_hdr_value_str(r, "Cookie", c, sizeof(c)) != ESP_OK)
         return -1;
     const char *p = strstr(c, "hx=");
     while (p && p != c && p[-1] != ' ' && p[-1] != ';')
@@ -97,7 +165,7 @@ int sessionOf(httpd_req_t *r)
     xSemaphoreTake(lock, portMAX_DELAY);
     const uint32_t now = millis();
     for (int i = 0; i < 4; i++)
-        if (ses[i].tok[0] && !strncmp(ses[i].tok, p, 32)) {
+        if (ses[i].tok[0] && sameBytes(ses[i].tok, p, 32)) {
             if (now - ses[i].last < SESSION_MS) {
                 ses[i].last = now;
                 found = i;
@@ -156,6 +224,8 @@ esp_err_t onFile(httpd_req_t *r)
 esp_err_t onLogin(httpd_req_t *r)
 {
     headers(r);
+    if (!hostOk(r))
+        return sendJson(r, "421 Misdirected Request", "{\"error\":\"Open the page by the node's own address\"}");
     char ct[40], body[80];
     if (httpd_req_get_hdr_value_str(r, "Content-Type", ct, sizeof(ct)) != ESP_OK || strncmp(ct, "application/json", 16))
         return sendJson(r, "415 Unsupported Media Type", "{\"error\":\"Send JSON\"}");
@@ -173,10 +243,23 @@ esp_err_t onLogin(httpd_req_t *r)
             memcpy(given, p, 6), given[6] = 0;
     }
     char resp[96];
+    uint8_t ip[16];
+    if (!peerOf(r, ip))
+        return sendJson(r, "400 Bad Request", "{\"error\":\"Bad request\"}");
     xSemaphoreTake(lock, portMAX_DELAY);
     const uint32_t now = millis();
-    if (lockUntil && (int32_t)(lockUntil - now) > 0) {
-        const unsigned wait = (lockUntil - now + 999) / 1000;
+    Strike *st = nullptr, *spare = &strikes[0];
+    for (auto &k : strikes) {
+        if (k.fails && !memcmp(k.ip, ip, 16))
+            st = &k;
+        if (!k.fails || (spare->fails && now - k.at > now - spare->at)) // an empty entry, else the quietest
+            spare = &k;
+    }
+    uint32_t until = st && st->until && (int32_t)(st->until - now) > 0 ? st->until : 0;
+    if (allUntil && (int32_t)(allUntil - now) > 0 && (!until || (int32_t)(allUntil - until) > 0))
+        until = allUntil;
+    if (until) {
+        const unsigned wait = (until - now + 999) / 1000;
         xSemaphoreGive(lock);
         snprintf(resp, sizeof(resp), "{\"error\":\"Too many wrong PINs.\",\"wait\":%u}", wait);
         return sendJson(r, "429 Too Many Requests", resp);
@@ -185,22 +268,39 @@ esp_err_t onLogin(httpd_req_t *r)
     for (int i = 0; i < 6; i++) // the same time whatever the PIN
         diff |= (uint8_t)(pin[i] ^ given[i]);
     if (diff) {
-        fails++;
-        if (fails >= 5) // a minute, then longer each time, up to 15 minutes
-            lockUntil = now + std::min<uint32_t>(60000u << std::min<int>(fails - 5, 4), 900000u);
+        if (!st) {
+            st = spare;
+            memset(st, 0, sizeof(*st));
+            memcpy(st->ip, ip, 16);
+        }
+        if (st->fails < 0xffff) // never wraps back to free tries
+            st->fails++;
+        st->at = now;
+        if (st->fails >= 5) // a minute, then twice as long each time, up to 15 minutes
+            st->until = now + std::min<uint32_t>(60000u << std::min<int>(st->fails - 5, 4), 900000u);
+        if (now - hourFrom >= 3600000u) {
+            hourFrom = now;
+            hourFails = 0;
+        }
+        if (++hourFails >= 50) {
+            allUntil = now + 900000u;
+            hourFails = 0;
+            hourFrom = now;
+        }
+        const bool all = allUntil && (int32_t)(allUntil - now) > 0;
         xSemaphoreGive(lock);
-        hxlog::line("web page: a sign-in failed");
+        hxlog::line(all ? "web page: many wrong PINs, sign-in locked for 15 minutes" : "web page: a sign-in failed");
         return sendJson(r, "401 Unauthorized", "{\"error\":\"That PIN didn't work.\"}");
     }
-    fails = 0;
-    lockUntil = 0;
+    if (st)
+        memset(st, 0, sizeof(*st)); // this address is in: its count starts over (others' don't)
     int slot = 0;
     for (int i = 0; i < 4; i++) { // a free slot, or the one used longest ago
         if (!ses[i].tok[0]) {
             slot = i;
             break;
         }
-        if (ses[i].last < ses[slot].last)
+        if (now - ses[i].last > now - ses[slot].last) // ages, so the millis() wrap after 49 days can't mislead
             slot = i;
     }
     uint8_t rnd[16];
@@ -339,9 +439,12 @@ esp_err_t onSend(httpd_req_t *r)
         return sendJson(r, "400 Bad Request", "{\"error\":\"Bad request\"}");
     c += 3;
     c += strspn(c, " :");
-    if (*c < '0' || *c > '9') // a number only: anything else must not fall back to channel 0 (Public)
+    char *after = nullptr;
+    const unsigned long ch = (*c >= '0' && *c <= '9') ? strtoul(c, &after, 10) : 256;
+    // a number only, and one that fits: "256" must not wrap round to channel 0 (Public), nor "1x" be read as 1
+    if (ch > 255 || !after || (*after != ',' && *after != '}' && *after != ' '))
         return sendJson(r, "400 Bad Request", "{\"error\":\"Bad channel\"}");
-    q.channel = (uint8_t)atoi(c);
+    q.channel = (uint8_t)ch;
     t += 6;
     t += strspn(t, " :");
     if (*t != '"' || !hxparse::jsonText(t + 1, q.text, sizeof(q.text)) || !q.text[0])
@@ -403,12 +506,14 @@ esp_err_t onTile(httpd_req_t *r)
     if (!png)
         return sendJson(r, "503 Service Unavailable", "{\"error\":\"Out of memory\"}");
     size_t got = 0;
+    int timeouts = 0;
     while (got < r->content_len) {
         const int n = httpd_req_recv(r, (char *)png + got, r->content_len - got);
-        if (n == HTTPD_SOCK_ERR_TIMEOUT)
+        if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < 5) // a browser that stops sending can't hold the server's one task
             continue;
         if (n <= 0)
             break;
+        timeouts = 0;
         got += n;
     }
     hoptics::TileMap::ImportResult res = hoptics::TileMap::BAD;
@@ -693,6 +798,7 @@ esp_err_t onBackup(httpd_req_t *r)
         return sendJson(r, "403 Forbidden", "{\"error\":\"Send it from the Hoptics page\"}");
     Query q;
     q.kind = Query::BACKUP;
+    q.parts = queryOf(r, "keys") ? Query::KEYS : 0; // private channel keys only when the page asks (#5)
     std::string out;
     if (!ask(q, out, 8000))
         return cardBusy(r);
@@ -818,8 +924,9 @@ void setPin(const char *p)
     if (strcmp(pin, p)) {
         strncpy(pin, p, sizeof(pin) - 1);
         memset(ses, 0, sizeof(ses)); // a new PIN signs everyone out
-        fails = 0;
-        lockUntil = 0;
+        memset(strikes, 0, sizeof(strikes)); // and clears every lock: the owner is never kept out for long
+        hourFails = 0;
+        allUntil = 0;
         changed = true;
     }
     xSemaphoreGive(lock);
@@ -845,6 +952,30 @@ void setPin(const char *p)
             ses[i].tok[32] = 0;
             ses[i].last = now; // a fresh 12 hours from the restart
         }
+    xSemaphoreGive(lock);
+}
+
+void setFeed(const char *url)
+{
+    if (!lock) {
+        lock = xSemaphoreCreateMutex();
+        one = xSemaphoreCreateMutex();
+        ready = xSemaphoreCreateBinary();
+    }
+    // the origin the page's own WebSocket goes to (app.js Feed.connect: no scheme means wss, http(s) becomes ws(s)),
+    // and only from plain host characters: a ';' in a typed address must not add to the policy
+    char origin[100] = "", host[64], path[64];
+    bool tls;
+    uint16_t port;
+    if (url && url[0] && hxfeed::splitUrl(url, tls, host, sizeof(host), port, path, sizeof(path)) &&
+        strspn(host, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-") == strlen(host)) {
+        if (port == (tls ? 443 : 80))
+            snprintf(origin, sizeof(origin), "%s://%s", tls ? "wss" : "ws", host);
+        else
+            snprintf(origin, sizeof(origin), "%s://%s:%u", tls ? "wss" : "ws", host, (unsigned)port);
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    makeCsp(origin);
     xSemaphoreGive(lock);
 }
 
@@ -894,6 +1025,7 @@ bool start(uint16_t) { return false; }
 void stop() {}
 bool running() { return false; }
 void setPin(const char *) {}
+void setFeed(const char *) {}
 uint8_t sessions() { return 0; }
 bool take(Query &) { return false; }
 void answer(std::string &&) {}

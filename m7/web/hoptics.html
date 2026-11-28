@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>Hoptics M7</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <style>
 :root{--text:#eef3f8;--dim:#9aa7b4;--faint:rgba(255,255,255,.08);--glass:rgba(16,24,34,.52);--glass2:rgba(24,34,46,.62);--edge:rgba(255,255,255,.12);
 --cyan:#3fd6e0;--green:#46e08a;--violet:#a78bfa;--blue:#5b9dff;--amber:#f4b740;--orange:#f0883e;--red:#ff6b6b;--pink:#f778ba}
@@ -170,7 +170,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 </main>
 </div>
 <div id="modal"><div id="mbox" class="glass"><button class="b" id="mclose">Close</button><div id="mbody2"></div></div></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
@@ -682,7 +682,7 @@ function renderSystem(){const st=S.stats,sf=S.self;if(!st||!sf)return;
 $("upgo").onclick=()=>{const f=$("upfile").files[0];if(!f){$("upmsg").textContent="Choose a file first.";return}
   if(!/\.bin$/i.test(f.name)||f.size<500000||f.size>3300000){$("upmsg").textContent="That doesn't look like a firmware .update.bin file.";return}
   if(/factory/i.test(f.name)){$("upmsg").textContent="Use the .update.bin file, not the factory one.";return}
-  const fd=new FormData();fd.append("firmware",f,f.name);const x=new XMLHttpRequest();x.open("POST","/api/hx/update");
+  const fd=new FormData();fd.append("firmware",f,f.name);const x=new XMLHttpRequest();x.open("POST","/api/hx/update");x.setRequestHeader("X-Hoptics","1");
   $("upgo").disabled=true;$("upmsg").textContent="Uploading...";
   x.upload.onprogress=e=>{if(e.lengthComputable){$("upbar").style.width=(e.loaded/e.total*100)+"%";$("upmsg").textContent="Uploading "+Math.round(e.loaded/e.total*100)+" %"}};
   x.onload=()=>{let j={};try{j=JSON.parse(x.responseText)}catch(e){}

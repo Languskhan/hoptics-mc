@@ -1,5 +1,6 @@
 // Hoptics-MC text helpers (see hx_parse.h). MIT licence.
 #include "hx_parse.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,18 @@ namespace
 int hexDigit(char c)
 {
     return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+// the four hex digits at p as a number, or -1 (stops at a NUL, so never reads past the string)
+long hex4(const char *p)
+{
+    long v = 0;
+    for (int i = 0; i < 4; i++) {
+        const int d = hexDigit(p[i]);
+        if (d < 0)
+            return -1;
+        v = v * 16 + d;
+    }
+    return v;
 }
 } // namespace
 
@@ -169,6 +182,50 @@ double number(const Value &v, double def)
     return *e ? def : d;
 }
 
+long integer(const Value &v, long lo, long hi, long def)
+{
+    const double d = number(v, NAN);
+    if (!(d >= (double)lo && d <= (double)hi)) // NaN, infinity and anything out of range: def (never cast blind)
+        return def;
+    return (long)d;
+}
+
+bool localHost(const char *host)
+{
+    if (!host || !*host)
+        return true; // no Host header: not a browser, so not a page from another site
+    if (*host == '[') // an IPv6 address
+        return true;
+    char h[64];
+    size_t n = strcspn(host, ":"); // the port, if any, goes
+    if (n == 0 || n >= sizeof(h))
+        return false;
+    bool digits = true, dot = false;
+    for (size_t i = 0; i < n; i++) {
+        char c = host[i];
+        if (c >= 'A' && c <= 'Z')
+            c = (char)(c - 'A' + 'a');
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.'))
+            return false;
+        digits = digits && ((c >= '0' && c <= '9') || c == '.');
+        dot = dot || c == '.';
+        h[i] = c;
+    }
+    h[n] = 0;
+    if (n && h[n - 1] == '.') // "name.local." is the same name
+        h[--n] = 0;
+    if (digits || !dot) // an IPv4 address, or a one-word name from the router ("hoptics-1a2b")
+        return true;
+    // names no one can register on the internet, so no other website can point one at the node
+    static const char *const LOCAL[] = {".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain"};
+    for (const char *s : LOCAL) {
+        const size_t sn = strlen(s);
+        if (n > sn && !strcmp(h + n - sn, s))
+            return true;
+    }
+    return false;
+}
+
 bool hex(const Value &v, uint8_t *out, size_t n)
 {
     if (v.kind != 's' || v.n != n * 2)
@@ -192,20 +249,20 @@ bool jsonText(const char *p, char *out, size_t n)
             if (e == 'n' || e == 'r' || e == 't')
                 c = ' ';
             else if (e == 'u') {
-                char h[5] = {};
-                for (int i = 0; i < 4 && *p; i++)
-                    h[i] = *p++;
-                c = strtoul(h, nullptr, 16);
+                long hi = hex4(p); // exactly four hex digits, or it isn't JSON (and the closing quote stays unread)
+                if (hi < 0)
+                    return false;
+                p += 4;
+                c = (uint32_t)hi;
                 if (c >= 0xD800 && c < 0xDC00 && p[0] == '\\' && p[1] == 'u') { // a surrogate pair (emoji)
-                    char l[5] = {};
-                    for (int i = 0; i < 4 && p[2 + i]; i++)
-                        l[i] = p[2 + i];
-                    const uint32_t lo = strtoul(l, nullptr, 16);
+                    const long lo = hex4(p + 2);
                     if (lo >= 0xDC00 && lo < 0xE000) {
-                        c = 0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00);
+                        c = 0x10000 + ((c - 0xD800) << 10) + ((uint32_t)lo - 0xDC00);
                         p += 6;
                     }
                 }
+                if (c >= 0xD800 && c < 0xE000) // half a pair is no character: never written out as broken UTF-8
+                    c = 0xFFFD;
                 if (c < 0x20)
                     c = ' ';
                 char u[4];
