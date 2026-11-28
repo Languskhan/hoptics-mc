@@ -72,7 +72,7 @@ jobs:
           cp $B/partitions.bin $OUT/ 2>/dev/null || true
           (cd $OUT && sha256sum *.bin > SHA256SUMS.txt && cat SHA256SUMS.txt)
           # the dashboard reads this to offer updates and role changes
-          grep -o "HOPTICS_M7_VERSION='\"[0-9.]*\"'" mc/variants/thinknode_m7/platformio.ini | head -1 | grep -o '[0-9][0-9.]*' > $OUT/version.txt || true
+          sed -n "s/.*HOPTICS_M7_VERSION='\"\([0-9.]*\)\"'.*/\1/p" mc/variants/thinknode_m7/platformio.ini | head -1 > $OUT/version.txt
 
       - uses: actions/upload-artifact@v4
         with:
