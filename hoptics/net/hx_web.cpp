@@ -116,16 +116,16 @@ bool peerOf(httpd_req_t *r, uint8_t out[16])
 {
     struct sockaddr_storage a;
     socklen_t n = sizeof(a);
-    if (getpeername(httpd_req_to_sockfd(r), (struct sockaddr *)&a, &n) != 0)
+    if (getpeername(httpd_req_to_sockfd(r), reinterpret_cast<struct sockaddr *>(&a), &n) != 0)
         return false;
     memset(out, 0, 16);
     if (a.ss_family == AF_INET6) {
-        memcpy(out, &((struct sockaddr_in6 *)&a)->sin6_addr, 16);
+        memcpy(out, &reinterpret_cast<const struct sockaddr_in6 *>(&a)->sin6_addr, 16);
         return true;
     }
     if (a.ss_family == AF_INET) {
         out[10] = out[11] = 0xff;
-        memcpy(out + 12, &((struct sockaddr_in *)&a)->sin_addr, 4);
+        memcpy(out + 12, &reinterpret_cast<const struct sockaddr_in *>(&a)->sin_addr, 4);
         return true;
     }
     return false;
