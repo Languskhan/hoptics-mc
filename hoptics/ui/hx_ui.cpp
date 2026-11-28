@@ -1086,6 +1086,10 @@ void App::buildNodes(lv_obj_t *p)
 namespace
 {
 std::vector<std::array<uint8_t, 6>> rowKeys; // node rows -> contact key
+// the node under the finger when a row was pressed: an advert heard before release re-sorts the list and gives
+// the row another node, so the tap opens the one that was pressed, not the one the row shows by then
+std::array<uint8_t, 6> pressedKey;
+bool pressedValid = false;
 }
 
 void App::refreshNodes(void)
@@ -1163,14 +1167,25 @@ void App::refreshNodes(void)
             lv_obj_t *ag = label(r, F12, C_MUTED, "");
             lv_obj_align(ag, LV_ALIGN_RIGHT_MID, -8, 0);
             lv_obj_set_user_data(r, (void *)(intptr_t)i);
-            lv_obj_add_event_cb(
-                r,
-                [](lv_event_t *e) {
-                    size_t i = (size_t)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_current_target(e));
-                    if (i < rowKeys.size())
-                        self->openNode(rowKeys[i].data());
-                },
-                LV_EVENT_CLICKED, nullptr);
+            // pressed: note the node the row shows; clicked (on release): open it
+            static const lv_event_cb_t rowEvent = [](lv_event_t *e) {
+                size_t i = (size_t)(intptr_t)lv_obj_get_user_data((lv_obj_t *)lv_event_get_current_target(e));
+                if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
+                    pressedValid = i < rowKeys.size();
+                    if (pressedValid)
+                        pressedKey = rowKeys[i];
+                    return;
+                }
+                // OK on the keyboard or trackball sends CLICKED with no press first: open what the row shows
+                const bool tap = !self->keyClick && pressedValid;
+                pressedValid = false;
+                if (tap)
+                    self->openNode(pressedKey.data());
+                else if (i < rowKeys.size())
+                    self->openNode(rowKeys[i].data());
+            };
+            lv_obj_add_event_cb(r, rowEvent, LV_EVENT_PRESSED, nullptr);
+            lv_obj_add_event_cb(r, rowEvent, LV_EVENT_CLICKED, nullptr);
             stop(r);
         }
         memcpy(rowKeys[i].data(), n.key, 6);
