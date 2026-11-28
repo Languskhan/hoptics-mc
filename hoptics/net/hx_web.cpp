@@ -3,6 +3,7 @@
 #include "hx_log.h"
 #include "hx_ota.h"
 #include "hx_parse.h"
+#include "hx_tls.h"
 #include "map/hx_tiles.h"
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -24,6 +25,8 @@ namespace hxweb
 namespace
 {
 httpd_handle_t srv = nullptr;
+httpd_handle_t plain = nullptr; // HTTPS: port 80 only sends browsers on to https://
+bool secure = false;
 SemaphoreHandle_t lock = nullptr;  // the PIN, the sessions and the waiting query
 SemaphoreHandle_t one = nullptr;   // one data request at a time
 SemaphoreHandle_t ready = nullptr; // the main loop answered
@@ -208,8 +211,9 @@ esp_err_t onLogin(httpd_req_t *r)
     for (int i = 0; i < 16; i++)
         snprintf(ses[slot].tok + i * 2, 3, "%02x", rnd[i]);
     ses[slot].last = now;
-    char cookie[96];
-    snprintf(cookie, sizeof(cookie), "hx=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200", ses[slot].tok);
+    char cookie[104];
+    snprintf(cookie, sizeof(cookie), "hx=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200%s", ses[slot].tok,
+             secure ? "; Secure" : "");
     xSemaphoreGive(lock);
     keepSessions();
     hxlog::line("web page: a browser signed in");
@@ -227,7 +231,8 @@ esp_err_t onLogout(httpd_req_t *r)
         xSemaphoreGive(lock);
         keepSessions();
     }
-    httpd_resp_set_hdr(r, "Set-Cookie", "hx=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+    httpd_resp_set_hdr(r, "Set-Cookie", secure ? "hx=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Secure"
+                                              : "hx=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
     return sendJson(r, "200 OK", "{\"ok\":true}");
 }
 
@@ -741,9 +746,57 @@ esp_err_t onRestore(httpd_req_t *r)
         return cardBusy(r);
     return sendJson(r, out.find("\"ok\"") == 1 ? "200 OK" : "400 Bad Request", out.c_str());
 }
+// HTTPS: the node's certificate, to trust it once on a phone or computer (no sign-in: it is public)
+esp_err_t onCert(httpd_req_t *r)
+{
+    size_t n;
+    const uint8_t *d = hxtls::certDer(n);
+    if (!d)
+        return httpd_resp_send_404(r);
+    httpd_resp_set_type(r, "application/x-x509-ca-cert");
+    httpd_resp_set_hdr(r, "Content-Disposition", "attachment; filename=\"hoptics.crt\"");
+    return httpd_resp_send(r, (const char *)d, n);
+}
+
+// HTTPS: anything on port 80 goes to the same place on https://
+esp_err_t onPlain(httpd_req_t *r)
+{
+    char host[64] = "", loc[200];
+    if (httpd_req_get_hdr_value_str(r, "Host", host, sizeof(host)) != ESP_OK || strspn(host, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:[]") != strlen(host))
+        return httpd_resp_send_err(r, HTTPD_400_BAD_REQUEST, nullptr);
+    char *colon = strrchr(host, ':');
+    if (colon && !strchr(host, ']'))
+        *colon = 0; // the port
+    const char *u = r->uri[0] == '/' && !strpbrk(r->uri, "\r\n") ? r->uri : "/";
+    snprintf(loc, sizeof(loc), "https://%s%s", host, u);
+    httpd_resp_set_status(r, "301 Moved Permanently");
+    httpd_resp_set_hdr(r, "Location", loc);
+    httpd_resp_set_hdr(r, "Cache-Control", "no-store");
+    return httpd_resp_send(r, nullptr, 0);
+}
+
+bool startPlain()
+{
+    httpd_config_t c = HTTPD_DEFAULT_CONFIG();
+    c.server_port = 80;
+    c.ctrl_port = 32771;
+    c.stack_size = 3072;
+    c.max_open_sockets = 2;
+    c.lru_purge_enable = true;
+    c.max_uri_handlers = 1;
+    c.uri_match_fn = httpd_uri_match_wildcard;
+    c.core_id = tskNO_AFFINITY;
+    if (httpd_start(&plain, &c) != ESP_OK) {
+        plain = nullptr;
+        return false;
+    }
+    const httpd_uri_t any = {"/*", HTTP_GET, onPlain, nullptr};
+    httpd_register_uri_handler(plain, &any);
+    return true;
+}
 } // namespace
 
-bool start(uint16_t port)
+bool start(uint16_t port, const char *tlsHost)
 {
     if (srv)
         return true;
@@ -752,13 +805,20 @@ bool start(uint16_t port)
         one = xSemaphoreCreateMutex();
         ready = xSemaphoreCreateBinary();
     }
+    secure = tlsHost && hxtls::begin(tlsHost);
+    if (tlsHost && !secure) {
+        hxlog::line("web page: no HTTPS, so it stays off");
+        return false;
+    }
     httpd_config_t c = HTTPD_DEFAULT_CONFIG();
-    c.server_port = port;
+    c.server_port = secure ? 443 : port;
+    if (secure) // every new socket does the TLS handshake first (hx_tls)
+        c.open_fn = [](httpd_handle_t h, int fd) -> esp_err_t { return (esp_err_t)hxtls::onOpen(h, fd); };
     c.ctrl_port = 32770;
     c.stack_size = 6144;
     c.max_open_sockets = 7; // a browser opens up to 6 at once; fewer made it drop live requests (page flapping)
     c.lru_purge_enable = true;
-    c.max_uri_handlers = 22;
+    c.max_uri_handlers = 23;
     c.recv_wait_timeout = 10; // an update arrives over a slow link sometimes
     c.max_resp_headers = 12;
     c.core_id = tskNO_AFFINITY;
@@ -790,7 +850,13 @@ bool start(uint16_t port)
                                {"/api/restore", HTTP_POST, onRestore, nullptr}};
     for (const auto &u : api)
         httpd_register_uri_handler(srv, &u);
-    hxlog::line("web page on, port %u", (unsigned)port);
+    if (secure) {
+        const httpd_uri_t cert = {"/hoptics.crt", HTTP_GET, onCert, nullptr};
+        httpd_register_uri_handler(srv, &cert);
+        if (!startPlain())
+            hxlog::line("web page: port 80 didn't start (type https:// yourself)");
+    }
+    hxlog::line("web page on, port %u%s", (unsigned)c.server_port, secure ? ", HTTPS" : "");
     return true;
 }
 
@@ -800,6 +866,10 @@ void stop()
         return;
     httpd_stop(srv);
     srv = nullptr;
+    if (plain) {
+        httpd_stop(plain);
+        plain = nullptr;
+    }
     hxlog::line("web page off");
 }
 
@@ -890,7 +960,7 @@ void answer(std::string &&body)
 
 namespace hxweb
 {
-bool start(uint16_t) { return false; }
+bool start(uint16_t, const char *) { return false; }
 void stop() {}
 bool running() { return false; }
 void setPin(const char *) {}

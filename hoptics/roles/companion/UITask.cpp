@@ -4,6 +4,7 @@
 #include "MyMesh.h"
 #include "hx_feed.h"
 #include "hx_web.h"
+#include "hx_tls.h"
 #include "hx_ota.h"
 #include "hx_parse.h"
 #include "hx_sd.h"
@@ -1923,9 +1924,17 @@ void UITask::webTick(void)
 {
     const bool up = wifiOn && WiFi.status() == WL_CONNECTED;
     if (webOn && up && !hxweb::running()) {
+#if defined(HOPTICS_HTTPS)
+        hxweb::start(80, webHost);
+#else
         hxweb::start(80);
+#endif
         if (!mdnsUp && MDNS.begin(webHost)) { // hoptics-xxxx.local, for phones and computers that look names up that way
+#if defined(HOPTICS_HTTPS)
+            MDNS.addService("https", "tcp", 443);
+#else
             MDNS.addService("http", "tcp", 80);
+#endif
             mdnsUp = true;
         }
     } else if (!webOn && hxweb::running()) {
@@ -1943,7 +1952,7 @@ hx::WebStatus UITask::web() const
     w.on = webOn;
     w.running = hxweb::running() && wifiOn && WiFi.status() == WL_CONNECTED;
     if (w.running)
-        snprintf(w.addr, sizeof(w.addr), "http://%s", WiFi.localIP().toString().c_str());
+        snprintf(w.addr, sizeof(w.addr), "%s://%s", hxtls::ready() ? "https" : "http", WiFi.localIP().toString().c_str());
     snprintf(w.host, sizeof(w.host), "%s.local", webHost);
     memcpy(w.pin, webPin, sizeof(w.pin));
     w.sessions = hxweb::sessions();
@@ -2098,6 +2107,19 @@ void UITask::webExtras(std::string &o, uint32_t histHave) const
              (unsigned)getCpuFrequencyMhz(), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getHeapSize(), (unsigned)ESP.getFreePsram(),
              (unsigned)ESP.getPsramSize(), wifiOn && WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : 0);
     o += b;
+    { // memory low-water marks and the HTTPS sessions, for testing what HTTPS costs
+        const hxtls::Stats t = hxtls::stats();
+        snprintf(b, sizeof(b), ",\"heapMin\":%u,\"heapBig\":%u,\"psramMin\":%u,\"tls\":{\"on\":%s,\"hs\":%u,\"fail\":%u,\"err\":%d,\"lastMs\":%u,\"maxMs\":%u,\"open\":%u}",
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM), hxtls::ready() ? "true" : "false", (unsigned)t.handshakes,
+                 (unsigned)t.failed, t.lastErr, (unsigned)t.lastMs, (unsigned)t.maxMs, (unsigned)t.open);
+        o += b;
+        if (hxtls::ready()) {
+            o += ",\"tlsFp\":\"";
+            o += hxtls::fingerprint();
+            o += "\"";
+        }
+    }
     snprintf(b, sizeof(b), ",\"built\":\"%s %s\",\"slot\":\"%s\",\"trial\":%s,\"update\":\"%s\"", __DATE__, __TIME__,
              hxota::slot(), hxota::trial() ? "true" : "false",
              hxota::waiting() ? "waiting" : hxota::declined() ? "declined" : hxota::failed() ? "failed" : hxota::restartWanted ? "restarting" : "");
