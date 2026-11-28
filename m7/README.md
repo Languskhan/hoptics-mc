@@ -13,6 +13,9 @@ with the Hoptics dashboard at `http://<node-ip>/hoptics`.
 - Discord alerts (optional): quiet repeaters, daily summary, new nodes
 - Chat tab: read and send Public and hashtag channel messages as this node; tap a name or type @ to mention someone (`@[Name]`, like the apps)
 - Direct messages (off until you turn them on): a second chat identity beside the repeater that people add from its advert; DMs with delivery receipts, direct paths and retries, up to 16 saved contacts
+- Overview links to this node on SacMesh CoreScope and the MeshCore map (LetsMesh and MeshMapper open their main pages)
+- Discord alert when the spot changes from one day to the next: more repeaters heard well, a busier channel, or a louder noise floor
+- Hold the button 5 s for the setup hotspot (open Wi-Fi, ends after 10 idle minutes); Ethernet first with Wi-Fi as backup comes from the base firmware
 - Stats feed for Home Assistant / Prometheus (read-only token); automatic rollback after a bad update
 - Web page always on while the network is up; advert at boot
 

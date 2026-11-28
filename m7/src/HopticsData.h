@@ -65,7 +65,8 @@ const char* statsNewToken(bool off);
 void writeMetrics(Print& out);
 
 // Discord alerts (HopticsAlerts.cpp)
-enum : uint8_t { ALERT_SILENT = 1, ALERT_DAILY = 2, ALERT_NEW = 4 };
+enum : uint8_t { ALERT_SILENT = 1, ALERT_DAILY = 2, ALERT_NEW = 4, ALERT_SPOT = 8 };
+void spotCheck();
 void alertsBegin();
 bool alertsWanted(uint8_t kind);
 void alert(uint8_t kind, const char* text);

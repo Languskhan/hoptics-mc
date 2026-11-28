@@ -145,10 +145,10 @@ void alertsBegin() {
   if (p.begin("hxalert", true)) {
     String u = p.getString("url", "");
     if (urlOk(u.c_str())) strlcpy(url, u.c_str(), sizeof(url));
-    flags = p.getUChar("flags", ALERT_SILENT | ALERT_DAILY | ALERT_NEW);
+    flags = p.getUChar("flags", ALERT_SILENT | ALERT_DAILY | ALERT_NEW | ALERT_SPOT);
     p.end();
   } else {
-    flags = ALERT_SILENT | ALERT_DAILY | ALERT_NEW;
+    flags = ALERT_SILENT | ALERT_DAILY | ALERT_NEW | ALERT_SPOT;
   }
   day_start_ms = millis();
   xTaskCreatePinnedToCore(task, "hx_alerts", 12288, nullptr, 1, nullptr, 1);
@@ -183,7 +183,7 @@ bool alertsConfigure(const char* new_url, uint8_t new_flags, char* err, size_t e
   ALock l;
   if (clear) { url[0] = 0; p.remove("url"); q_count = 0; }
   else if (new_url[0]) { strlcpy(url, new_url, sizeof(url)); p.putString("url", url); }
-  flags = new_flags & (ALERT_SILENT | ALERT_DAILY | ALERT_NEW);
+  flags = new_flags & (ALERT_SILENT | ALERT_DAILY | ALERT_NEW | ALERT_SPOT);
   p.putUChar("flags", flags);
   p.end();
   return true;

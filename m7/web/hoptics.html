@@ -37,8 +37,8 @@ tbody tr.click{cursor:pointer}tbody tr.click:hover{background:rgba(255,255,255,.
 .msg{border-radius:12px;padding:10px 14px;margin:8px 0;background:rgba(244,183,64,.12);border:1px solid rgba(244,183,64,.3)}
 .msg.bad{background:rgba(255,107,107,.12);border-color:rgba(255,107,107,.35)}.msg.info{background:rgba(91,157,255,.12);border-color:rgba(91,157,255,.3)}
 .msg.ok{background:rgba(70,224,138,.1);border-color:rgba(70,224,138,.3)}.msg b{display:block}.msg .why{color:#c9d3dc;font-size:13px;margin-top:3px}
-button.b,select,input{background:rgba(255,255,255,.08);color:var(--text);border:1px solid var(--edge);border-radius:10px;padding:7px 12px;font:inherit}
-button.b{cursor:pointer;font-weight:550}button.b:hover{background:rgba(255,255,255,.14)}button.p{background:linear-gradient(180deg,#4fe0ea,#25b6c4);color:#02161a;border:0}
+button.b,a.b,select,input{background:rgba(255,255,255,.08);color:var(--text);border:1px solid var(--edge);border-radius:10px;padding:7px 12px;font:inherit}
+button.b{cursor:pointer;font-weight:550}a.b{display:inline-block;text-decoration:none;font-weight:550}a.b:hover{background:rgba(255,255,255,.14)}button.b:hover{background:rgba(255,255,255,.14)}button.p{background:linear-gradient(180deg,#4fe0ea,#25b6c4);color:#02161a;border:0}
 select option{background:#0e1620}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .chart{position:relative}.chart canvas{width:100%;height:240px;display:block;cursor:crosshair}
@@ -99,6 +99,7 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
   </div>
   <div class="grid" id="tiles"></div>
   <div class="card glass"><h3>Mesh check for this spot</h3><div id="warns"><span class="dim">Collecting data...</span></div></div>
+  <div class="card glass"><h3>This node elsewhere</h3><div class="row" id="links"><span class="dim">Loading…</span></div></div>
 </section>
 <section id="t-graphs">
   <div class="row glass" style="padding:10px 14px;border-radius:14px"><span class="dim">Range</span>
@@ -571,7 +572,11 @@ function tile(k,v,s,col){return`<div class="tile glass"><div class="k">${k}</div
 function ring(cv,v){const dpr=Math.min(devicePixelRatio||1,3),w=cv.clientWidth,h=cv.clientHeight;if(w<20||h<20)return;cv.width=w*dpr;cv.height=h*dpr;const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);
   const r=Math.min(w,h)/2-8;c.lineWidth=10;c.lineCap="round";c.strokeStyle="rgba(255,255,255,.08)";c.beginPath();c.arc(w/2,h/2,r,0,6.283);c.stroke();
   if(v!=null){const g=c.createLinearGradient(0,0,w,h);g.addColorStop(0,scoreCol(v));g.addColorStop(1,"#3fd6e0");c.strokeStyle=g;c.beginPath();c.arc(w/2,h/2,r,-1.571,-1.571+6.283*v/100);c.stroke()}}
-function renderOverview(){
+function renderLinks(){const el=$("links");if(!S.self||!/^[0-9a-f]{64}$/.test(S.self.id||"")||el.dataset.k===S.self.id)return;el.dataset.k=S.self.id;const k=S.self.id;
+  const L=[["SacMesh CoreScope","https://scope.sacmesh.org/#/nodes/"+k],["CoreScope analytics","https://scope.sacmesh.org/#/nodes/"+k+"/analytics"],["MeshCore map","https://map.meshcore.io/?public_key="+k],
+    ["LetsMesh analyzer","https://analyzer.letsmesh.net/"],["MeshMapper","https://meshmapper.net/"]];
+  el.innerHTML=L.map(x=>`<a class="b" href="${esc(x[1])}" target="_blank" rel="noopener noreferrer">${esc(x[0])} ↗</a>`).join("")+'<span class="dim" style="font-size:12px">LetsMesh and MeshMapper open their main page; search for this node there.</span>'}
+function renderOverview(){safe(renderLinks);
   const st=S.stats,sf=S.self;if(!st)return;
   $("name").textContent=sf&&sf.name?sf.name:"Hoptics M7";
   $("hsub").textContent=(sf?"Hoptics M7 v"+sf.version+" · ":"")+"up "+dur(st.uptime_s);
@@ -860,7 +865,7 @@ function renderRole(){const now=roleNow();
 async function renderAlerts(){let a;try{a=await api("/api/hx?k=alerts")}catch(e){return}
   const f=a.flags||0,cb=(bit,label)=>`<label style="display:block;margin:4px 0"><input type="checkbox" data-bit="${bit}" ${f&bit?"checked":""}> ${label}</label>`;
   $("alertcard").innerHTML=`<p class="dim">${a.set?`On: sending to the webhook ending in <code>…${esc(a.hint)}</code>. Sent today: ${a.today}${a.queued?`, ${a.queued} waiting`:""}.`:"Off. Add a Discord webhook link to turn alerts on (Discord: channel settings, Integrations, Webhooks, New Webhook, Copy Webhook URL)."}${a.err?` <span style="color:var(--red)">Last error: ${esc(a.err)}</span>`:""}</p>
-  ${cb(1,"A repeater this node hears directly goes quiet for 6 hours, and when it comes back")}${cb(2,"Daily summary: packets, airtime, noise, nodes heard, MQTT")}${cb(4,"A new node shows up that isn't on the SacMesh map yet")}
+  ${cb(1,"A repeater this node hears directly goes quiet for 6 hours, and when it comes back")}${cb(2,"Daily summary: packets, airtime, noise, nodes heard, MQTT")}${cb(4,"A new node shows up that isn't on the SacMesh map yet")}${cb(8,"This spot changes: more repeaters heard well, a busier channel, or a louder noise floor than yesterday")}
   <div class="row" style="margin-top:8px"><input id="aurl" type="password" autocomplete="off" placeholder="${a.set?"New webhook link (leave empty to keep)":"https://discord.com/api/webhooks/..."}" style="flex:1;min-width:240px">
   <button class="b p" id="asave">Save</button>${a.set?'<button class="b" id="atest">Send test</button><button class="b" id="aoff">Remove link</button>':""}</div>
   <p class="dim" style="font-size:12px">At most one message a minute and 40 a day. Node names are sent as plain text and can't ping anyone.</p><div id="amsg" class="dim"></div>`;

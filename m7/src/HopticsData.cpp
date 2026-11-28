@@ -308,6 +308,7 @@ void addSample(const Sample& s) {
     if (sample_count < kSamples) sample_count++;
   }
   saveSample(saved);  // flash write outside the lock, so the web server is never held up by it
+  spotCheck();
   static uint32_t n_since = 0;
   if (++n_since >= 288 && alertsWanted(ALERT_DAILY)) {  // every 24 h of samples
     n_since = 0;
@@ -332,6 +333,50 @@ void addSample(const Sample& s) {
              (unsigned long)(b.mqtt_ok - a.mqtt_ok), (unsigned long)(b.mqtt_err - a.mqtt_err));
     alert(ALERT_DAILY, msg);
   }
+}
+
+namespace {
+// averages over 288 samples (a day) ending `back` samples ago; false if that stretch has a restart in it
+bool dayStats(int back, float& air_pct, float& noise, float& nbrs) {
+  if (sample_count < back + 289) return false;
+  const Sample& e = samples[(sample_head - 1 - back + 2 * kSamples) % kSamples];
+  const Sample& b = samples[(sample_head - 1 - back - 288 + 2 * kSamples) % kSamples];
+  if (e.up <= b.up) return false;
+  long n_sum = 0, k_sum = 0;
+  for (int i = 0; i < 288; i++) {
+    const Sample& x = samples[(sample_head - 1 - back - i + 2 * kSamples) % kSamples];
+    if (i && x.up >= samples[(sample_head - back - i + 2 * kSamples) % kSamples].up) return false;
+    n_sum += x.noise;
+    k_sum += x.nbr_strong;
+  }
+  air_pct = ((e.tx_ms - b.tx_ms) + (e.rx_ms - b.rx_ms)) / ((e.up - b.up) * 10.0f);
+  noise = n_sum / 288.0f;
+  nbrs = k_sum / 288.0f;
+  return true;
+}
+}  // namespace
+
+// Once a day: has this spot changed since yesterday? More repeaters heard well, a busier channel, or a louder
+// noise floor all change what the advisor would suggest, so the owner hears about it.
+void spotCheck() {
+  static uint32_t n_since = 0;
+  if (++n_since < 288 || !alertsWanted(ALERT_SPOT)) return;
+  n_since = 0;
+  float a1, n1, k1, a0, n0, k0;
+  {
+    Lock l;
+    if (!dayStats(0, a1, n1, k1) || !dayStats(288, a0, n0, k0)) return;
+  }
+  char msg[400];
+  int len = snprintf(msg, sizeof(msg), "This spot changed since yesterday");
+  const int start = len;
+  if (k1 - k0 >= 2.0f)
+    len += snprintf(msg + len, sizeof(msg) - len, "\nRepeaters heard well: %.0f, was %.0f. Check the Advisor for timing.", k1, k0);
+  if (a1 >= 10.0f && a1 >= a0 * 1.5f)
+    len += snprintf(msg + len, sizeof(msg) - len, "\nAirtime %.1f %%, was %.1f %%. The channel is getting busier.", a1, a0);
+  if (n1 - n0 >= 6.0f)
+    len += snprintf(msg + len, sizeof(msg) - len, "\nNoise floor %.0f dBm, was %.0f dBm. Something nearby got louder.", n1, n0);
+  if (len > start) alert(ALERT_SPOT, msg);
 }
 
 void setNeighbours(const Neighbour* n, int count) {
