@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hoptics M7</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--text:#e6edf3;--dim:#8b949e;--acc:#3fb6c6;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--info:#58a6ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:17px;margin:0}header .sub{color:var(--dim);font-size:12px}.sp{flex:1}
+nav{display:flex;gap:2px;padding:0 10px;border-bottom:1px solid var(--line);overflow-x:auto}
+nav button{background:none;border:0;color:var(--dim);padding:10px 12px;cursor:pointer;font:inherit;border-bottom:2px solid transparent;white-space:nowrap}
+nav button.on{color:var(--text);border-color:var(--acc)}
+main{padding:14px 16px;max-width:1300px;margin:0 auto}section{display:none}section.on{display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:14px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.tile .k{color:var(--dim);font-size:12px}.tile .v{font-size:22px;font-variant-numeric:tabular-nums;margin-top:2px}.tile .s{color:var(--dim);font-size:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
+.card h3{margin:0 0 8px;font-size:14px}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--dim);font-weight:500;font-size:12px;position:sticky;top:0;background:var(--panel)}
+.scroll{max-height:520px;overflow:auto}
+.warn{border-left:4px solid var(--warn);padding:8px 10px;margin:8px 0;background:#1d1a12;border-radius:4px}
+.warn.bad{border-color:var(--bad);background:#211314}.warn.info{border-color:var(--info);background:#111a26}.warn.ok{border-color:var(--ok);background:#0f1d14}
+.warn b{display:block}.warn .why{color:var(--dim);font-size:12px;margin-top:3px}
+button.b,select,input{background:#21262d;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+button.b{cursor:pointer}button.b:hover{border-color:var(--acc)}button.p{background:var(--acc);color:#001;border-color:var(--acc)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+canvas{width:100%;height:220px;display:block}
+#map{height:560px;border-radius:8px;border:1px solid var(--line)}
+.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;background:#21262d}
+.pill.ok{background:#12361d;color:#7ee2a8}.pill.bad{background:#3a1416;color:#ff9a94}.pill.mid{background:#33290f;color:#f1c75b}
+pre{background:#0a0d12;border:1px solid var(--line);border-radius:6px;padding:10px;max-height:420px;overflow:auto;white-space:pre-wrap;margin:0}
+#login{max-width:340px;margin:12vh auto;text-align:center}#login input{width:100%;margin:12px 0}
+.dim{color:var(--dim)}a{color:var(--acc)}
+.bar{height:8px;background:#21262d;border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc)}
+</style>
+</head>
+<body>
+<div id="login" hidden>
+  <h2>Hoptics M7</h2>
+  <p class="dim">Enter this node's admin password.</p>
+  <input id="pw" type="password" autocomplete="current-password">
+  <button class="b p" id="go">Sign in</button>
+  <p id="lmsg" class="dim"></p>
+</div>
+<div id="app" hidden>
+<header>
+  <h1 id="name">Hoptics M7</h1><span class="sub" id="hsub"></span><span class="sp"></span>
+  <span class="sub" id="hnet"></span><a class="sub" href="/">Settings</a>
+</header>
+<nav id="tabs"></nav>
+<main>
+<section id="t-overview">
+  <div class="grid" id="tiles"></div>
+  <div class="card"><h3>Mesh check for this spot</h3><div id="warns"><span class="dim">Collecting data...</span></div></div>
+</section>
+<section id="t-graphs">
+  <div class="row"><span class="dim">Range</span>
+    <select id="range"><option value="3600">1 hour</option><option value="86400" selected>24 hours</option><option value="604800">7 days</option><option value="2592000">30 days</option></select>
+    <span class="dim" id="gnote"></span></div>
+  <div class="card"><h3>Noise floor (dBm)</h3><canvas id="g-noise"></canvas></div>
+  <div class="card"><h3>Airtime used (%): transmit and receive</h3><canvas id="g-air"></canvas></div>
+  <div class="card"><h3>Packets per 5 minutes: flood and direct received, sent</h3><canvas id="g-pk"></canvas></div>
+</section>
+<section id="t-map">
+  <div class="row"><span class="dim" id="mapnote"></span></div>
+  <div id="map"></div>
+</section>
+<section id="t-nbrs">
+  <div class="row"><button class="b" id="scan">Scan now</button><span class="dim" id="scanmsg">Repeaters this node hears directly (zero hop).</span></div>
+  <div class="card scroll"><table><thead><tr><th>Name</th><th>ID</th><th>SNR (dB)</th><th>Signal</th><th>Last heard</th></tr></thead><tbody id="nbody"></tbody></table></div>
+  <div class="card"><h3>All nodes heard (adverts)</h3><div class="scroll"><table><thead><tr><th>Name</th><th>Type</th><th>ID</th><th>Hops</th><th>SNR (dB)</th><th>Location</th><th>Seen</th></tr></thead><tbody id="allbody"></tbody></table></div></div>
+</section>
+<section id="t-packets">
+  <div class="row">
+    <select id="pf"><option value="">All types</option></select>
+    <label><input type="checkbox" id="prx" checked> Received</label><label><input type="checkbox" id="ptx" checked> Sent</label>
+    <button class="b" id="ppause">Pause</button><button class="b" id="pcsv">Download CSV</button>
+    <span class="dim" id="pnote"></span>
+  </div>
+  <div class="card scroll"><table><thead><tr><th>Time</th><th>Dir</th><th>Type</th><th>Route</th><th>Hops</th><th>Path</th><th>From</th><th>SNR</th><th>RSSI</th><th>Len</th><th>Heard</th></tr></thead><tbody id="pbody"></tbody></table></div>
+</section>
+<section id="t-mqtt">
+  <div class="card"><h3>Servers this node uploads to</h3><table><thead><tr><th>Slot</th><th>Server</th><th>State</th><th>Sent</th><th>Errors</th></tr></thead><tbody id="mbody"></tbody></table>
+  <p class="dim">Add or change servers on the <a href="/">Settings</a> page (up to 6).</p></div>
+  <div class="card"><h3>See your data</h3><div id="links"></div></div>
+</section>
+<section id="t-advisor">
+  <div class="card"><h3>Settings advisor</h3><div id="adv"><span class="dim">Loading...</span></div></div>
+</section>
+<section id="t-console">
+  <div class="row"><input id="cmd" style="flex:1" placeholder="Command, e.g. get txdelay"><button class="b p" id="run">Run</button></div>
+  <pre id="cout"></pre>
+</section>
+</main>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const TYPES=["Request","Response","Message","Ack","Advert","Channel msg","Channel data","Anon request","Path","Trace","Multipart","Control","","","","Custom"];
+const ADV=["?","Companion","Repeater","Room","Sensor"];
+const ROUTE=["Flood+","Flood","Direct","Direct+"];
+const S={stats:null,self:null,nodes:[],nbrs:[],hist:[],pk:[],seq:0,upAt:0,paused:false,repeat:null,cfg:{}};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function ago(sec){if(sec==null||sec<0)return"-";if(sec<60)return Math.round(sec)+" s";if(sec<3600)return Math.round(sec/60)+" min";if(sec<86400)return(sec/3600).toFixed(1)+" h";return(sec/86400).toFixed(1)+" d"}
+function dur(s){const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return(d?d+"d ":"")+h+"h "+m+"m"}
+async function api(path,opt){const r=await fetch(path,opt);if(r.status===401){showLogin();throw new Error("auth")}if(!r.ok)throw new Error(path+" "+r.status);return r.json()}
+
+// ---------------------------------------------------------------- login
+function showLogin(){$("app").hidden=true;$("login").hidden=false;$("pw").focus()}
+async function login(){
+  $("lmsg").textContent="Signing in...";
+  const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:$("pw").value})});
+  if(r.ok){$("pw").value="";$("login").hidden=true;$("app").hidden=false;$("lmsg").textContent="";start()}
+  else{const j=await r.json().catch(()=>({}));$("lmsg").textContent=j.error||("Sign in failed ("+r.status+")")}
+}
+$("go").onclick=login;$("pw").onkeydown=e=>{if(e.key==="Enter")login()};
+
+// ---------------------------------------------------------------- CLI (one batch at a time)
+let cliChain=Promise.resolve();
+function cli(cmds){
+  const run=async()=>{
+    const reqid=[...crypto.getRandomValues(new Uint8Array(8))].map(b=>b.toString(16).padStart(2,"0")).join("");
+    await api("/api/cli",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reqid,cmds})});
+    const out=[];
+    for(let i=0;i<120;i++){
+      await sleep(350);
+      const r=await api("/api/cli/result?reqid="+reqid+"&from="+out.length);
+      if(r.state==="idle")break;
+      if(r.results)out.push(...r.results.map(x=>x.reply));
+      if(r.state==="done")break;
+    }
+    return out;
+  };
+  const p=cliChain.then(run,run);cliChain=p.catch(()=>{});return p;
+}
+const val=r=>String(r||"").replace(/^\s*>\s*/,"").trim();
+
+// ---------------------------------------------------------------- tabs
+const TABS=[["overview","Overview"],["graphs","Graphs"],["map","Live map"],["nbrs","Neighbours"],["packets","Packets"],["mqtt","MQTT"],["advisor","Advisor"],["console","Console"]];
+let tab="overview";
+TABS.forEach(([id,label])=>{const b=document.createElement("button");b.textContent=label;b.onclick=()=>setTab(id);b.id="b-"+id;$("tabs").appendChild(b)});
+function setTab(id){if(!TABS.some(t=>t[0]===id))id="overview";tab=id;TABS.forEach(([t])=>{$("t-"+t).classList.toggle("on",t===id);$("b-"+t).classList.toggle("on",t===id)});
+  if(id==="map")initMap();if(id==="graphs")drawGraphs();if(id==="advisor")loadAdvisor();location.hash=id}
+TYPES.forEach((t,i)=>{if(t){const o=document.createElement("option");o.value=i;o.textContent=t;$("pf").appendChild(o)}});
+
+// ---------------------------------------------------------------- data
+function nodeById(id){return S.nodes.find(n=>n.id===id)}
+function nodeByPrefix(hex2){return S.nodes.filter(n=>n.id.startsWith(hex2)).sort((a,b)=>b.seen-a.seen)[0]}
+function nowEpoch(){return Math.floor(Date.now()/1000)}
+async function pollStats(){try{const j=await api("/api/stats");if(j.uptime_s!==undefined)S.stats=j}catch(e){}}
+async function pollSelf(){try{S.self=await api("/api/hx?k=self")}catch(e){}}
+async function pollNodes(){try{const j=await api("/api/hx?k=nodes");S.nodes=j.nodes;S.nbrs=j.nbrs}catch(e){}}
+async function pollHist(){try{const j=await api("/api/hx?k=history");S.hist=j.s}catch(e){}}
+async function pollPk(){
+  if(S.paused)return;
+  try{const j=await api("/api/hx?k=packets&since="+S.seq);
+    if(j.seq<S.seq)S.pk=[];                                   // node restarted
+    S.seq=j.seq;S.upAt=Date.now()/1000-j.now;
+    for(const p of j.p)S.pk.push(p);
+    if(S.pk.length>2000)S.pk.splice(0,S.pk.length-2000);
+    if(j.p.length&&mapReady)addMapLines(j.p);
+  }catch(e){}
+}
+
+// ---------------------------------------------------------------- derived numbers
+function histWindow(sec){const t0=nowEpoch()-sec;return S.hist.filter(s=>s[0]>=t0)}
+function deltas(rows){ // per-interval values between consecutive samples (skips restarts)
+  const out=[];
+  for(let i=1;i<rows.length;i++){const a=rows[i-1],b=rows[i];const dt=b[1]-a[1];if(dt<=0||dt>3600)continue;
+    out.push({t:b[0],noise:b[2],tx:(b[3]-a[3])/(dt*10),rx:(b[4]-a[4])/(dt*10),rf:b[7]-a[7],rd:b[8]-a[8],sent:b[6]-a[6]})}
+  return out}
+function airtimeLastHour(){const d=deltas(histWindow(3900));if(!d.length)return null;return d.reduce((s,x)=>s+x.tx+x.rx,0)/d.length}
+function dupStats(){const rx=S.pk.filter(p=>!p[2]&&(p[4]===0||p[4]===1));if(rx.length<20)return null;
+  const seen=new Map();rx.forEach(p=>seen.set(p[10],(seen.get(p[10])||0)+1));
+  const uniq=seen.size;return{per:rx.length/uniq,uniq,total:rx.length}}
+function strongNbrs(){const now=nowEpoch();return S.nbrs.filter(n=>n.snr>=0&&(now-n.heard)<86400)}
+function km(a,b,c,d){const R=6371,r=x=>x*Math.PI/180;const h=Math.sin(r(c-a)/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(r(d-b)/2)**2;return 2*R*Math.asin(Math.sqrt(h))}
+function hasLoc(){return S.self&&(S.self.lat||S.self.lon)}
+function histHours(){if(S.hist.length<2)return 0;return(S.hist[S.hist.length-1][1]-S.hist[0][1])/3600}
+
+// recommended timing for the number of repeaters heard well (SNR >= 0)
+function recTiming(n){if(n<=3)return{tx:1.1,dtx:0.5,rx:n>=2?3:0,tier:"1-3"};if(n<=8)return{tx:1.4,dtx:0.6,rx:3,tier:"4-8"};
+  if(n<=12)return{tx:2.0,dtx:0.75,rx:3,tier:"9-12"};return{tx:2.2,dtx:0.75,rx:3,tier:"13+"}}
+
+// ---------------------------------------------------------------- overview
+function tile(k,v,s){return`<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s||""}</div></div>`}
+function renderOverview(){
+  const st=S.stats,sf=S.self;if(!st)return;
+  $("name").textContent=sf?sf.name||"Hoptics M7":"Hoptics M7";
+  $("hsub").textContent=(sf?"v"+sf.version+" · ":"")+"up "+dur(st.uptime_s);
+  $("hnet").textContent=(st.network_medium||"")+(st.ip?" "+st.ip:"");
+  const air=airtimeLastHour(),dup=dupStats(),nb=strongNbrs().length;
+  const okSlots=(st.slots||[]).filter(s=>/ok|connected/i.test(s.state)).length;
+  $("tiles").innerHTML=
+    tile("Noise floor",st.noise+" dBm",st.noise<=-110?"quiet":st.noise<=-100?"some noise":"noisy")+
+    tile("Airtime, last hour",air==null?"-":air.toFixed(1)+" %","transmit + receive")+
+    tile("Packets heard",st.recv,"since start ("+st.recv_flood+" flood, "+st.recv_direct+" direct)")+
+    tile("Packets sent",st.sent,st.sent_flood+" flood, "+st.sent_direct+" direct")+
+    tile("Repeaters heard well",nb,"SNR 0 dB or better, last 24 h")+
+    tile("Copies per flood",dup?dup.per.toFixed(1):"-",dup?"over "+dup.uniq+" floods":"need more packets")+
+    tile("MQTT servers",okSlots+" / "+(st.slots||[]).length,"connected")+
+    tile("Last packet",st.rssi+" dBm",st.snr.toFixed(1)+" dB SNR");
+  renderWarnings();
+}
+function renderWarnings(){
+  const W=[],st=S.stats,nb=strongNbrs(),air=airtimeLastHour(),dup=dupStats(),hrs=histHours();
+  const rep=S.repeat;
+  if(!hasLoc())W.push(["info","Set this node's location","The map and the distance checks need it. In Console: set lat &lt;your latitude&gt; and set lon &lt;your longitude&gt;, or use Settings."]);
+  if(rep===true&&nb.length>=3)W.push(["warn","This spot may add little coverage",`It hears ${nb.length} repeaters with strong signal (SNR 0 dB or better). Each repeater in range resends every flood, so another one here mostly adds airtime and collisions. Consider observer only (Console: set repeat off), or keep repeating with a longer txdelay (see Advisor).`]);
+  if(rep===false&&S.nbrs.length<=1)W.push(["warn","You may be the only link here",`Repeat is off, and this node hears ${S.nbrs.length} other repeater${S.nbrs.length===1?"":"s"}. If no other repeater covers this area, turning repeat on helps nearby users.`]);
+  if(hasLoc()&&rep!==false){const self=S.self;const close=S.nodes.filter(n=>n.type===2&&n.lat!=null&&km(self.lat,self.lon,n.lat,n.lon)<1&&n.id.slice(0,8)!==self.id.slice(0,8));
+    if(close.length)W.push(["warn","Another repeater is very close",close.map(n=>esc(n.name||n.id)+" ("+km(self.lat,self.lon,n.lat,n.lon).toFixed(2)+" km)").join(", ")+". Repeaters this close cover nearly the same area; one of them could switch to observer only."])}
+  if(air!=null&&air>25)W.push(["bad","Busy channel",`Airtime used in the last hour is ${air.toFixed(1)} %. Above about 25 % messages start colliding. Raise txdelay and rxdelay (Advisor), and consider repeat off if other repeaters cover this spot.`]);
+  if(dup&&dup.per>=4)W.push(["warn","Many copies of each flood",`Each flood packet is heard ${dup.per.toFixed(1)} times on average. That means several repeaters around you resend the same packets.`]);
+  if(S.self){const me=S.self.id.slice(0,2);const same=S.nbrs.filter(n=>n.id.slice(0,2)===me);
+    if(same.length)W.push(["warn","Same short ID as a neighbour",`Neighbour ${esc((nodeById(same[0].id)||{}).name||same[0].id)} also starts with ${me.toUpperCase()}. Paths and traces will be ambiguous. Only change the key before the node is in use.`])}
+  if(S.hist.length&&S.hist[S.hist.length-1][0]<1700000000)W.push(["warn","Clock not set","The node has no network time yet, so timestamps are wrong."]);
+  if(hrs<24)W.push(["info","Still learning this spot",`${hrs.toFixed(1)} of 24 hours collected. The Advisor gives timing suggestions after 24 hours.`]);
+  if(!W.length)W.push(["ok","Looks good","Nothing in the last 24 hours suggests a change for this spot."]);
+  $("warns").innerHTML=W.map(([c,t,w])=>`<div class="warn ${c==="warn"?"":c}"><b>${t}</b><div class="why">${w}</div></div>`).join("");
+}
+
+// ---------------------------------------------------------------- graphs
+function chart(cv,series,opt){
+  const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;cv.width=w*dpr;cv.height=h*dpr;
+  const c=cv.getContext("2d");c.scale(dpr,dpr);c.clearRect(0,0,w,h);
+  const pts=series.flatMap(s=>s.d);if(!pts.length){c.fillStyle="#8b949e";c.fillText("No data yet: a point is added every 5 minutes.",10,20);return}
+  const x0=Math.min(...pts.map(p=>p[0])),x1=Math.max(...pts.map(p=>p[0]))||x0+1;
+  let y0=opt.min!=null?opt.min:Math.min(...pts.map(p=>p[1])),y1=Math.max(...pts.map(p=>p[1]));if(y1===y0)y1=y0+1;
+  const L=44,R=10,T=10,B=22,X=v=>L+(v-x0)/(x1-x0||1)*(w-L-R),Y=v=>h-B-(v-y0)/(y1-y0)*(h-T-B);
+  c.strokeStyle="#30363d";c.fillStyle="#8b949e";c.font="11px system-ui";c.lineWidth=1;
+  for(let i=0;i<=4;i++){const v=y0+(y1-y0)*i/4,y=Y(v);c.beginPath();c.moveTo(L,y);c.lineTo(w-R,y);c.stroke();c.fillText(v.toFixed(Math.abs(y1-y0)<10?1:0),4,y+4)}
+  const span=x1-x0;for(let i=0;i<=4;i++){const t=x0+span*i/4,d=new Date(t*1000);c.fillText(span>172800?d.toLocaleDateString([],{month:"numeric",day:"numeric"}):d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),X(t)-16,h-6)}
+  series.forEach(s=>{c.strokeStyle=s.c;c.lineWidth=1.6;c.beginPath();s.d.forEach((p,i)=>{i?c.lineTo(X(p[0]),Y(p[1])):c.moveTo(X(p[0]),Y(p[1]))});c.stroke()});
+  let lx=L+6;series.forEach(s=>{c.fillStyle=s.c;c.fillRect(lx,T,10,3);c.fillStyle="#e6edf3";c.fillText(s.n,lx+14,T+5);lx+=c.measureText(s.n).width+34});
+}
+function drawGraphs(){
+  if(tab!=="graphs")return;
+  const rows=histWindow(+$("range").value),d=deltas(rows);
+  $("gnote").textContent=rows.length+" samples, "+histHours().toFixed(1)+" h of history in memory (up to 30 days)";
+  chart($("g-noise"),[{n:"noise floor",c:"#3fb6c6",d:rows.map(r=>[r[0],r[2]])}],{});
+  chart($("g-air"),[{n:"transmit %",c:"#f0883e",d:d.map(x=>[x.t,x.tx])},{n:"receive %",c:"#58a6ff",d:d.map(x=>[x.t,x.rx])}],{min:0});
+  chart($("g-pk"),[{n:"flood rx",c:"#a371f7",d:d.map(x=>[x.t,x.rf])},{n:"direct rx",c:"#3fb950",d:d.map(x=>[x.t,x.rd])},{n:"sent",c:"#f0883e",d:d.map(x=>[x.t,x.sent])}],{min:0});
+}
+$("range").onchange=drawGraphs;addEventListener("resize",drawGraphs);
+
+// ---------------------------------------------------------------- map
+let map,mapReady=false,selfMk,nodeLayer,lineLayer;
+function initMap(){
+  if(mapReady||!window.L){if(!window.L)$("mapnote").textContent="The map needs an internet connection on this computer.";return}
+  map=L.map("map");L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:"© OpenStreetMap"}).addTo(map);
+  nodeLayer=L.layerGroup().addTo(map);lineLayer=L.layerGroup().addTo(map);mapReady=true;renderMapNodes(true);
+}
+function renderMapNodes(fit){
+  if(!mapReady)return;nodeLayer.clearLayers();const pts=[];
+  S.nodes.filter(n=>n.lat!=null).forEach(n=>{const col=n.type===2?"#3fb6c6":n.type===3?"#a371f7":"#8b949e";
+    L.circleMarker([n.lat,n.lon],{radius:n.type===2?6:4,color:col,fillOpacity:.8}).bindTooltip(`${esc(n.name||n.id)}<br>${ADV[n.type]||""} · ${n.hops} hops · ${n.snr} dB`).addTo(nodeLayer);pts.push([n.lat,n.lon])});
+  if(hasLoc()){L.circleMarker([S.self.lat,S.self.lon],{radius:9,color:"#f0883e",fillOpacity:1}).bindTooltip("This node").addTo(nodeLayer);pts.push([S.self.lat,S.self.lon])}
+  $("mapnote").textContent=(hasLoc()?"":"Set this node's location to draw packet lines. ")+pts.length+" nodes with a location. Lines show packets arriving, from the repeater that handed them over.";
+  if(fit&&pts.length)map.fitBounds(pts,{padding:[30,30],maxZoom:12});else if(fit)map.setView([20,0],2);
+}
+function addMapLines(list){
+  if(!hasLoc())return;const me=[S.self.lat,S.self.lon];
+  list.forEach(p=>{if(p[2])return;let from=null;
+    if(p[5]>0){const last=p[11].slice(-2);from=nodeByPrefix(last)}else if(p[7]){from=nodeByPrefix(p[7].toString(16).padStart(2,"0"))}
+    if(!from||from.lat==null)return;
+    const ln=L.polyline([[from.lat,from.lon],me],{color:p[4]>=2?"#3fb950":"#a371f7",weight:2,opacity:.9}).addTo(lineLayer);
+    let o=.9;const t=setInterval(()=>{o-=.05;if(o<=0){clearInterval(t);lineLayer.removeLayer(ln)}else ln.setStyle({opacity:o})},2000)});
+}
+
+// ---------------------------------------------------------------- neighbours and nodes
+function sigPill(snr){return snr>=5?'<span class="pill ok">strong</span>':snr>=0?'<span class="pill mid">good</span>':'<span class="pill bad">weak</span>'}
+function renderNbrs(){
+  const now=nowEpoch();
+  $("nbody").innerHTML=S.nbrs.slice().sort((a,b)=>b.snr-a.snr).map(n=>{const nd=nodeById(n.id)||{};
+    return`<tr><td>${esc(nd.name||"(unknown)")}</td><td>${n.id.slice(0,2).toUpperCase()} <span class="dim">${n.id}</span></td><td>${n.snr.toFixed(1)}</td><td>${sigPill(n.snr)}</td><td>${ago(now-n.heard)} ago</td></tr>`}).join("")||'<tr><td colspan="5" class="dim">No neighbours heard yet. Press Scan now, or wait for adverts.</td></tr>';
+  $("allbody").innerHTML=S.nodes.slice().sort((a,b)=>b.seen-a.seen).map(n=>`<tr><td>${esc(n.name||"-")}</td><td>${ADV[n.type]||n.type}</td><td>${n.id.slice(0,2).toUpperCase()}</td><td>${n.hops}</td><td>${n.snr}</td><td>${n.lat!=null?n.lat.toFixed(3)+", "+n.lon.toFixed(3):"-"}</td><td>${ago(now-n.seen)} ago</td></tr>`).join("")||'<tr><td colspan="7" class="dim">No adverts heard yet.</td></tr>';
+}
+$("scan").onclick=async()=>{$("scanmsg").textContent="Scanning (takes about 30 seconds)...";
+  try{const r=await cli(["discover.neighbors"]);$("scanmsg").textContent=val(r[0])||"Scan sent.";setTimeout(pollNodes,30000)}catch(e){$("scanmsg").textContent="Scan failed: "+e.message}};
+
+// ---------------------------------------------------------------- packets
+function pkRows(){const f=$("pf").value,rx=$("prx").checked,tx=$("ptx").checked;
+  return S.pk.filter(p=>(f===""||p[3]===+f)&&(p[2]?tx:rx))}
+function renderPk(){
+  const rows=pkRows(),cnt=new Map();S.pk.forEach(p=>{if(!p[2])cnt.set(p[10],(cnt.get(p[10])||0)+1)});
+  $("pnote").textContent=rows.length+" shown, last "+S.pk.length+" kept";
+  $("pbody").innerHTML=rows.slice(-300).reverse().map(p=>{const t=new Date((S.upAt+p[1])*1000).toLocaleTimeString();
+    const from=p[7]?(nodeByPrefix(p[7].toString(16).padStart(2,"0"))||{}).name||p[7].toString(16).padStart(2,"0").toUpperCase():"";
+    const path=(p[11].match(/../g)||[]).map(x=>x.toUpperCase()).join(" ");
+    return`<tr><td>${t}</td><td>${p[2]?'<span class="pill mid">TX</span>':'<span class="pill">RX</span>'}</td><td>${TYPES[p[3]]||p[3]}</td><td>${ROUTE[p[4]]}</td><td>${p[5]}</td><td>${path}</td><td>${esc(from)}</td><td>${p[2]?"":(p[8]/4).toFixed(1)}</td><td>${p[2]?"":p[9]}</td><td>${p[6]}</td><td>${p[2]?"":cnt.get(p[10])+"x"}</td></tr>`}).join("");
+}
+["pf","prx","ptx"].forEach(id=>$(id).onchange=renderPk);
+$("ppause").onclick=()=>{S.paused=!S.paused;$("ppause").textContent=S.paused?"Resume":"Pause"};
+$("pcsv").onclick=()=>{const head="time,dir,type,route,hops,path,from,snr,rssi,len,hash\n";
+  const body=pkRows().map(p=>[new Date((S.upAt+p[1])*1000).toISOString(),p[2]?"TX":"RX",TYPES[p[3]]||p[3],ROUTE[p[4]],p[5],p[11],p[7]?p[7].toString(16):"",p[2]?"":p[8]/4,p[2]?"":p[9],p[6],p[10]].join(",")).join("\n");
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([head+body],{type:"text/csv"}));a.download="hoptics-m7-packets.csv";a.click()};
+
+// ---------------------------------------------------------------- MQTT
+function renderMqtt(){const st=S.stats;if(!st)return;
+  $("mbody").innerHTML=(st.slots||[]).map(s=>`<tr><td>${s.n}</td><td>${esc(s.name)}</td><td><span class="pill ${/ok|connected/i.test(s.state)?"ok":"bad"}">${esc(s.state)}</span></td><td>${s.ok}</td><td>${s.err}</td></tr>`).join("")||'<tr><td colspan="5" class="dim">No servers set up.</td></tr>';
+  const id=S.self?S.self.id:"";
+  $("links").innerHTML=[["SacMesh CoreScope","https://scope.sacmesh.org/"],["LetsMesh analyzer","https://analyzer.letsmesh.net/"],["MeshMapper","https://meshmapper.net/"]].map(([n,u])=>`<a href="${u}" target="_blank" rel="noopener">${n}</a>`).join(" · ")+(id?`<p class="dim">This node's public key: <code>${id}</code></p>`:"");
+}
+
+// ---------------------------------------------------------------- advisor
+async function loadAdvisor(){
+  $("adv").innerHTML='<span class="dim">Reading current settings...</span>';
+  let r;try{r=await cli(["get txdelay","get direct.txdelay","get rxdelay","get af","get flood.max","get repeat"])}catch(e){$("adv").textContent="Could not read settings: "+e.message;return}
+  const cur={tx:parseFloat(val(r[0])),dtx:parseFloat(val(r[1])),rx:parseFloat(val(r[2])),af:parseFloat(val(r[3])),fmax:parseInt(val(r[4])),rep:/on/i.test(val(r[5]))};
+  S.repeat=cur.rep;S.cfg=cur;
+  const nb=strongNbrs().length,rec=recTiming(nb),hrs=histHours(),ready=hrs>=24,air=airtimeLastHour();
+  const rows=[["txdelay","Flood retransmit delay",cur.tx,rec.tx,`Spreads repeats of flood packets so neighbours don't collide. For ${rec.tier} strong neighbours the range is about ${rec.tx}.`],
+    ["direct.txdelay","Direct retransmit delay",cur.dtx,rec.dtx,"Same idea for direct (routed) messages; kept lower so DMs stay fast."],
+    ["rxdelay","Signal-based delay",cur.rx,rec.rx,"Lets strong copies win: weak copies wait and are dropped as duplicates. Helps once several repeaters are heard."]];
+  let h=`<p>${ready?"Based on the last 24 hours at this spot:":`<b>Learning:</b> ${hrs.toFixed(1)} of 24 hours collected. Suggestions are shown now but get more reliable after 24 hours.`}</p>
+  <div class="bar"><i style="width:${Math.min(100,hrs/24*100)}%"></i></div>
+  <p class="dim">Repeaters heard with SNR 0 dB or better: <b>${nb}</b>. Airtime last hour: <b>${air==null?"-":air.toFixed(1)+" %"}</b>. Repeat: <b>${cur.rep?"on":"off"}</b>.</p>
+  <table><thead><tr><th>Setting</th><th>Now</th><th>Suggested</th><th></th><th>Why</th></tr></thead><tbody>`;
+  rows.forEach(([k,label,now,want,why])=>{const same=Math.abs(now-want)<0.05;
+    h+=`<tr><td><b>${label}</b><br><span class="dim">${k}</span></td><td>${isNaN(now)?"?":now}</td><td>${want}</td><td>${same?'<span class="pill ok">good</span>':`<button class="b" data-set="${k} ${want}">Apply</button>`}</td><td style="white-space:normal">${why}</td></tr>`});
+  h+=`</tbody></table><p class="dim">Airtime factor (af) is ${isNaN(cur.af)?"?":cur.af} and flood.max is ${isNaN(cur.fmax)?"?":cur.fmax}. ${air!=null&&air>25?"The channel is busy: keep af at 1 or higher so this node holds back.":"These are fine at the current traffic."}</p>
+  <p class="dim">Timing ranges by neighbour count come from the Gulf Coast MeshCore guide; rxdelay from the MichMesh repeater guide. Changes apply at once and can be undone the same way.</p>`;
+  $("adv").innerHTML=h;
+  $("adv").querySelectorAll("[data-set]").forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent="Applying...";
+    const r=await cli(["set "+b.dataset.set]);b.textContent=val(r[0]).slice(0,30)||"Done";setTimeout(loadAdvisor,1500)});
+}
+
+// ---------------------------------------------------------------- console
+async function runCmd(){const c=$("cmd").value.trim();if(!c)return;$("cmd").value="";$("cout").textContent+="> "+c+"\n";
+  try{const r=await cli([c]);$("cout").textContent+=(r[0]||"(no reply)")+"\n"}catch(e){$("cout").textContent+="Error: "+e.message+"\n"}
+  $("cout").scrollTop=1e9}
+$("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
+
+// ---------------------------------------------------------------- loop
+let started=false;
+async function start(){
+  if(started)return;started=true;
+  await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);
+  cli(["get repeat"]).then(r=>{S.repeat=/on/i.test(val(r[0]))}).catch(()=>{});
+  const tick=()=>{renderOverview();if(tab==="nbrs")renderNbrs();if(tab==="packets")renderPk();if(tab==="mqtt")renderMqtt()};
+  tick();setTab((location.hash||"#overview").slice(1).replace(/[^a-z]/g,"")||"overview");
+  setInterval(async()=>{await pollStats();tick()},3000);
+  setInterval(pollPk,2000);
+  setInterval(async()=>{await pollNodes();await pollSelf();if(mapReady)renderMapNodes(false)},15000);
+  setInterval(async()=>{await pollHist();drawGraphs()},300000);
+}
+(async()=>{try{await api("/api/hx?k=self");$("app").hidden=false;start()}catch(e){if(e.message!=="auth")showLogin()}})();
+</script>
+</body>
+</html>

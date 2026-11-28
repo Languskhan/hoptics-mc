@@ -18,6 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         env:
+          - Hoptics_M7_repeater_observer
           - ThinkNode_M7_repeater_observer_mqtt
           - ThinkNode_M7_room_server_observer_mqtt
           - ThinkNode_M7_repeater
@@ -40,14 +41,16 @@ jobs:
           git remote add origin https://github.com/agessaman/MeshCore.git
           git fetch -q --depth 1 origin "$PIN"
           git checkout -q FETCH_HEAD
-          for p in ../m7/patches/*.patch; do [ -e "$p" ] && git apply --whitespace=nowarn "$p"; done; true
+          for p in ../m7/patches/*.patch; do git apply --whitespace=nowarn "$p"; done
+          cp ../m7/src/* src/helpers/esp32/
+          python ../m7/tools/make_page.py ../m7/web/hoptics.html src/helpers/esp32/HopticsPage.h
 
       - uses: actions/cache@v4
         with:
           path: |
             ~/.platformio
             ~/.cache/pip
-          key: pio-m7-${{ matrix.env }}-${{ hashFiles('m7/OBSERVER_PIN') }}
+          key: pio-m7-${{ matrix.env }}-${{ hashFiles('m7/OBSERVER_PIN', 'm7/patches/*') }}
           restore-keys: pio-m7-${{ matrix.env }}-
 
       - name: Build

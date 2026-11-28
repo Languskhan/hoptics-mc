@@ -1,0 +1,218 @@
+diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
+index 1324da0..3fe4d73 100644
+--- a/examples/simple_repeater/MyMesh.cpp
++++ b/examples/simple_repeater/MyMesh.cpp
+@@ -1,4 +1,7 @@
+ #include "MyMesh.h"
++#ifdef HOPTICS_M7
++#include <helpers/esp32/HopticsData.h>
++#endif
+ #include <algorithm>
+ #include <climits>
+ #include <stdlib.h>  // for qsort()
+@@ -586,6 +589,9 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+ }
+ 
+ void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
++#ifdef HOPTICS_M7
++  hx::onPacket(false, pkt, len, pkt->getSNR(), _radio->getLastRSSI());
++#endif
+ #ifdef DISPLAY_ACTIVITY_DASHBOARD
+   // Valid parsed RF packet: the only event the dashboard's window counts.
+   _activity.recordPacket(millis(), (uint16_t)len, _radio->getEstAirtimeFor(len),
+@@ -621,6 +627,9 @@ void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
+ }
+ 
+ void MyMesh::logTx(mesh::Packet *pkt, int len) {
++#ifdef HOPTICS_M7
++  hx::onPacket(true, pkt, len, 0, 0);
++#endif
+ #if defined(WITH_MQTT_NEIGHBORS)
+   if (neighbor_discover_active && pkt == neighbor_discover_request
+       && neighbor_discover_next < neighbor_discover_count) {
+@@ -822,6 +831,15 @@ static bool isShare(const mesh::Packet *packet) {
+ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32_t timestamp,
+                           const uint8_t *app_data, size_t app_data_len) {
+   mesh::Mesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len); // chain to super impl
++#ifdef HOPTICS_M7
++  {
++    AdvertDataParser hp(app_data, app_data_len);
++    if (hp.isValid()) {
++      hx::onAdvert(id.pub_key, hp.getType(), hp.hasName() ? hp.getName() : "", hp.hasLatLon(), hp.getIntLat(),
++                   hp.getIntLon(), packet->getSNR(), packet->getPathHashCount(), getRTCClock()->getCurrentTime());
++    }
++  }
++#endif
+ 
+   // if this a zero hop advert (and not via 'Share'), add it to neighbours
+   if (packet->getPathHashCount() == 0 && !isShare(packet)) {
+@@ -1870,6 +1888,10 @@ void MyMesh::loop() {
+   }
+ #endif
+ 
++#ifdef HOPTICS_M7
++  hopticsTick();
++#endif
++
+ #ifdef WITH_WEBCONFIG
+   if (_webconfig) {
+     _webconfig->tick(millis());
+@@ -2459,3 +2481,62 @@ bool MyMesh::hasPendingWork() const {
+ #endif
+   return _mgr->getOutboundCount(0xFFFFFFFF) > 0;
+ }
++
++#ifdef HOPTICS_M7
++// Hoptics dashboard data: neighbours every 15 s, a sample every 5 minutes, and the web page kept running whenever
++// the network is up (it is the node's main screen).
++void MyMesh::hopticsTick() {
++  static uint32_t next_nbr = 0, next_sample = 0, next_web = 0;
++  static bool started = false;
++  uint32_t now = millis();
++  if (!started) {
++    hx::begin();
++    started = true;
++    next_sample = now + 300000UL;
++  }
++  if ((int32_t)(now - next_nbr) >= 0) {
++    next_nbr = now + 15000UL;
++    hx::setSelf(self_id.pub_key, _prefs.node_name, _prefs.node_lat, _prefs.node_lon);
++#if MAX_NEIGHBOURS
++    hx::Neighbour list[MAX_NEIGHBOURS];
++    int n = 0;
++    for (int i = 0; i < MAX_NEIGHBOURS; i++) {
++      if (neighbours[i].heard_timestamp == 0) continue;
++      memcpy(list[n].pub, neighbours[i].id.pub_key, 4);
++      list[n].snr4 = neighbours[i].snr;
++      list[n].heard = neighbours[i].heard_timestamp;
++      list[n].advert = neighbours[i].advert_timestamp;
++      n++;
++    }
++    hx::setNeighbours(list, n);
++#endif
++  }
++  if ((int32_t)(now - next_sample) >= 0) {
++    next_sample += 300000UL;
++    hx::Sample s;
++    s.t = getRTCClock()->getCurrentTime();
++    s.up = uptime_millis / 1000;
++    s.noise = (int16_t)_radio->getNoiseFloor();
++    s.tx_ms = getTotalAirTime();
++    s.rx_ms = getReceiveAirTime();
++    s.recv = radio_driver.getPacketsRecv();
++    s.sent = radio_driver.getPacketsSent();
++    s.recv_flood = getNumRecvFlood();
++    s.recv_direct = getNumRecvDirect();
++    s.sent_flood = getNumSentFlood();
++    s.sent_direct = getNumSentDirect();
++    s.rx_err = radio_driver.getPacketsRecvErrors();
++    hx::addSample(s);
++  }
++#ifdef WITH_WEBCONFIG
++  if ((int32_t)(now - next_web) >= 0) {
++    next_web = now + 10000UL;
++    if (!_webconfig && activeNetworkLink().isConnected()) {
++      char reply[160];
++      startWebConfig(false, reply);
++      Serial.printf("Hoptics: %s\n", reply);
++    }
++  }
++#endif
++}
++#endif
+diff --git a/examples/simple_repeater/MyMesh.h b/examples/simple_repeater/MyMesh.h
+index 782a2f4..d225588 100644
+--- a/examples/simple_repeater/MyMesh.h
++++ b/examples/simple_repeater/MyMesh.h
+@@ -260,6 +260,9 @@ protected:
+   void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override;
+ 
+   void logRx(mesh::Packet* pkt, int len, float score) override;
++#ifdef HOPTICS_M7
++  void hopticsTick();
++#endif
+   void logTx(mesh::Packet* pkt, int len) override;
+   void logTxFail(mesh::Packet* pkt, int len) override;
+   int calcRxDelay(float score, uint32_t air_time) const override;
+diff --git a/src/helpers/esp32/WebConfigServer.cpp b/src/helpers/esp32/WebConfigServer.cpp
+index 167e5cd..dafc5c2 100644
+--- a/src/helpers/esp32/WebConfigServer.cpp
++++ b/src/helpers/esp32/WebConfigServer.cpp
+@@ -735,6 +735,10 @@ void WebConfigServer::registerRoutes() {
+   _server->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleScan); });
+   _server->on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleReboot); });
+   _server->on("/api/portal/exit", HTTP_POST, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handlePortalExit); });
++#ifdef HOPTICS_M7
++  _server->on("/hoptics", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxPage); });
++  _server->on("/api/hx", HTTP_GET, [](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleHxData); });
++#endif
+   _server->onNotFound([](AsyncWebServerRequest* r) { dispatchRequest(r, &WebConfigServer::handleNotFound); });
+ }
+ 
+@@ -1631,3 +1635,29 @@ void WebConfigServer::handleNotFound(AsyncWebServerRequest* req) {
+ }
+ 
+ #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
++
++#ifdef HOPTICS_M7
++#include "HopticsData.h"
++#include "HopticsPage.h"  // HX_PAGE_GZ / HX_PAGE_GZ_LEN: the dashboard, gzipped at build time
++
++void WebConfigServer::handleHxPage(AsyncWebServerRequest* req) {
++  if (_mode == MODE_OFF) { req->send(503); return; }
++  AsyncWebServerResponse* res = req->beginResponse(200, "text/html", HX_PAGE_GZ, HX_PAGE_GZ_LEN);
++  res->addHeader("Content-Encoding", "gzip");
++  res->addHeader("Cache-Control", "no-cache");
++  req->send(res);
++}
++
++// /api/hx?k=packets&since=N | history&from=T | nodes | self
++void WebConfigServer::handleHxData(AsyncWebServerRequest* req) {
++  if (_mode == MODE_OFF) { req->send(503); return; }
++  if (!checkAuth(req)) { req->send(401, "application/json", "{\"error\":\"auth\"}"); return; }
++  String k = req->hasParam("k") ? req->getParam("k")->value() : String("self");
++  AsyncResponseStream* res = req->beginResponseStream("application/json");
++  if (k == "packets") hx::writePackets(*res, req->hasParam("since") ? strtoul(req->getParam("since")->value().c_str(), NULL, 10) : 0);
++  else if (k == "history") hx::writeHistory(*res, req->hasParam("from") ? strtoul(req->getParam("from")->value().c_str(), NULL, 10) : 0);
++  else if (k == "nodes") hx::writeNodes(*res);
++  else hx::writeSelf(*res);
++  req->send(res);
++}
++#endif
+diff --git a/src/helpers/esp32/WebConfigServer.h b/src/helpers/esp32/WebConfigServer.h
+index bdd3e27..3e97918 100644
+--- a/src/helpers/esp32/WebConfigServer.h
++++ b/src/helpers/esp32/WebConfigServer.h
+@@ -236,6 +236,10 @@ private:
+   void handleReboot(AsyncWebServerRequest* req);
+   void handlePortalExit(AsyncWebServerRequest* req);
+   void handleNotFound(AsyncWebServerRequest* req);
++#ifdef HOPTICS_M7
++  void handleHxPage(AsyncWebServerRequest* req);
++  void handleHxData(AsyncWebServerRequest* req);
++#endif
+ };
+ 
+ #endif  // ESP_PLATFORM && WITH_MQTT_BRIDGE
+diff --git a/variants/thinknode_m7/platformio.ini b/variants/thinknode_m7/platformio.ini
+index 4bd316b..e2043af 100644
+--- a/variants/thinknode_m7/platformio.ini
++++ b/variants/thinknode_m7/platformio.ini
+@@ -290,3 +290,17 @@ lib_deps =
+   JChristensen/Timezone
+   paulstoffregen/Time@1.6.1
+   0neblock/SNMP_Agent
++
++; ---------------------------------------------------------------- Hoptics M7 (observer + repeater, dashboard)
++[env:Hoptics_M7_repeater_observer]
++extends = env:ThinkNode_M7_repeater_observer_mqtt
++build_flags =
++  ${env:ThinkNode_M7_repeater_observer_mqtt.build_flags}
++  -D HOPTICS_M7
++  -D HOPTICS_M7_VERSION='"0.1.0"'
++  -D ENABLE_ADVERT_ON_BOOT=1
++  -UADVERT_NAME
++  -D ADVERT_NAME='"Hoptics M7"'
++build_src_filter =
++  ${env:ThinkNode_M7_repeater_observer_mqtt.build_src_filter}
++  +<helpers/esp32/HopticsData.cpp>
