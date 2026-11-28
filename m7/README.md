@@ -11,7 +11,8 @@ with the Hoptics dashboard at `http://<node-ip>/hoptics`.
 - 30 days of 5-minute history, kept on flash so it survives restarts and updates
 - Role switching (observer, repeater, room server, companion, KISS) and one-click updates
 - Discord alerts (optional): quiet repeaters, daily summary, new nodes
-- Chat tab: read and send Public and hashtag channel messages as this node
+- Chat tab: read and send Public and hashtag channel messages as this node; tap a name or type @ to mention someone (`@[Name]`, like the apps)
+- Direct messages (off until you turn them on): a second chat identity beside the repeater that people add from its advert; DMs with delivery receipts, direct paths and retries, up to 16 saved contacts
 - Stats feed for Home Assistant / Prometheus (read-only token); automatic rollback after a bad update
 - Web page always on while the network is up; advert at boot
 

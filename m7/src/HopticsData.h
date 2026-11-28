@@ -4,6 +4,8 @@
 #include <Arduino.h>
 #include <Packet.h>
 
+namespace mesh { class Mesh; }
+
 namespace hx {
 
 struct Sample {         // one 5-minute sample; counters are totals since boot (the page takes differences)
@@ -71,5 +73,19 @@ void alertName(char* dst, size_t n, const char* name);  // a node name made safe
 bool alertsConfigure(const char* url, uint8_t flags, char* err, size_t err_len);
 void alertsTest();
 void writeAlerts(Print& out);
+
+// Direct messages from the dashboard (HopticsDm.cpp): a second, chat identity beside the repeater. Off until the
+// owner turns it on. The mesh loop sends; the web server only queues and reads.
+constexpr int kDmMax = 150;
+const uint8_t* selfPub();
+void dmBegin();
+void dmTick(mesh::Mesh& m);
+void dmOnRx(const mesh::Packet* p);
+void dmOnAdvert(const uint8_t* pub, uint8_t type, const char* name, uint32_t now);
+bool dmQueue(const uint8_t pub[32], const char* text);
+bool dmAdvert();
+bool dmEnable(bool enable, const char* name);
+bool dmSaveContact(const uint8_t pub[32], const char* name, bool keep);
+void writeDm(Print& out, uint32_t since);
 
 }  // namespace hx

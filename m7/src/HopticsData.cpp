@@ -132,8 +132,11 @@ void saveSample(const Sample& s) {
 
 }  // namespace
 
+const uint8_t* selfPub() { return self_pub; }
+
 void begin() {
   if (mu) return;
+  dmBegin();
   mu = xSemaphoreCreateMutex();
   pkts = (Pkt*)ps(sizeof(Pkt) * kPkts);
   raws = (uint8_t*)ps(kPkts * kRaw);
@@ -217,6 +220,7 @@ void setSelf(const uint8_t* pub, const char* name, double lat, double lon) {
 }
 
 void onPacket(bool tx, const mesh::Packet* p, int len, float snr, float rssi, float score, uint32_t air_ms) {
+  if (!tx) dmOnRx(p);   // a DM for the chat identity (one compare for anything else)
   if (!mu || !pkts || !raws) return;
   uint8_t h[MAX_HASH_SIZE];
   p->calculatePacketHash(h);
@@ -258,6 +262,7 @@ void onPacket(bool tx, const mesh::Packet* p, int len, float snr, float rssi, fl
 
 void onAdvert(const uint8_t* pub, uint8_t type, const char* name, bool has_loc, int32_t lat, int32_t lon,
               float snr, uint8_t hops, uint32_t now) {
+  dmOnAdvert(pub, type, name, now);
   if (!mu || !nodes) return;
   Lock l;
   int slot = -1, oldest = 0;

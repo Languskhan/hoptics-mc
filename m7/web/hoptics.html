@@ -28,7 +28,7 @@ main{padding:0 12px 30px;max-width:1400px;margin:0 auto}section{display:none;ani
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:12px}
 .tile{padding:14px 16px;cursor:default}.tile .k{color:var(--dim);font-size:12px;font-weight:550;text-transform:uppercase;letter-spacing:.5px}
 .tile .v{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:4px}.tile .s{color:var(--dim);font-size:12px}
-.card{padding:16px 18px;margin-bottom:12px}.card h3{margin:0 0 10px;font-size:15px;font-weight:620}
+[hidden]{display:none!important}.card{padding:16px 18px;margin-bottom:12px}.card h3{margin:0 0 10px;font-size:15px;font-weight:620}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:900px){.two{grid-template-columns:1fr}}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--faint);white-space:nowrap}
 th{color:var(--dim);font-weight:550;font-size:12px;position:sticky;top:0;background:rgba(14,21,30,.9);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
@@ -135,8 +135,25 @@ details{margin-top:6px}summary{cursor:pointer;color:var(--cyan);font-size:13px}
 <section id="t-chat">
   <div class="card glass"><div class="row"><select id="chsel"></select><span class="dim">Channels you can read: Public, plus hashtags added in Insights.</span></div>
     <div id="chatlog" class="scroll" style="height:460px;display:flex;flex-direction:column;gap:6px;padding:4px"></div>
-    <div class="row" style="margin-top:10px"><input id="chatin" maxlength="140" placeholder="Message as this node" style="flex:1"><button class="b p" id="chatsend">Send</button></div>
+    <div id="chatat" class="glass" hidden style="margin-top:8px;padding:6px;border-radius:12px;display:flex;flex-wrap:wrap;gap:6px"></div>
+    <div class="row" style="margin-top:10px"><input id="chatin" maxlength="140" placeholder="Message as this node. Type @ to mention someone" style="flex:1"><button class="b p" id="chatsend">Send</button></div>
     <p class="dim" style="font-size:12px" id="chatnote">Messages go out under this node's name. Each one is a flood that every repeater resends, so keep it to what's needed.</p></div>
+  <div class="card glass"><h3>Direct messages</h3>
+    <div id="dmoff"><p class="dim" style="margin-top:0">Gives this node a second identity, a chat contact like a phone running MeshCore. People add it from its advert and message it; you read and reply here. The repeater keeps working exactly as before. Off by default.</p>
+      <div class="row"><input id="dmnm" maxlength="31" placeholder="Chat name, e.g. Bluffs M7 chat" style="flex:1"><button class="b p" id="dmon1">Turn on</button></div></div>
+    <div id="dmon" hidden>
+      <div class="row"><span>Chat contact <b id="dmname"></b></span><code id="dmpub" class="dim" style="font-size:12px"></code><span class="sp"></span>
+        <button class="b" id="dmcopy">Copy key</button><button class="b" id="dmadv">Send advert</button><button class="b" id="dmoff1">Turn off</button></div>
+      <div class="row" style="align-items:stretch;margin-top:10px;flex-wrap:nowrap">
+        <div id="dmlist" class="scroll" style="width:240px;min-width:200px;height:420px;display:flex;flex-direction:column;gap:4px;padding:4px"></div>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+          <div class="row" id="dmhead" style="min-height:34px"></div>
+          <div id="dmlog" class="scroll" style="flex:1;height:330px;display:flex;flex-direction:column;gap:6px;padding:4px"></div>
+          <div class="row" style="margin-top:8px"><input id="dmin" maxlength="150" placeholder="Pick a contact" style="flex:1" disabled><button class="b p" id="dmsend" disabled>Send</button></div></div></div>
+      <details style="margin-top:10px"><summary class="dim">Add a contact by public key</summary>
+        <div class="row" style="margin-top:8px"><input id="dmapub" maxlength="64" placeholder="64-character public key" style="flex:2"><input id="dmanm" maxlength="31" placeholder="Name" style="flex:1"><button class="b" id="dmadd">Save</button></div></details>
+    </div>
+    <p class="dim" style="font-size:12px" id="dmnote">Contacts appear when their adverts are heard. A message goes direct once a path is known, otherwise by flood, and is retried twice. Saved contacts (16 at most) stay after a restart.</p></div>
 </section>
 <section id="t-insights">
   <div class="two">
@@ -651,8 +668,8 @@ function renderChat(){const sel=$("chsel"),names=chanKeys().map(c=>c.name);
   if(sel.options.length!==names.length){const cur=sel.value;sel.innerHTML=names.map(n=>`<option>${esc(n)}</option>`).join("");if(names.includes(cur))sel.value=cur}
   const ch=sel.value,me=S.self?S.self.name:"",msgs=[...S.chat.values()].filter(m=>m.ch===ch).sort((a,b)=>a.t-b.t).slice(-300);
   const log=$("chatlog"),atEnd=log.scrollTop+log.clientHeight>=log.scrollHeight-20;
-  log.innerHTML=msgs.map(m=>{const mine=m.tx||m.from===me;return`<div style="align-self:${mine?"flex-end":"flex-start"};max-width:75%;padding:8px 12px;border-radius:14px;background:${mine?"rgba(63,214,224,.18)":"rgba(255,255,255,.07)"};border:1px solid var(--faint)">
-    <div style="font-size:12px;color:var(--dim)"><b style="color:var(--text)">${esc(m.from||"?")}</b> · ${new Date(m.t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}${m.tx?" · sent":` · ${m.hops} hop${m.hops===1?"":"s"}, ${m.snr!=null?m.snr.toFixed(1)+" dB":""}${m.copies>1?`, heard ${m.copies}×`:""}`}</div>
+  log.innerHTML=msgs.map(m=>{const mine=m.tx||m.from===me;return`<div style="align-self:${mine?"flex-end":"flex-start"};max-width:75%;padding:8px 12px;border-radius:14px;background:${mine?"rgba(63,214,224,.18)":"rgba(255,255,255,.07)"};border:1px solid ${!mine&&me&&m.text.includes("@["+me+"]")?"#f4b740":"var(--faint)"}">
+    <div style="font-size:12px;color:var(--dim)"><b data-at="${esc(m.from||"")}" title="Reply to ${esc(m.from||"")}" style="color:var(--text);cursor:pointer">${esc(m.from||"?")}</b> · ${new Date(m.t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}${m.tx?" · sent":` · ${m.hops} hop${m.hops===1?"":"s"}, ${m.snr!=null?m.snr.toFixed(1)+" dB":""}${m.copies>1?`, heard ${m.copies}×`:""}`}</div>
     <div style="white-space:pre-wrap;word-break:break-word">${esc(m.text)}</div></div>`}).join("")||'<p class="dim">No messages heard on this channel yet.</p>';
   if(atEnd)log.scrollTop=1e9}
 $("chsel").onchange=()=>{renderChat();$("chatlog").scrollTop=1e9};
@@ -661,7 +678,60 @@ async function sendChat(){const t=$("chatin").value.trim();if(!t)return;const c=
   $("chatsend").disabled=true;try{const r=await fetch("/api/hx/chat",{method:"POST",body:new URLSearchParams({key:hex(c.key),text:t})});const j=await r.json().catch(()=>({}));
     if(r.ok){$("chatin").value="";$("chatnote").textContent="Sent to "+c.name+".";setTimeout(async()=>{await pollChat();renderChat()},1500)}else $("chatnote").textContent="Not sent: "+(j.error||r.status)}
   finally{setTimeout(()=>$("chatsend").disabled=false,5000)}}
-$("chatsend").onclick=sendChat;$("chatin").onkeydown=e=>{if(e.key==="Enter")sendChat()};
+$("chatsend").onclick=sendChat;$("chatin").onkeydown=e=>{if(e.key==="Enter"){$("chatat").hidden=true;sendChat()}else if(e.key==="Escape")$("chatat").hidden=true};
+// @mentions, written the way the MeshCore apps do: @[Name]
+function chatPeople(){const ch=$("chsel").value,me=S.self?S.self.name:"",cut=Date.now()/1000-86400,seen=new Map();
+  for(const m of S.chat.values())if(m.ch===ch&&m.from&&m.from!==me&&!m.tx&&m.t>cut)seen.set(m.from,Math.max(seen.get(m.from)||0,m.t));
+  return[...seen.entries()].sort((a,b)=>b[1]-a[1]).map(x=>x[0])}
+function insertAt(name,replaceTail){const i=$("chatin");let v=i.value;if(replaceTail)v=v.replace(/@[^\s@\[]*$/,"");
+  i.value=(v&&!/\s$/.test(v)?v+" ":v)+"@["+name+"] ";$("chatat").hidden=true;i.focus()}
+$("chatin").oninput=()=>{const m=$("chatin").value.match(/@([^\s@\[]*)$/),box=$("chatat");
+  if(!m){box.hidden=true;return}const q=m[1].toLowerCase(),ppl=chatPeople().filter(n=>n.toLowerCase().includes(q)).slice(0,12);
+  box.innerHTML=ppl.map(n=>`<button class="b" data-at="${esc(n)}">@${esc(n)}</button>`).join("")||'<span class="dim" style="padding:4px 6px">No one has posted on this channel in the last day.</span>';box.hidden=false};
+$("chatat").onclick=e=>{const b=e.target.closest("[data-at]");if(b)insertAt(b.dataset.at,true)};
+$("chatlog").onclick=e=>{const b=e.target.closest("[data-at]");if(b&&b.dataset.at)insertAt(b.dataset.at,false)};
+// ================================================================ direct messages (the chat identity on this node)
+S.dm={on:false,contacts:[],msgs:new Map(),seq:0,sel:null,read:{}};
+async function pollDm(){try{const j=await api("/api/hx?k=dm&since="+Math.max(0,S.dm.seq-24));
+  if(j.seq<S.dm.seq)S.dm.msgs.clear();
+  Object.assign(S.dm,{on:j.on,name:j.name,pub:j.pub,busy:j.busy,contacts:j.contacts,seq:j.seq});
+  for(const m of j.msgs)S.dm.msgs.set(m[0],{seq:m[0],t:m[1],pub:m[2],out:!!m[3],st:m[4],hops:m[5],text:m[6]})}catch(e){}}
+function dmName(pub){const c=S.dm.contacts.find(x=>x[0]===pub);return c&&c[1]?c[1]:pub.slice(0,8)}
+function renderDm(){const D=S.dm;$("dmoff").hidden=D.on;$("dmon").hidden=!D.on;if(!D.on)return;
+  $("dmname").textContent=D.name;$("dmpub").textContent=D.pub.slice(0,16)+"…";
+  const last={};for(const m of D.msgs.values())last[m.pub]=Math.max(last[m.pub]||0,m.seq);
+  const now=Date.now()/1000,list=[...D.contacts].sort((a,b)=>(last[b[0]]||0)-(last[a[0]]||0)||b[4]-a[4]||b[2]-a[2]);
+  for(const p in last)if(!list.find(c=>c[0]===p))list.push([p,"",0,-1,0]);
+  $("dmlist").innerHTML=list.map(c=>{const unread=(last[c[0]]||0)>(D.read[c[0]]||0)&&[...D.msgs.values()].some(m=>m.pub===c[0]&&!m.out&&m.seq>(D.read[c[0]]||0));
+    return`<div data-k="${esc(c[0])}" style="cursor:pointer;padding:7px 10px;border-radius:10px;border:1px solid ${c[0]===D.sel?"var(--accent,#3fd6e0)":"var(--faint)"};background:${c[0]===D.sel?"rgba(63,214,224,.12)":"rgba(255,255,255,.04)"}">
+      <div><b>${esc(c[1]||c[0].slice(0,8))}</b>${c[4]?" ★":""}${unread?' <span style="color:#46e08a">●</span>':""}</div>
+      <div class="dim" style="font-size:12px">${esc(c[0].slice(0,4))} · ${c[2]?"heard "+ago(now-c[2])+" ago":"not heard yet"} · ${c[3]<0?"flood":c[3]+" hop"+(c[3]===1?"":"s")}</div></div>`}).join("")||'<p class="dim">No chat contacts heard yet. They show up when phones on the mesh advertise.</p>';
+  const sel=D.sel,c=list.find(x=>x[0]===sel);$("dmin").disabled=$("dmsend").disabled=!c;$("dmin").placeholder=c?"Message "+(c[1]||sel.slice(0,8)):"Pick a contact";
+  $("dmhead").innerHTML=c?`<b>${esc(c[1]||sel.slice(0,8))}</b><code class="dim" style="font-size:12px">${esc(sel.slice(0,16))}…</code><span class="sp"></span><button class="b" id="dmstar">${c[4]?"Forget":"Save contact"}</button>`:"";
+  const log=$("dmlog"),atEnd=log.scrollTop+log.clientHeight>=log.scrollHeight-20;
+  const msgs=sel?[...D.msgs.values()].filter(m=>m.pub===sel).sort((a,b)=>a.seq-b.seq):[];
+  const ST=["","sending…","✓ delivered","not confirmed"];
+  log.innerHTML=msgs.map(m=>`<div style="align-self:${m.out?"flex-end":"flex-start"};max-width:75%;padding:8px 12px;border-radius:14px;background:${m.out?"rgba(63,214,224,.18)":"rgba(255,255,255,.07)"};border:1px solid var(--faint)">
+    <div style="font-size:12px;color:var(--dim)">${m.t?new Date(m.t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):""}${m.out?" · "+ST[m.st]:m.hops===255?" · direct":` · ${m.hops} hop${m.hops===1?"":"s"}`}</div>
+    <div style="white-space:pre-wrap;word-break:break-word">${esc(m.text)}</div></div>`).join("")||(sel?'<p class="dim">No messages yet.</p>':"");
+  if(sel&&msgs.length)D.read[sel]=msgs[msgs.length-1].seq;
+  if(atEnd)log.scrollTop=1e9;
+  const st=$("dmstar");if(st)st.onclick=async()=>{const e=await dmPost({op:c[4]?"forget":"save",pub:sel,name:c[1]||""});dmDone(e,c[4]?"Forgotten.":"Saved.")}}
+async function dmPost(o){const r=await fetch("/api/hx/dm",{method:"POST",body:new URLSearchParams(o)});if(r.status===401){showLogin();return"sign in again"}
+  const j=await r.json().catch(()=>({}));return r.ok?null:(j.error||String(r.status))}
+async function dmDone(err,ok){$("dmnote").textContent=err?"Not done: "+err:ok;await pollDm();renderDm()}
+$("dmlist").onclick=e=>{const d=e.target.closest("[data-k]");if(!d)return;S.dm.sel=d.dataset.k;renderDm();$("dmlog").scrollTop=1e9;$("dmin").focus()};
+$("dmon1").onclick=async()=>dmDone(await dmPost({op:"on",name:$("dmnm").value.trim()}),"Turned on. An advert went out so people can add it.");
+$("dmoff1").onclick=async()=>{if(confirm("Turn off direct messages? Contacts can't reach the chat identity while it's off."))dmDone(await dmPost({op:"off"}),"Turned off.")};
+$("dmadv").onclick=async()=>dmDone(await dmPost({op:"advert"}),"Advert sent (a flood; once in a while is enough).");
+$("dmcopy").onclick=async()=>{try{await navigator.clipboard.writeText(S.dm.pub);$("dmnote").textContent="Public key copied."}catch(e){$("dmnote").textContent=S.dm.pub}};
+$("dmadd").onclick=async()=>{const p=$("dmapub").value.trim().toLowerCase();if(!/^[0-9a-f]{64}$/.test(p)){$("dmnote").textContent="A public key is 64 characters, 0-9 and a-f.";return}
+  const e=await dmPost({op:"save",pub:p,name:$("dmanm").value.trim()});if(!e){$("dmapub").value=$("dmanm").value="";S.dm.sel=p}dmDone(e,"Contact saved.")};
+async function sendDm(){const t=$("dmin").value.trim(),to=S.dm.sel;if(!t||!to)return;
+  if(new TextEncoder().encode(t).length>150){$("dmnote").textContent="Too long: 150 bytes at most.";return}
+  $("dmsend").disabled=true;const e=await dmPost({op:"send",to,text:t});if(!e)$("dmin").value="";
+  await dmDone(e,"Sending… it says delivered when their phone confirms.");setTimeout(async()=>{await pollDm();if(tab==="chat")renderDm()},1500)}
+$("dmsend").onclick=sendDm;$("dmin").onkeydown=e=>{if(e.key==="Enter")sendDm()};
 
 // ================================================================ insights
 function hbars(id,items,col){const max=Math.max(1,...items.map(x=>x[1]));
@@ -840,14 +910,14 @@ $("run").onclick=runCmd;$("cmd").onkeydown=e=>{if(e.key==="Enter")runCmd()};
 
 // ================================================================ loop
 function safe(f){try{f()}catch(e){console.error("Hoptics:",e)}}
-function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="chat")safe(renderChat);if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();renderStats();S.roleDrawn=1}}}
+function render(){safe(renderOverview);if(tab==="graphs")safe(drawGraphs);if(tab==="nbrs")safe(renderNbrs);if(tab==="packets")safe(renderPk);if(tab==="chat"){safe(renderChat);safe(renderDm)}if(tab==="insights")safe(renderInsights);if(tab==="mqtt")safe(renderMqtt);if(tab==="system"){safe(renderSystem);if(!S.roleDrawn){safe(renderRole);renderAlerts();renderStats();S.roleDrawn=1}}}
 let started=false;
 async function start(){if(started)return;started=true;
   await Promise.all([pollStats(),pollSelf(),pollNodes(),pollHist(),pollPk()]);
   cli(["get repeat"]).then(r=>{S.repeat=/on/i.test(val(r[0]));render()}).catch(()=>{});
   setTab((location.hash||"#overview").slice(1).replace(/[^a-z]/g,""));
   setInterval(async()=>{await pollStats();if(!$("modal").classList.contains("on"))render()},3000);
-  setInterval(pollPk,2000);pollChat();setInterval(async()=>{await pollChat();if(tab==="chat")safe(renderChat)},4000);
+  setInterval(pollPk,2000);pollChat();pollDm();setInterval(async()=>{await pollChat();await pollDm();if(tab==="chat"){safe(renderChat);safe(renderDm)}},4000);
   setInterval(async()=>{await pollNodes();await pollSelf();if(mapReady)renderMapNodes(false)},15000);
   setInterval(pollHist,60000);pollRegion();setInterval(pollRegion,1800000);$("showreg").onchange=()=>renderMapNodes(false)}
 (async()=>{try{await api("/api/hx?k=self");$("app").hidden=false;start()}catch(e){if(e.message!=="auth"){$("app").hidden=false;start()}}})();

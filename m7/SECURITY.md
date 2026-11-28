@@ -40,6 +40,13 @@ as hostile input.
   1-140 bytes with no control characters, one at a time and at least 5 s apart. Channel keys are added in the
   browser and sent only with the message; the node doesn't store them.
 
+- **Direct messages are off by default and kept apart from the repeater.** The chat identity has its own key (in
+  NVS, never sent to the page, never the repeater's first key byte). It only decrypts packets addressed to it from
+  contacts whose adverts it heard or the owner saved, answers with the companion firmware's ACK and path replies,
+  and never changes forwarding. Incoming text is stripped of control characters and escaped by the page. Sending is
+  admin-only, from the node's own page, one message at a time and at least 5 s apart; adverts at most once a minute.
+  Contacts heard over the air are kept in memory only; saved contacts (16 at most) are written to flash only when
+  the owner changes them.
 - **Bad updates roll back.** After an update the node notes the slot it came from; if the new firmware can't
   stay up and online for 3 minutes three starts in a row, it switches back to the previous one.
 - **The stats feed is read-only and separate.** It is off until you turn it on; it uses a random 32-character
