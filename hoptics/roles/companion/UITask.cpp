@@ -74,7 +74,7 @@ void *tlsCalloc(size_t n, size_t size)
     if (size && n > SIZE_MAX / size)
         return nullptr;
     void *p = nullptr;
-    if (n * size <= 4096 && heap_caps_get_free_size(MALLOC_CAP_INTERNAL) > 48 * 1024)
+    if (n * size <= 4096 && heap_caps_get_free_size(MALLOC_CAP_INTERNAL) > 64 * 1024)
         p = heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!p)
         p = heap_caps_calloc(n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);

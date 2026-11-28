@@ -263,6 +263,16 @@ bool begin(const char *host)
         return false;
     }
     mbedtls_ssl_conf_rng(&conf, rng, nullptr);
+    // P-256 only: the curve the key is on, with mbedTLS's fast reduction for it (X25519, which browsers ask for first,
+    // took far longer here)
+    static const mbedtls_ecp_group_id curves[] = {MBEDTLS_ECP_DP_SECP256R1, MBEDTLS_ECP_DP_NONE};
+#if MBEDTLS_VERSION_MAJOR >= 3
+    static const uint16_t groups[] = {MBEDTLS_SSL_IANA_TLS_GROUP_SECP256R1, MBEDTLS_SSL_IANA_TLS_GROUP_NONE};
+    mbedtls_ssl_conf_groups(&conf, groups);
+    (void)curves;
+#else
+    mbedtls_ssl_conf_curves(&conf, curves);
+#endif
 #if MBEDTLS_VERSION_MAJOR < 3
     mbedtls_ssl_conf_min_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3); // TLS 1.2 and up
 #endif

@@ -821,7 +821,7 @@ bool start(uint16_t port, const char *tlsHost)
     c.max_uri_handlers = 23;
     c.recv_wait_timeout = 10; // an update arrives over a slow link sometimes
     c.max_resp_headers = 12;
-    c.core_id = tskNO_AFFINITY;
+    c.core_id = secure ? 0 : tskNO_AFFINITY; // HTTPS: handshakes are heavy maths, kept off the core the screen and radio run on
     c.task_priority = tskIDLE_PRIORITY + 3;
     if (httpd_start(&srv, &c) != ESP_OK) {
         srv = nullptr;
