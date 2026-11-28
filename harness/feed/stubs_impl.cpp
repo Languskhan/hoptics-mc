@@ -1,4 +1,5 @@
 // host versions of the ESP32 calls the feed uses: real sockets, threads, mutexes
+#define HX_STUBS_IMPL
 #include "stubs/Arduino.h"
 #include "stubs/WiFi.h"
 #include "stubs/WiFiClientSecure.h"
@@ -34,13 +35,38 @@ void WiFiClient::stop() { if (fd >= 0) close(fd); fd = -1; }
 uint8_t WiFiClient::connected() { if (fd < 0) return 0; char c; int r = recv(fd, &c, 1, MSG_PEEK | MSG_DONTWAIT); return r > 0 || (r < 0 && errno == EAGAIN); }
 void WiFiClientSecure::setCACert(const char *) {} void WiFiClientSecure::setHandshakeTimeout(unsigned long) {}
 int WiFiClientSecure::lastError(char *b, size_t n) { snprintf(b, n, "tls"); return -1; }
-void *heap_caps_malloc(size_t n, unsigned) { return malloc(n); } size_t heap_caps_get_free_size(unsigned) { return 100000; }
+// FEED_NOMEM=msg or ring makes that buffer fail to allocate, from PSRAM and from the fallback alike; msg:N or ring:N
+// fails only the first N tries, so the feed should come up afterwards. Sizes mirror hx_feed.cpp (MSG_MAX, RING).
+#include "hx_feed.h"
+static int nomemLeft = -1; // tries still to fail (-1: every one)
+static bool nomem(size_t n) {
+  const char *w = getenv("FEED_NOMEM");
+  if (!w) return false;
+  bool hit = (!strncmp(w, "msg", 3) && n == 12288) || (!strncmp(w, "ring", 4) && n == 16 * sizeof(hxfeed::Item));
+  if (!hit) return false;
+  static bool init = false;
+  if (!init) { const char *c = strchr(w, ':'); nomemLeft = c ? atoi(c + 1) : -1; init = true; }
+  return nomemLeft != 0;
+}
+void *heap_caps_malloc(size_t n, unsigned) { return nomem(n) ? nullptr : malloc(n); }
+void *hx_stub_malloc(size_t n) { if (nomem(n)) { if (nomemLeft > 0) nomemLeft--; return nullptr; } return malloc(n); }
+size_t heap_caps_get_free_size(unsigned) { return 100000; }
 uint32_t esp_random(void) { return (uint32_t)rand(); }
 void esp_fill_random(void *b, size_t n) { for (size_t i = 0; i < n; i++) ((uint8_t *)b)[i] = rand(); }
-SemaphoreHandle_t xSemaphoreCreateMutex() { return new std::mutex; }
+// FEED_NOMEM=lock or task fails making it; lock:N or task:N only the first N tries
+static bool nomemIs(const char *w) {
+  const char *e = getenv("FEED_NOMEM");
+  size_t n = strlen(w);
+  if (!e || strncmp(e, w, n) || (e[n] && e[n] != ':')) return false;
+  static int left = e[n] == ':' ? atoi(e + n + 1) : -1;
+  if (left == 0) return false;
+  if (left > 0) left--;
+  return true;
+}
+SemaphoreHandle_t xSemaphoreCreateMutex() { return nomemIs("lock") ? nullptr : new std::mutex; }
 BaseType_t xSemaphoreTake(SemaphoreHandle_t m, TickType_t) { ((std::mutex *)m)->lock(); return 1; }
 BaseType_t xSemaphoreGive(SemaphoreHandle_t m) { ((std::mutex *)m)->unlock(); return 1; }
-BaseType_t xTaskCreatePinnedToCore(TaskFunction_t f, const char *, uint32_t, void *p, UBaseType_t, TaskHandle_t *, BaseType_t) { std::thread(f, p).detach(); return 1; }
+BaseType_t xTaskCreatePinnedToCore(TaskFunction_t f, const char *, uint32_t, void *p, UBaseType_t, TaskHandle_t *, BaseType_t) { if (nomemIs("task")) return 0; std::thread(f, p).detach(); return 1; }
 void vTaskDelay(TickType_t ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
 UBaseType_t uxTaskGetStackHighWaterMark(TaskHandle_t) { return 0; }
 // the log keeper prints to USB here

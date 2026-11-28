@@ -25,4 +25,10 @@ for mode in ok moved refuse overflow huge secure downgrade; do
       { echo "FAIL downgrade: the move off TLS wasn't refused"; exit 1; } ;;
   esac
 done
+for what in lock task ring msg; do # each allocation failing: the feed stays off and says why, with no server needed
+  FEED_NOMEM=$what timeout 20 $B/ws ws://127.0.0.1:8765/ws 2 > $B/client.log 2>&1 || true
+  echo "== no memory for $what"; cat $B/client.log
+  if grep -q "ERROR: AddressSanitizer\|runtime error:" $B/client.log; then echo "FAIL no memory for $what: sanitizer report"; exit 1; fi
+  if ! grep -q "STATE 4 err='Not enough memory for the feed'" $B/client.log; then echo "FAIL no memory for $what: no error shown"; exit 1; fi
+done
 echo "PASS"

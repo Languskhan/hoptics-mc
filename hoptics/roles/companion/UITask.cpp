@@ -2123,7 +2123,15 @@ void UITask::webExtras(std::string &o, uint32_t histHave) const
     for (const char *p = f.server; *p; p++) // an address typed on the radio: only its plain characters
         if (*p > ' ' && *p != '"' && *p != '\\' && *p < 0x7f)
             o += *p;
-    o += "\"}";
+    o += "\"";
+    if (f.state == hx::FeedStatus::FAILED) { // why the node's own feed is not connected
+        o += ",\"error\":\"";
+        for (const char *p = f.error; *p; p++)
+            if (*p >= ' ' && *p != '"' && *p != '\\' && *p < 0x7f)
+                o += *p;
+        o += "\"";
+    }
+    o += "}";
     if (!hist || !histN || histEnd == histHave)
         return;
     snprintf(b, sizeof(b), ",\"hist\":{\"step\":300,\"end\":%lu", (unsigned long)histEnd);

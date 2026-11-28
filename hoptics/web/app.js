@@ -1107,7 +1107,7 @@ V.device = {
     this.load.set([{ name: "Screen", color: "--violet", data: xy(h.lvgl, (v) => v) }]);
     this.net.replaceChildren();
     const box = el("div", "kvlist");
-    for (const [k, v] of [["Server", (d.feed && d.feed.url) || "-"], ["In this browser", !Feed.want() ? "off" : S.feedState === "refused" ? "refused: the server doesn't accept browsers from other sites (the node's own screen can still show it)" : S.feedState], ["Packets this visit", String(S.feedCount)], ["On the node's own screen", d.feed && d.feed.device ? "on" : "off (saves the node's processor)"]]) box.append(el("span", "", k), el("span", "", v));
+    for (const [k, v] of [["Server", (d.feed && d.feed.url) || "-"], ["In this browser", !Feed.want() ? "off" : S.feedState === "refused" ? "refused: the server doesn't accept browsers from other sites (the node's own screen can still show it)" : S.feedState], ["Packets this visit", String(S.feedCount)], ["On the node's own screen", d.feed && d.feed.device ? (d.feed.error ? "on, not connected: " + d.feed.error : "on") : "off (saves the node's processor)"]]) box.append(el("span", "", k), el("span", "", v));
     this.net.append(el("p", "muted", "The page connects your browser to the CoreScope server itself, so the internet feed costs the node nothing. Channel messages are decoded here with the channels the node shares with this page."), box);
     this.net.firstChild.style.cssText = "margin:0 0 10px;font-size:12.5px";
     this.feedBtn.textContent = Feed.want() ? "Turn the internet feed off here" : "Turn the internet feed on here";
