@@ -2,7 +2,7 @@ name: Build Hoptics-MC
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'test/**']
     paths-ignore: ['m7/**', '.github/workflows/m7.yml']
   pull_request:
   release:
@@ -156,7 +156,7 @@ jobs:
   # website can fetch the latest test firmware over plain git
   publish-builds:
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/test/'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -172,4 +172,7 @@ jobs:
           echo "${{ github.sha }}" > SOURCE_COMMIT
           git add -A
           git commit -qm "Firmware built from ${{ github.sha }}"
-          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" builds
+          # main's builds go to "builds"; a test branch's to "builds-<branch>" (test/https -> builds-test-https)
+          DEST=builds
+          if [ "${{ github.ref_name }}" != main ]; then DEST="builds-$(echo '${{ github.ref_name }}' | tr '/' '-')"; fi
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:"$DEST"
